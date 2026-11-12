@@ -45,7 +45,10 @@ Open `http://localhost:5173`, then seed the demo dataset:
 curl -X POST "http://localhost:4000/api/demo/seed?reset=true"
 ```
 
-Sign in with any demo account — password **`Threadline#2026`** for all:
+Pick any of the four demo profiles on the sign-in screen — one click, no
+password, no registration. The same password (`Threadline#2026`) still works
+for the API, but the UI signs seeded accounts in automatically. The profile
+switcher in the top-right corner moves between people without signing out.
 
 | Person | Role | What to try |
 | --- | --- | --- |
@@ -59,15 +62,17 @@ decision, a conflicting decision set and two ownership gaps.
 
 **Suggested walkthrough**
 
-1. Sign in as **Aarav** → open *Project Atlas* → **Handovers** → create a
-   handover for **Rohan** with the `onboarding` template.
+1. Pick **Aarav** on the sign-in screen → open *Project Atlas* → **Handovers** →
+   create a handover for **Rohan** with the `onboarding` template.
 2. Accept / edit / reject items, then **Submit for approval**.
 3. **Approve** as Aarav and **Share**. Copy the share link.
-4. Sign in as **Rohan**, open the link, read the evidence previews, acknowledge.
-5. Back as Aarav, open **Sources**, restrict `handover-notes.txt` to the `lead`
-   role.
-6. Reload Rohan's handover — affected items disappear and the recipient sees
-   *"Some items are no longer shown"*. The event is recorded in the audit log.
+4. Switch to **Rohan** in the profile menu, open the link, read the evidence
+   previews, acknowledge.
+5. Switch back to **Aarav**, open **Sources**, restrict `handover-notes.txt` to
+   the `lead` role.
+6. Switch to **Rohan** again and reload the handover — affected items disappear
+   and the recipient sees *"Some items are no longer shown"*. The event is
+   recorded in the audit log.
 
 No real project data is used. The demo is entirely synthetic and seeded from the
 application itself.

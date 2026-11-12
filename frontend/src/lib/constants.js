@@ -8,6 +8,7 @@ export const DEMO_PERSONAS = [
     tag: 'PROJECT LEAD',
     description: 'Full governance: sources, approvals, audit and handover sign-off.',
     accent: 'navy',
+    abilities: ['Approve', 'Share', 'Restrict sources', 'Audit log'],
   },
   {
     name: 'Meera Nair',
@@ -16,6 +17,7 @@ export const DEMO_PERSONAS = [
     tag: 'OUTGOING · T-14',
     description: 'Rotating off Atlas. Her notes and decisions are the handover’s source material.',
     accent: 'amber',
+    abilities: ['Upload sources', 'Review items'],
   },
   {
     name: 'Rohan Iyer',
@@ -24,6 +26,7 @@ export const DEMO_PERSONAS = [
     tag: 'INCOMING',
     description: 'The handover recipient. Sees only items backed by sources he may read.',
     accent: 'green',
+    abilities: ['Open shared link', 'Acknowledge'],
   },
   {
     name: 'Priya Shah',
@@ -32,6 +35,7 @@ export const DEMO_PERSONAS = [
     tag: 'OBSERVER',
     description: 'Read-only oversight. Cannot upload, review, approve or edit project content.',
     accent: 'slate',
+    abilities: ['Read-only access'],
   },
 ];
 

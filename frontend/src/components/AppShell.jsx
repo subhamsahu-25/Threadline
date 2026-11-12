@@ -1,24 +1,30 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowLeftRight,
   CalendarClock,
+  Check,
+  ChevronsUpDown,
   Database,
   FileSignature,
   FolderKanban,
   LayoutDashboard,
   ListChecks,
+  Loader2,
   LogOut,
   MoreHorizontal,
+  RefreshCw,
   ScrollText,
   ShieldCheck,
   Users,
   X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { useToast } from '../context/ToastContext.jsx';
 import { useWorkspace } from '../context/WorkspaceContext.jsx';
+import { api, errorMessage } from '../lib/api.js';
 import { daysUntil } from '../lib/format.js';
-import { ROLE_LABELS } from '../lib/constants.js';
+import { DEMO_PASSWORD, DEMO_PERSONAS, ROLE_LABELS } from '../lib/constants.js';
 import { Avatar, Badge } from './ui.jsx';
 
 export function BrandMark({ className = 'h-9 w-9' }) {
@@ -306,10 +312,108 @@ function MobileMoreSheet({ open, onClose, project, logout, isLead }) {
   );
 }
 
+function PersonaMenu({ open, onClose, user, switching, onSwitch, onReset, onLogout }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') onClose();
+    };
+    const onPointerDown = (event) => {
+      if (event.target.closest?.('[data-persona-toggle]')) return;
+      if (ref.current && !ref.current.contains(event.target)) onClose();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('mousedown', onPointerDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('mousedown', onPointerDown);
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      aria-label="Switch demo profile"
+      className="absolute right-0 top-[calc(100%+10px)] z-[70] w-[320px] rounded-xl border border-line bg-white p-2 shadow-lift"
+    >
+      <div className="flex items-baseline justify-between px-2 pb-1.5 pt-1">
+        <p className="eyebrow">Viewing as</p>
+        <p className="font-mono text-[9.5px] uppercase tracking-wider text-ink-faint">Demo profiles</p>
+      </div>
+      <div className="space-y-0.5">
+        {DEMO_PERSONAS.map((persona) => {
+          const active = persona.email === user?.email;
+          const loading = switching === persona.email;
+          return (
+            <button
+              key={persona.email}
+              type="button"
+              role="menuitemradio"
+              aria-checked={active}
+              disabled={Boolean(switching)}
+              onClick={() => onSwitch(persona)}
+              className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left transition ${
+                active ? 'bg-brand-50 ring-1 ring-inset ring-brand-100' : 'hover:bg-slate-50'
+              } disabled:cursor-wait disabled:opacity-60`}
+            >
+              <Avatar name={persona.name} size="sm" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[12.5px] font-semibold text-ink">
+                  {persona.name}
+                </span>
+                <span className="block truncate text-[10.5px] text-ink-muted">
+                  {persona.tag} · {persona.abilities[0]}
+                </span>
+              </span>
+              {loading ? (
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand-700" aria-hidden="true" />
+              ) : (
+                active && <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-1 space-y-0.5 border-t border-line pt-1">
+        <button
+          type="button"
+          role="menuitem"
+          onClick={onReset}
+          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[12px] font-medium text-ink-soft transition hover:bg-slate-50"
+        >
+          <RefreshCw className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+          Reset demo data
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={onLogout}
+          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[12px] font-medium text-red-600 transition hover:bg-red-50"
+        >
+          <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+          Sign out
+        </button>
+      </div>
+      <p className="px-2 pb-1 pt-1.5 text-[10px] leading-4 text-ink-faint">
+        Switching re-checks every view live against the selected profile’s permissions.
+      </p>
+    </div>
+  );
+}
+
 export default function AppShell() {
-  const { user, logout } = useAuth();
+  const { user, logout, login } = useAuth();
   const { projects, currentProject } = useWorkspace();
+  const toast = useToast();
+  const navigate = useNavigate();
   const [moreOpen, setMoreOpen] = useState(false);
+  const [personaOpen, setPersonaOpen] = useState(false);
+  const [switching, setSwitching] = useState(null);
   const location = useLocation();
   const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/);
   const routeProject = projectMatch
@@ -319,6 +423,44 @@ export default function AppShell() {
   const isLead = project?.role === 'lead';
   const routeProjectId = project?.id || projectMatch?.[1] || null;
   const inProject = Boolean(routeProjectId);
+
+  const switchTo = async (persona) => {
+    if (switching) return;
+    if (persona.email === user?.email) {
+      setPersonaOpen(false);
+      return;
+    }
+    setSwitching(persona.email);
+    try {
+      const next = await login(persona.email, DEMO_PASSWORD);
+      toast.success(`Now viewing as ${next.name} · ${persona.tag.toLowerCase()}`);
+      setPersonaOpen(false);
+      navigate(inProject ? `/projects/${routeProjectId}` : '/');
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setSwitching(null);
+    }
+  };
+
+  const resetDemo = async () => {
+    setPersonaOpen(false);
+    if (
+      !window.confirm(
+        'Reset the Atlas demo data? Everyone is signed out and the synthetic workspace is rebuilt.',
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.post('/api/demo/seed?reset=true');
+      toast.success('Atlas demo data rebuilt.');
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+    logout();
+    navigate('/login');
+  };
 
   const departure = project?.transition?.plannedDepartureAt
     ? daysUntil(project.transition.plannedDepartureAt)
@@ -353,7 +495,29 @@ export default function AppShell() {
               T-{departure}d
             </Badge>
           )}
-          <Avatar name={user?.name} size="sm" title={user?.name} />
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setPersonaOpen((value) => !value)}
+              aria-haspopup="menu"
+              aria-expanded={personaOpen}
+              aria-label={`${user?.name}. Switch demo profile`}
+              data-persona-toggle
+              className="flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1 transition hover:bg-slate-100"
+            >
+              <Avatar name={user?.name} size="sm" />
+              <ChevronsUpDown className="h-3 w-3 text-ink-faint" aria-hidden="true" />
+            </button>
+            <PersonaMenu
+              open={personaOpen}
+              onClose={() => setPersonaOpen(false)}
+              user={user}
+              switching={switching}
+              onSwitch={switchTo}
+              onReset={resetDemo}
+              onLogout={logout}
+            />
+          </div>
         </div>
       </header>
 
@@ -393,14 +557,34 @@ export default function AppShell() {
             <ShieldCheck className="h-3 w-3 text-emerald-600" aria-hidden="true" />
             Permission-aware
           </span>
-          <div className="flex items-center gap-2 border-l border-line pl-3">
-            <Avatar name={user?.name} size="sm" />
-            <div className="leading-tight">
-              <p className="text-[11.5px] font-semibold">{user?.name}</p>
-              <p className="text-[10px] text-ink-muted">
-                {project ? ROLE_LABELS[project.role] : 'Workspace member'}
-              </p>
-            </div>
+          <div className="relative flex items-center gap-2 border-l border-line pl-3">
+            <button
+              type="button"
+              onClick={() => setPersonaOpen((value) => !value)}
+              aria-haspopup="menu"
+              aria-expanded={personaOpen}
+              title="Switch demo profile"
+              data-persona-toggle
+              className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-left transition hover:bg-slate-100"
+            >
+              <Avatar name={user?.name} size="sm" />
+              <span className="leading-tight">
+                <span className="block text-[11.5px] font-semibold">{user?.name}</span>
+                <span className="block text-[10px] text-ink-muted">
+                  {project ? ROLE_LABELS[project.role] : 'Workspace member'}
+                </span>
+              </span>
+              <ChevronsUpDown className="h-3.5 w-3.5 text-ink-faint" aria-hidden="true" />
+            </button>
+            <PersonaMenu
+              open={personaOpen}
+              onClose={() => setPersonaOpen(false)}
+              user={user}
+              switching={switching}
+              onSwitch={switchTo}
+              onReset={resetDemo}
+              onLogout={logout}
+            />
           </div>
         </div>
       </div>

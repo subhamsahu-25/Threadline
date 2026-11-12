@@ -4,17 +4,14 @@ import {
   ArrowRight,
   Check,
   Database,
-  Eye,
-  EyeOff,
   FileCheck2,
+  Loader2,
   LockKeyhole,
-  Mail,
   RefreshCw,
   ShieldCheck,
-  UserRound,
 } from 'lucide-react';
 import { BrandMark } from '../components/AppShell.jsx';
-import { Avatar, Badge, Button, Field, Input } from '../components/ui.jsx';
+import { Avatar, Badge } from '../components/ui.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { api, errorMessage } from '../lib/api.js';
@@ -25,6 +22,13 @@ const PERSONA_RING = {
   amber: 'border-amber-200 bg-amber-50/60',
   green: 'border-emerald-200 bg-emerald-50/60',
   slate: 'border-slate-200 bg-slate-50/60',
+};
+
+const PERSONA_TONE = {
+  navy: 'navy',
+  amber: 'amber',
+  green: 'green',
+  slate: 'slate',
 };
 
 function BrandPanel() {
@@ -140,17 +144,12 @@ function BrandPanel() {
 }
 
 export default function LoginPage() {
-  const { user, login, register } = useAuth();
+  const { user, login } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
-  const [mode, setMode] = useState('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [name, setName] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [seeding, setSeeding] = useState(false);
+  const [pending, setPending] = useState(null);
+  const [resetting, setResetting] = useState(false);
   const [error, setError] = useState('');
   const [health, setHealth] = useState(null);
 
@@ -173,50 +172,45 @@ export default function LoginPage() {
 
   if (user) return <Navigate to={destination} replace />;
 
-  const selectPersona = (persona) => {
-    setMode('login');
-    setEmail(persona.email);
-    setPassword(DEMO_PASSWORD);
+  const enterAs = async (persona) => {
+    if (pending) return;
+    setPending(persona.email);
     setError('');
-  };
-
-  const handleSubmit = async (event) => {
-    event.preventDefault();
-    setError('');
-    setSubmitting(true);
     try {
-      if (mode === 'register') {
-        await register({ name, email, password });
-        toast.success('Account created. Create or join a project to get started.');
-      } else {
-        const signedIn = await login(email.trim(), password);
-        toast.success(`Signed in as ${signedIn.name}`);
+      let signedIn;
+      try {
+        signedIn = await login(persona.email, DEMO_PASSWORD);
+      } catch (err) {
+        if (err?.status !== 401) throw err;
+        await api.post('/api/demo/seed?reset=true');
+        signedIn = await login(persona.email, DEMO_PASSWORD);
+        toast.success('Atlas demo workspace created — six synthetic sources ingested.');
       }
+      toast.success(`Signed in as ${signedIn.name}`);
       navigate(destination, { replace: true });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
-      setSubmitting(false);
+      setPending(null);
     }
   };
 
-  const loadDemo = async () => {
-    setSeeding(true);
+  const resetDemo = async () => {
+    if (resetting) return;
+    setResetting(true);
     setError('');
     try {
       await api.post('/api/demo/seed?reset=true');
-      setEmail('aarav@threadline.demo');
-      setPassword(DEMO_PASSWORD);
-      toast.success('Atlas demo workspace is ready — six synthetic sources ingested. Pick a persona.');
+      toast.success('Atlas demo workspace rebuilt. Pick a profile to enter.');
       setHealth((current) => ({ ...(current || {}), demoSeedEnabled: true }));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
-      setSeeding(false);
+      setResetting(false);
     }
   };
 
-  const selectedPersona = DEMO_PERSONAS.find((persona) => persona.email === email);
+  const busy = Boolean(pending) || resetting;
 
   return (
     <div className="flex min-h-screen bg-canvas">
@@ -239,197 +233,107 @@ export default function LoginPage() {
         </div>
 
         <div className="flex flex-1 items-start justify-center px-4 py-8 sm:px-8 lg:items-center lg:py-10">
-          <div className="w-full max-w-[460px]">
-            <div className="mb-6">
-              <p className="eyebrow mb-1.5">Secure access</p>
+          <div className="w-full max-w-[520px]">
+            <div className="mb-5">
+              <p className="eyebrow mb-1.5">Hackathon demo</p>
               <h2 className="text-[27px] font-semibold leading-tight tracking-[-0.02em]">
-                {mode === 'login' ? 'Sign in to your workspace' : 'Create your account'}
+                Choose a profile to enter
               </h2>
               <p className="mt-1.5 text-[13px] leading-5 text-ink-muted">
-                {mode === 'login'
-                  ? 'Choose a demo persona or use your own credentials.'
-                  : 'You will start with no projects. Create one after signing in.'}
+                Four seeded profiles share one Atlas workspace. One click signs you in — the same
+                project looks different depending on who is reading it.
               </p>
             </div>
 
-            {mode === 'login' && (
-              <section aria-labelledby="personas-heading" className="mb-5">
-                <div className="mb-2 flex items-center justify-between">
-                  <h3 id="personas-heading" className="eyebrow">
-                    Demo personas
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={loadDemo}
-                    disabled={seeding}
-                    className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-brand-700 transition hover:text-brand-900 disabled:opacity-50"
-                  >
-                    <RefreshCw className={`h-3 w-3 ${seeding ? 'animate-spin' : ''}`} aria-hidden="true" />
-                    {seeding ? 'Building Atlas workspace…' : 'Load / reset demo data'}
-                  </button>
-                </div>
-                <div className="grid gap-1.5">
-                  {DEMO_PERSONAS.map((persona) => {
-                    const active = selectedPersona?.email === persona.email;
-                    return (
-                      <button
-                        key={persona.email}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => selectPersona(persona)}
-                        className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition ${
-                          active
-                            ? 'border-brand-300 bg-brand-50/80 ring-1 ring-brand-200'
-                            : `${PERSONA_RING[persona.accent]} hover:border-brand-200 hover:bg-white`
-                        }`}
-                      >
+            <section aria-labelledby="personas-heading">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 id="personas-heading" className="eyebrow">
+                  Demo profiles
+                </h3>
+                <button
+                  type="button"
+                  onClick={resetDemo}
+                  disabled={busy}
+                  className="inline-flex items-center gap-1.5 text-[11.5px] font-semibold text-brand-700 transition hover:text-brand-900 disabled:opacity-50"
+                >
+                  <RefreshCw className={`h-3 w-3 ${resetting ? 'animate-spin' : ''}`} aria-hidden="true" />
+                  {resetting ? 'Rebuilding Atlas…' : 'Reset demo data'}
+                </button>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                {DEMO_PERSONAS.map((persona) => {
+                  const loading = pending === persona.email;
+                  return (
+                    <button
+                      key={persona.email}
+                      type="button"
+                      onClick={() => enterAs(persona)}
+                      disabled={busy}
+                      aria-label={`Enter the Atlas workspace as ${persona.name}, ${persona.tag.toLowerCase()}`}
+                      className={`group flex flex-col items-start gap-2 rounded-xl border p-3 text-left transition ${PERSONA_RING[persona.accent]} hover:border-brand-300 hover:bg-white hover:shadow-card disabled:cursor-wait disabled:opacity-60`}
+                    >
+                      <span className="flex w-full items-center gap-2.5">
                         <Avatar name={persona.name} size="md" />
                         <span className="min-w-0 flex-1">
-                          <span className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[12.5px] font-semibold text-ink">{persona.name}</span>
-                            <Badge
-                              tone={
-                                persona.role === 'lead'
-                                  ? 'navy'
-                                  : persona.role === 'observer'
-                                    ? 'slate'
-                                    : persona.accent === 'green'
-                                      ? 'green'
-                                      : 'amber'
-                              }
-                            >
-                              {persona.tag}
-                            </Badge>
+                          <span className="block truncate text-[13px] font-semibold text-ink">
+                            {persona.name}
                           </span>
-                          <span className="mt-0.5 block text-[11px] leading-4 text-ink-muted">
-                            {persona.description}
+                          <span className="block truncate font-mono text-[10px] text-ink-muted">
+                            {persona.email}
                           </span>
                         </span>
-                        {active && (
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-700 text-white">
-                            <Check className="h-3 w-3" aria-hidden="true" />
-                          </span>
+                        {loading ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand-700" aria-hidden="true" />
+                        ) : (
+                          <ArrowRight
+                            className="h-4 w-4 shrink-0 text-brand-600 opacity-0 transition group-hover:translate-x-0.5 group-hover:opacity-100"
+                            aria-hidden="true"
+                          />
                         )}
-                      </button>
-                    );
-                  })}
-                </div>
-              </section>
+                      </span>
+
+                      <Badge tone={PERSONA_TONE[persona.accent]}>{persona.tag}</Badge>
+
+                      <span className="text-[11.5px] leading-4 text-ink-muted">
+                        {persona.description}
+                      </span>
+
+                      <span className="mt-auto flex flex-wrap gap-1 pt-1">
+                        {persona.abilities.map((ability) => (
+                          <span
+                            key={ability}
+                            className="inline-flex items-center gap-1 rounded border border-line bg-white/80 px-1.5 py-0.5 text-[9.5px] font-medium text-ink-soft"
+                          >
+                            <Check className="h-2.5 w-2.5 text-emerald-600" aria-hidden="true" />
+                            {ability}
+                          </span>
+                        ))}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+
+            {error && (
+              <p
+                role="alert"
+                className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700"
+              >
+                {error}
+              </p>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-3.5" noValidate>
-              {mode === 'register' && (
-                <Field label="Full name" htmlFor="name" required>
-                  <div className="relative">
-                    <UserRound
-                      className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint"
-                      aria-hidden="true"
-                    />
-                    <Input
-                      id="name"
-                      value={name}
-                      onChange={(event) => setName(event.target.value)}
-                      placeholder="Your name"
-                      autoComplete="name"
-                      required
-                      minLength={2}
-                      className="pl-9"
-                    />
-                  </div>
-                </Field>
-              )}
-
-              <Field label="Work email" htmlFor="email" required>
-                <div className="relative">
-                  <Mail
-                    className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint"
-                    aria-hidden="true"
-                  />
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    placeholder="you@company.com"
-                    autoComplete="email"
-                    required
-                    className="pl-9"
-                  />
-                </div>
-              </Field>
-
-              <Field
-                label="Password"
-                htmlFor="password"
-                required
-                hint={mode === 'login' ? 'Demo personas use the synthetic password automatically.' : 'Use at least 8 characters.'}
-              >
-                <div className="relative">
-                  <LockKeyhole
-                    className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint"
-                    aria-hidden="true"
-                  />
-                  <Input
-                    id="password"
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    placeholder="Enter your password"
-                    autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-                    required
-                    className="pl-9 pr-10"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((value) => !value)}
-                    className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded text-ink-faint transition hover:bg-slate-100 hover:text-ink"
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                  </button>
-                </div>
-              </Field>
-
-              {error && (
-                <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[12px] leading-5 text-red-700">
-                  {error}
-                </p>
-              )}
-
-              <Button
-                type="submit"
-                size="lg"
-                loading={submitting}
-                iconRight={ArrowRight}
-                className="w-full"
-              >
-                {submitting
-                  ? mode === 'login'
-                    ? 'Signing in…'
-                    : 'Creating account…'
-                  : mode === 'login'
-                    ? selectedPersona
-                      ? `Sign in as ${selectedPersona.name.split(' ')[0]}`
-                      : 'Sign in to Threadline'
-                    : 'Create account'}
-              </Button>
-            </form>
-
-            <div className="mt-4 flex items-center justify-between text-[12px]">
-              <button
-                type="button"
-                onClick={() => {
-                  setMode(mode === 'login' ? 'register' : 'login');
-                  setError('');
-                }}
-                className="font-semibold text-brand-700 hover:text-brand-900"
-              >
-                {mode === 'login' ? 'Create an account' : 'Back to sign in'}
-              </button>
+            <div className="mt-4 flex items-center justify-between gap-3 text-[11.5px]">
               <span className="inline-flex items-center gap-1.5 font-mono text-[10px] text-ink-muted">
                 <span
                   className={`h-1.5 w-1.5 rounded-full ${
-                    health?.status === 'ok' ? 'bg-emerald-500' : health?.status === 'offline' ? 'bg-red-500' : 'bg-amber-400'
+                    health?.status === 'ok'
+                      ? 'bg-emerald-500'
+                      : health?.status === 'offline'
+                        ? 'bg-red-500'
+                        : 'bg-amber-400'
                   }`}
                 />
                 {health?.status === 'ok'
@@ -438,13 +342,17 @@ export default function LoginPage() {
                     ? 'API unreachable'
                     : 'Checking API…'}
               </span>
+              <span className="font-mono text-[10px] text-ink-faint">
+                {health?.demoSeedEnabled === false ? 'Demo seeding disabled' : 'Demo accounts · synthetic data'}
+              </span>
             </div>
 
-            <div className="mt-6 flex items-start gap-2.5 rounded-lg border border-line bg-white/60 px-3 py-2.5 text-[11px] leading-4 text-ink-muted">
+            <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-line bg-white/60 px-3 py-2.5 text-[11px] leading-4 text-ink-muted">
               <Database className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-faint" aria-hidden="true" />
               <p>
-                The Atlas demo contains six synthetic source documents. Credentials shown here are
-                for this local demo only and must never be used for a real account.
+                The Atlas demo contains six synthetic source documents. Demo sign-in is applied
+                automatically and only works for these seeded accounts — never for a real
+                workspace.
               </p>
             </div>
           </div>
