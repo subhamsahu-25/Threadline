@@ -1,0 +1,73 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import mongoose from 'mongoose';
+import { env, isTest } from './config/env.js';
+import { authenticate } from './middleware/auth.js';
+import { errorHandler, notFoundHandler } from './middleware/error.js';
+import authRoutes from './routes/auth.routes.js';
+import demoRoutes from './routes/demo.routes.js';
+import handoverRoutes from './routes/handover.routes.js';
+import projectRoutes from './routes/project.routes.js';
+import { llmStatus } from './services/ai/llm.js';
+import { processSourceJob } from './services/ingest/index.js';
+import { setJobHandler } from './services/queue.js';
+
+const app = express();
+
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
+
+app.use(helmet());
+app.use(
+  cors({
+    origin: env.corsOrigins.length > 0 ? env.corsOrigins : true,
+    credentials: false,
+  }),
+);
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: false }));
+
+if (!isTest) {
+  app.use(
+    rateLimit({
+      windowMs: 60_000,
+      limit: 300,
+      standardHeaders: 'draft-7',
+      legacyHeaders: false,
+    }),
+  );
+}
+
+setJobHandler(processSourceJob);
+
+app.get('/', (_req, res) => {
+  res.json({
+    service: 'threadline-api',
+    message: 'Threadline turns scattered project activity into permission-aware, evidence-linked handovers.',
+    docs: '/api/health',
+  });
+});
+
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'threadline-api',
+    version: '0.1.0',
+    time: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+    extraction: llmStatus(),
+    demoSeedEnabled: env.allowDemoSeed,
+  });
+});
+
+app.use('/api/auth', authRoutes);
+app.use('/api/projects', authenticate, projectRoutes);
+app.use('/api/handovers', authenticate, handoverRoutes);
+app.use('/api/demo', demoRoutes);
+
+app.use(notFoundHandler);
+app.use(errorHandler);
+
+export default app;

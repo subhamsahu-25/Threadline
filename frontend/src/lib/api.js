@@ -1,0 +1,115 @@
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+const TOKEN_KEY = 'threadline.token';
+
+let unauthorizedHandler = null;
+
+export class ApiError extends Error {
+  constructor(message, { status = 0, code = 'request_failed', details = null } = {}) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+export function setUnauthorizedHandler(handler) {
+  unauthorizedHandler = handler;
+}
+
+export function getToken() {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(token) {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* storage can be unavailable in private mode */
+  }
+}
+
+async function request(path, { method = 'GET', body, signal, headers = {} } = {}) {
+  const finalHeaders = { Accept: 'application/json', ...headers };
+  const token = getToken();
+  if (token) finalHeaders.Authorization = `Bearer ${token}`;
+
+  let payload = body;
+  if (body !== undefined && !(body instanceof FormData)) {
+    finalHeaders['Content-Type'] = 'application/json';
+    payload = JSON.stringify(body);
+  }
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method,
+      headers: finalHeaders,
+      body: payload,
+      signal,
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    throw new ApiError(
+      'Cannot reach the Threadline API. Check that the backend is running and VITE_API_URL points to it.',
+      { code: 'network_error' },
+    );
+  }
+
+  const text = await response.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = null;
+    }
+  }
+
+  if (!response.ok) {
+    const detail = data?.error || {};
+    if (response.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
+    throw new ApiError(detail.message || `Request failed with status ${response.status}`, {
+      status: response.status,
+      code: detail.code || 'request_failed',
+      details: detail.details || null,
+    });
+  }
+
+  return data;
+}
+
+export const api = {
+  get: (path, options) => request(path, { ...options, method: 'GET' }),
+  post: (path, body, options) => request(path, { ...options, method: 'POST', body }),
+  patch: (path, body, options) => request(path, { ...options, method: 'PATCH', body }),
+  del: (path, options) => request(path, { ...options, method: 'DELETE' }),
+};
+
+export function uploadSource(projectId, { files, name, sensitivity, visibility }) {
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+  if (name) form.append('name', name);
+  form.append('sensitivity', sensitivity || 'internal');
+  if (visibility) form.append('visibility', JSON.stringify(visibility));
+  return request(`/api/projects/${projectId}/sources/upload`, { method: 'POST', body: form });
+}
+
+export function errorMessage(error) {
+  if (error instanceof ApiError) {
+    if (error.code === 'unprocessable' && error.details?.pendingClaimIds?.length) {
+      return `${error.message} (${error.details.pendingClaimIds.length} remaining)`;
+    }
+    return error.message;
+  }
+  return error?.message || 'Something went wrong';
+}
+
+export function errorCode(error) {
+  return error instanceof ApiError ? error.code : 'unknown';
+}
