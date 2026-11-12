@@ -75,6 +75,7 @@ All variables are optional in development.
 | `NODE_ENV` | `development` | `production` enforces a real `JWT_SECRET` and disables demo seeding by default |
 | `PORT` | `4000` | HTTP port |
 | `MONGODB_URI` | empty (in-memory) | MongoDB connection string |
+| `DB_NAME` | path in `MONGODB_URI` | Overrides the database name; set to `Threadline` for Atlas |
 | `JWT_SECRET` | dev-only value | JWT signing secret; **required** in production |
 | `JWT_EXPIRES_IN` | `12h` | Token lifetime |
 | `CORS_ORIGINS` | empty (reflect origin) | Comma-separated allowed origins |

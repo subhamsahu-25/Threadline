@@ -22,7 +22,9 @@ export async function connectDB(uri = env.mongoUri) {
     );
   }
 
-  await mongoose.connect(target, { autoIndex: true });
+  const options = { autoIndex: true };
+  if (env.dbName && target === env.mongoUri) options.dbName = env.dbName;
+  await mongoose.connect(target, options);
   logger.info({ uri: redactUri(target) }, 'MongoDB connected');
   return mongoose.connection;
 }

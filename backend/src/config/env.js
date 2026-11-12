@@ -30,6 +30,7 @@ export const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: int('PORT', 4000),
   mongoUri: process.env.MONGODB_URI || '',
+  dbName: process.env.DB_NAME || '',
   jwtSecret: process.env.JWT_SECRET || DEV_JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
   corsOrigins: list('CORS_ORIGINS'),
