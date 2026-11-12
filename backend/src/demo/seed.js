@@ -157,6 +157,12 @@ async function removeExistingDemoProject() {
   ]);
 }
 
+async function removeStaleDemoUsers() {
+  await User.deleteMany({
+    email: { $regex: '@threadline\\.demo$', $nin: DEMO_USERS.map((user) => user.email) },
+  });
+}
+
 async function writeDocument(file) {
   await fs.mkdir(env.uploadDir, { recursive: true });
   const extension = path.extname(file.name);
@@ -178,7 +184,10 @@ export async function seedDemo({ reset = true } = {}) {
     users[definition.key] = await ensureUser(definition, passwordHash);
   }
 
-  if (reset) await removeExistingDemoProject();
+  if (reset) {
+    await removeExistingDemoProject();
+    await removeStaleDemoUsers();
+  }
 
   const existing = await Project.findOne({ key: DEMO_PROJECT_KEY });
   if (existing) {
