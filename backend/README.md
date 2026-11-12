@@ -47,17 +47,17 @@ Demo password for all accounts: `Threadline#2026`
 
 | Person | Role | Purpose |
 | --- | --- | --- |
-| Aarav Mehta | lead | reviews, approves and shares handovers |
-| Meera Nair | contributor | outgoing team member |
-| Rohan Iyer | contributor | incoming team member / recipient |
-| Priya Shah | observer | read-only stakeholder |
+| Subham Sahu | lead | reviews, approves and shares handovers |
+| Soumyajit Jena | contributor | outgoing team member |
+| Partho Prateem Satypatty | contributor | incoming team member / recipient |
+| Sabyasachi Behera | observer | read-only stakeholder |
 
 Suggested walkthrough:
 
-1. Sign in as **Aarav**, create a handover for **Rohan** (`onboarding` template).
+1. Sign in as **Subham**, create a handover for **Partho** (`onboarding` template).
 2. Review items, accept/edit/reject them, then `submit`.
-3. Approve, `share`, and open the share link as **Rohan**.
-4. As Aarav, restrict `handover-notes.txt` to the `lead` role and reload Rohan's
+3. Approve, `share`, and open the share link as **Partho**.
+4. As Subham, restrict `handover-notes.txt` to the `lead` role and reload Partho's
    handover — the linked items disappear and `permissionRecheck.revokedItems`
    increases. This is the live permission re-check.
 

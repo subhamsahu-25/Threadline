@@ -11,10 +11,10 @@ import {
   tokenOf,
 } from './helpers.js';
 
-const LEAD = 'aarav@threadline.demo';
-const INCOMING = 'rohan@threadline.demo';
-const OUTGOING = 'meera@threadline.demo';
-const OBSERVER = 'priya@threadline.demo';
+const LEAD = 'subham@threadline.demo';
+const INCOMING = 'partho@threadline.demo';
+const OUTGOING = 'soumyajit@threadline.demo';
+const OBSERVER = 'sabyasachi@threadline.demo';
 
 describe('permission-aware handovers', () => {
   let seeded;

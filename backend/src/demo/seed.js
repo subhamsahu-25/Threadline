@@ -20,10 +20,10 @@ export const DEMO_PASSWORD = 'Threadline#2026';
 export const DEMO_PROJECT_KEY = 'ATLAS';
 
 const DEMO_USERS = [
-  { key: 'aarav', name: 'Aarav Mehta', email: 'aarav@threadline.demo', role: 'lead' },
-  { key: 'meera', name: 'Meera Nair', email: 'meera@threadline.demo', role: 'contributor' },
-  { key: 'rohan', name: 'Rohan Iyer', email: 'rohan@threadline.demo', role: 'contributor' },
-  { key: 'priya', name: 'Priya Shah', email: 'priya@threadline.demo', role: 'observer' },
+  { key: 'subham', name: 'Subham Sahu', email: 'subham@threadline.demo', role: 'lead' },
+  { key: 'soumyajit', name: 'Soumyajit Jena', email: 'soumyajit@threadline.demo', role: 'contributor' },
+  { key: 'partho', name: 'Partho Prateem Satypatty', email: 'partho@threadline.demo', role: 'contributor' },
+  { key: 'sabyasachi', name: 'Sabyasachi Behera', email: 'sabyasachi@threadline.demo', role: 'observer' },
 ];
 
 const DEMO_DOCUMENTS = [
@@ -41,7 +41,7 @@ Dependency: The payments team must ship settlement webhook v2 before beta. (date
 
 ## Open items
 Open question: Do we need to migrate invoices older than 24 months? (date: 2026-08-19, status: open)
-Task: Write the invoice data backfill script (owner: Meera, due: 2026-11-20, status: open)
+Task: Write the invoice data backfill script (owner: Soumyajit, due: 2026-11-20, status: open)
 Task: Publish the migration runbook (status: open)
 `,
   },
@@ -66,10 +66,10 @@ Dependency: The mobile app team needs a stable invoice download endpoint until t
     sensitivity: 'internal',
     visibility: { scope: 'project', roles: [], users: [] },
     content: `type,title,owner,due,status
-task,Write billing smoke tests,Rohan,2026-11-12,open
+task,Write billing smoke tests,Partho,2026-11-12,open
 task,Add ledger drift alerting,Sana,2026-11-08,open
 task,Migrate invoice PDF templates,,2026-11-25,open
-task,Update on-call documentation,Meera,2026-10-30,done
+task,Update on-call documentation,Soumyajit,2026-10-30,done
 question,Who owns reconciliation alerting after the handover?,,,open
 `,
   },
@@ -84,21 +84,21 @@ Decision: Introduce v2 invoice endpoints before the beta. (date: 2026-10-20, sta
 Risk: The v2 change breaks invoice downloads in the current mobile client until a new app release ships. (date: 2026-10-20, status: open)
 
 ## Reconciliation
-Open question: Who owns the reconciliation drift alerting after Meera leaves? (date: 2026-10-20, status: open)
-Task: Record a runbook walkthrough with Meera before her last day (owner: Aarav, due: 2026-11-14, status: open)
+Open question: Who owns the reconciliation drift alerting after Soumyajit leaves? (date: 2026-10-20, status: open)
+Task: Record a runbook walkthrough with Soumyajit before their last day (owner: Subham, due: 2026-11-14, status: open)
 `,
   },
   {
     name: 'handover-notes.txt',
     sensitivity: 'internal',
     visibility: { scope: 'roles', roles: ['lead', 'contributor'], users: [] },
-    content: `# Meera's handover notes
+    content: `# Soumyajit's handover notes
 
 ## Payment provider
 Decision: Continue with Razorpay for the beta and review the enterprise contract after launch. (date: 2026-10-21, status: active)
 Dependency: Finance must approve the vendor contract before the beta launch. (date: 2026-10-21, status: open)
-Task: Send the vendor security questionnaire to finance (owner: Meera, due: 2026-11-15, status: open)
-Task: Hand over the Grafana dashboard access (owner: Meera, status: open)
+Task: Send the vendor security questionnaire to finance (owner: Soumyajit, due: 2026-11-15, status: open)
+Task: Hand over the Grafana dashboard access (owner: Soumyajit, status: open)
 `,
   },
   {
@@ -110,7 +110,7 @@ Task: Hand over the Grafana dashboard access (owner: Meera, status: open)
 ## Vendor risk
 Risk: The Razorpay enterprise contract auto-renews with a 22 percent price increase if it is not renegotiated before 2026-12-01. (date: 2026-10-25, status: open)
 Decision: Renegotiate the Razorpay contract before December instead of accepting auto-renewal. (date: 2026-10-25, status: active)
-Task: Prepare the negotiation brief for the CFO (owner: Aarav, due: 2026-11-18, status: open)
+Task: Prepare the negotiation brief for the CFO (owner: Subham, due: 2026-11-18, status: open)
 `,
   },
 ];
@@ -194,17 +194,17 @@ export async function seedDemo({ reset = true } = {}) {
     name: 'Project Atlas - Billing Service Migration',
     description:
       'Migration of the billing ledger and invoice pipeline to a modular service. Used as the Threadline demo project.',
-    owner: users.aarav._id,
+    owner: users.subham._id,
     members: DEMO_USERS.map((definition) => ({
       user: users[definition.key]._id,
       role: definition.role,
     })),
     transition: {
-      outgoingUserId: users.meera._id,
-      outgoingName: 'Meera Nair',
+      outgoingUserId: users.soumyajit._id,
+      outgoingName: 'Soumyajit Jena',
       plannedDepartureAt: new Date(Date.now() + 14 * 86_400_000),
       context:
-        'Meera is rotating off Atlas to lead the payments platform team. Rohan joins as her replacement in two weeks.',
+        'Soumyajit is rotating off Atlas to lead the payments platform team. Partho joins as their replacement in two weeks.',
     },
     startedAt: new Date('2026-08-19'),
     targetDate: new Date('2026-12-15'),
@@ -220,7 +220,7 @@ export async function seedDemo({ reset = true } = {}) {
       externalRef: '',
       visibility: document.visibility,
       sensitivity: document.sensitivity,
-      createdBy: users.aarav._id,
+      createdBy: users.subham._id,
       status: 'queued',
       files: [file],
     });
@@ -256,11 +256,11 @@ export async function seedDemo({ reset = true } = {}) {
       stats: source.stats,
     })),
     suggestedFlow: [
-      'Sign in as Rohan (incoming contributor) to see the recipient experience.',
-      'Sign in as Aarav (project lead) and create a handover for Rohan.',
+      'Open the workspace as Partho (incoming contributor) to see the recipient experience.',
+      'Open it as Subham (project lead) and create a handover for Partho.',
       'Review pending items, accept or reject them, then submit for review.',
-      'Approve the handover, share it, and open the share link as Rohan.',
-      'Change the visibility of handover-notes.txt and reload Rohan\'s handover to see live permission re-checks.',
+      'Approve the handover, share it, then switch to Partho and open the share link.',
+      'Change the visibility of handover-notes.txt and reload Partho\'s handover to see live permission re-checks.',
     ],
   };
 

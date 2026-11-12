@@ -10,9 +10,9 @@ import {
   tokenOf,
 } from './helpers.js';
 
-const LEAD = 'aarav@threadline.demo';
-const INCOMING = 'rohan@threadline.demo';
-const OUTGOING = 'meera@threadline.demo';
+const LEAD = 'subham@threadline.demo';
+const INCOMING = 'partho@threadline.demo';
+const OUTGOING = 'soumyajit@threadline.demo';
 
 describe('review and handover workflow', () => {
   let seeded;
@@ -76,7 +76,7 @@ describe('review and handover workflow', () => {
       .send({ note: 'Evidence checked against the source documents.' })
       .expect(200);
     expect(approved.body.handover.status).toBe('approved');
-    expect(approved.body.handover.approvedBySnapshot.name).toBe('Aarav Mehta');
+    expect(approved.body.handover.approvedBySnapshot.name).toBe('Subham Sahu');
 
     const shared = await request(app)
       .post(`/api/handovers/${handoverId}/share`)

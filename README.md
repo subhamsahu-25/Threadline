@@ -52,25 +52,25 @@ switcher in the top-right corner moves between people without signing out.
 
 | Person | Role | What to try |
 | --- | --- | --- |
-| **Aarav Mehta** | lead | Create a handover for Rohan, review items, approve, share, restrict a source, read the audit log |
-| **Meera Nair** | contributor | The outgoing team member whose work is being handed over |
-| **Rohan Iyer** | contributor | The incoming recipient — open the share link, acknowledge it |
-| **Priya Shah** | observer | Read-only; confirm that restricted sources and claims stay hidden |
+| **Subham Sahu** | lead | Create a handover for Partho, review items, approve, share, restrict a source, read the audit log |
+| **Soumyajit Jena** | contributor | The outgoing team member whose work is being handed over |
+| **Partho Prateem Satypatty** | contributor | The incoming recipient — open the share link, acknowledge it |
+| **Sabyasachi Behera** | observer | Read-only; confirm that restricted sources and claims stay hidden |
 
 The seed builds **Project Atlas**: 4 people, 6 sources, 28 claims, a superseded
 decision, a conflicting decision set and two ownership gaps.
 
 **Suggested walkthrough**
 
-1. Pick **Aarav** on the sign-in screen → open *Project Atlas* → **Handovers** →
-   create a handover for **Rohan** with the `onboarding` template.
+1. Pick **Subham** on the sign-in screen → open *Project Atlas* → **Handovers** →
+   create a handover for **Partho** with the `onboarding` template.
 2. Accept / edit / reject items, then **Submit for approval**.
-3. **Approve** as Aarav and **Share**. Copy the share link.
-4. Switch to **Rohan** in the profile menu, open the link, read the evidence
+3. **Approve** as Subham and **Share**. Copy the share link.
+4. Switch to **Partho** in the profile menu, open the link, read the evidence
    previews, acknowledge.
-5. Switch back to **Aarav**, open **Sources**, restrict `handover-notes.txt` to
+5. Switch back to **Subham**, open **Sources**, restrict `handover-notes.txt` to
    the `lead` role.
-6. Switch to **Rohan** again and reload the handover — affected items disappear
+6. Switch to **Partho** again and reload the handover — affected items disappear
    and the recipient sees *"Some items are no longer shown"*. The event is
    recorded in the audit log.
 
