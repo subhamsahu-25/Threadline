@@ -36,6 +36,7 @@ export const env = {
   corsOrigins: list('CORS_ORIGINS'),
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+  geminiFallbackModel: process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
   githubToken: process.env.GITHUB_TOKEN || '',
   googleDriveToken: process.env.GOOGLE_DRIVE_ACCESS_TOKEN || '',
   uploadDir: process.env.UPLOAD_DIR || path.join(rootDir, 'storage', 'uploads'),
