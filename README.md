@@ -161,7 +161,7 @@ to `http://localhost:4000` in development.
 
 ## Configuration
 
-**Backend** — copy `backend/.env.example` to `backend/.env`. Everything is
+**Backend** — create `backend/.env` for overrides; it is gitignored. Everything is
 optional in development: with `MONGODB_URI` empty the server starts an ephemeral
 in-memory MongoDB, and without `GEMINI_API_KEY` extraction uses the deterministic
 heuristic. Production requires a strong `JWT_SECRET`. See
