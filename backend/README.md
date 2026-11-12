@@ -80,7 +80,7 @@ All variables are optional in development.
 | `JWT_EXPIRES_IN` | `12h` | Token lifetime |
 | `CORS_ORIGINS` | empty (reflect origin) | Comma-separated allowed origins |
 | `GEMINI_API_KEY` | empty | Enables LLM extraction (Gemini structured JSON) |
-| `GEMINI_MODEL` | `gemini-2.5-flash` | Model used for extraction |
+| `GEMINI_MODEL` | `gemini-3.8-flash` | Model used for extraction |
 | `GITHUB_TOKEN` | empty | GitHub connector (public repos work without it) |
 | `GOOGLE_DRIVE_ACCESS_TOKEN` | empty | Google Drive connector (OAuth access token) |
 | `UPLOAD_DIR` | `backend/storage/uploads` | Uploaded file storage |

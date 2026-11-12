@@ -35,7 +35,7 @@ export const env = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
   corsOrigins: list('CORS_ORIGINS'),
   geminiApiKey: process.env.GEMINI_API_KEY || '',
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
   githubToken: process.env.GITHUB_TOKEN || '',
   googleDriveToken: process.env.GOOGLE_DRIVE_ACCESS_TOKEN || '',
   uploadDir: process.env.UPLOAD_DIR || path.join(rootDir, 'storage', 'uploads'),
