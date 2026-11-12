@@ -18,9 +18,10 @@ Requirements: Node.js 20+ (22 LTS recommended), npm.
 ```bash
 cd backend
 npm install
-cp .env.example .env        # optional; defaults work for local development
 npm run dev                 # http://localhost:4000
 ```
+
+Create `backend/.env` only when you need overrides; it is gitignored.
 
 With `MONGODB_URI` empty, the server starts an **ephemeral in-memory MongoDB**
 using `mongodb-memory-server` — no database setup required. Data disappears when
@@ -364,5 +365,4 @@ backend/
       queue.js             In-process background job queue
       audit.js             Audit event writer
   tests/                   Vitest + Supertest suites
-  .env.example
 ```
