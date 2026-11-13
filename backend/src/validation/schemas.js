@@ -117,6 +117,16 @@ export const resolveConflictSchema = z.object({
   keepClaimId: objectId,
 });
 
+export const resolveClaimSchema = z
+  .object({
+    ownerName: z.string().trim().min(1).max(80).optional(),
+    note: z.string().trim().max(600).optional(),
+    status: z.enum(['done', 'resolved']).optional(),
+  })
+  .refine((value) => value.ownerName || value.status, {
+    message: 'Provide an ownerName, or a status with an optional note',
+  });
+
 export const noteSchema = z.object({
   note: z.string().trim().min(1).max(600),
 });

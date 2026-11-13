@@ -176,6 +176,13 @@ function ReviewItem({
         </div>
       )}
 
+      {item.resolutionNote && (
+        <p className="mt-2 rounded-md border border-emerald-200 bg-emerald-50/70 px-2.5 py-1.5 text-[10.5px] leading-4 text-emerald-900">
+          <span className="font-semibold">Closure note:</span> {item.resolutionNote}
+          {item.resolutionByName ? ` — ${item.resolutionByName}` : ''}
+        </p>
+      )}
+
       {item.reviewerNote && (
         <p className="mt-2 rounded-md border border-line bg-slate-50 px-2.5 py-1.5 text-[10.5px] leading-4 text-ink-muted">
           <span className="font-semibold text-ink-soft">Reviewer note:</span> {item.reviewerNote}

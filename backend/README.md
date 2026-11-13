@@ -216,6 +216,7 @@ require `Authorization: Bearer <token>`.
 | DELETE | `/projects/:projectId/members/:userId` | lead only |
 | GET | `/projects/:projectId/state` | reconstructed state, timeline, conflicts, next actions |
 | GET | `/projects/:projectId/claims?type=&limit=` | visible, decorated claims |
+| POST | `/projects/:projectId/claims/:claimId/resolve` | lead or contributor; `{ ownerName? , status?: "done" \| "resolved", note? }` — assigns an owner and/or closes the item, audited |
 | POST | `/projects/:projectId/conflicts/resolve` | lead only; `{ topicKey, keepClaimId }` — confirms the current decision, supersedes the rest |
 | GET | `/projects/:projectId/audit?limit=` | lead only |
 
@@ -283,7 +284,7 @@ silently rewriting history.
 ## 8. Tests
 
 ```bash
-npm test          # 29 Vitest + Supertest tests against an in-memory MongoDB
+npm test          # 37 Vitest + Supertest tests against an in-memory MongoDB
 npm run test:watch
 ```
 
@@ -303,6 +304,10 @@ Suites:
 - `tests/conflict-resolution.test.js` — lead confirms the current decision,
   conflicting statements become superseded, the conflict clears, fresh drafts
   exclude the superseded version, audit event, role and membership guards.
+- `tests/claim-actions.test.js` — assigning an owner clears the ownership gap,
+  marking tasks done removes them from open work, answering questions and
+  recording risk mitigations, closure notes carried into the next draft,
+  observer rejection, validation and audit events.
 - `tests/llm-fallback.test.js` — Gemini model fallback retries on retired or
   unavailable models (404 / 429 / 503).
 

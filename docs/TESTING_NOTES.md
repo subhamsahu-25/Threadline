@@ -8,7 +8,7 @@ no metric is projected or estimated.
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **6 suites, 29 tests**, green on every run during
+`cd backend && npm test` — **7 suites, 37 tests**, green on every run during
 the build window. Each suite boots its own ephemeral
 (`mongodb-memory-server`) database, so no external services are required.
 
@@ -19,6 +19,7 @@ the build window. Each suite boots its own ephemeral
 | `handover-permissions.test.js` | Recipient-specific withholding, hidden-until-shared, **live permission re-check after a visibility change**, executive template exclusions, review boundaries, non-member rejection |
 | `handover-workflow.test.js` | Edit / submit / approve / share / acknowledge, version history + audit events, pending-item approval guard, transition guards, **no restricted text in recipient payloads** |
 | `conflict-resolution.test.js` (6) | Lead confirms the current decision → other statements superseded, conflict clears, fresh drafts exclude the superseded version, audit event, contributor/observer rejection |
+| `claim-actions.test.js` (8) | Assigning an owner clears the ownership gap, marking tasks done removes them from open work, answering questions and recording mitigations, closure notes carried into the next draft, observer rejection, validation and 404 guards |
 | `llm-fallback.test.js` (3) | Gemini model fallback retries on 404 (retired model), 429 and 503 instead of failing extraction |
 
 The frontend is validated with `npm run build` (clean Vite production
@@ -56,6 +57,11 @@ stack (Vercel frontend + Render backend + hosted MongoDB), at desktop
    superseded, the conflict card disappears, a success toast appears and the
    audit log records `claim.conflict_resolved`. Verified in-browser: two
    seeded conflicts → one after a single confirmation.
+8. **Deck actions** — every row of *Suggested next actions* carries a button.
+   Assign owner → member picker → save: the ownership gap count drops (2 → 1)
+   and the readiness score rises (56 → 64), with a toast. Answer question →
+   note → save: the item leaves the deck and the next-action list recomputes.
+   Verified in-browser at 1440×900.
 
 ---
 

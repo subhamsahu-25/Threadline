@@ -217,6 +217,12 @@ const claimSchema = new Schema(
     evidenceCount: { type: Number, default: 0 },
     verifiedEvidenceCount: { type: Number, default: 0 },
     supersededBy: { type: Schema.Types.ObjectId, ref: 'Claim' },
+    resolution: {
+      note: String,
+      by: { type: Schema.Types.ObjectId, ref: 'User' },
+      byName: String,
+      at: Date,
+    },
     extraction: {
       method: { type: String, enum: ['llm', 'heuristic'], default: 'heuristic' },
       model: String,
@@ -301,6 +307,8 @@ const handoverItemSchema = new Schema(
     },
     editedStatement: String,
     reviewerNote: String,
+    resolutionNote: String,
+    resolutionByName: String,
     acceptedWithoutEvidence: { type: Boolean, default: false },
   },
   { _id: false },

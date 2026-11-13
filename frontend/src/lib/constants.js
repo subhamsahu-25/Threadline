@@ -141,6 +141,8 @@ export const AUDIT_ACTION_LABELS = {
   'source.deleted': 'Source removed',
   'source.reingest_requested': 'Re-ingestion requested',
   'claim.conflict_resolved': 'Decision conflict resolved',
+  'claim.owner_assigned': 'Claim owner assigned',
+  'claim.resolved': 'Claim resolved',
   'document.viewed': 'Document opened',
   'handover.created': 'Handover created',
   'handover.item_reviewed': 'Handover item reviewed',

@@ -71,6 +71,8 @@ function buildItem({ claim, evidence, docById, sourceById }) {
     dueAt: claim.dueAt,
     occurredAt: claim.occurredAt || claim.createdAt,
     flags: claim.flags || [],
+    resolutionNote: claim.resolution?.note || null,
+    resolutionByName: claim.resolution?.byName || null,
     citations,
     decision: hasVerifiedCitation ? 'accepted' : 'pending',
     acceptedWithoutEvidence: false,

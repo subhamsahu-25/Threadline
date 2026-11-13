@@ -41,6 +41,8 @@ function renderItem(item, { recipient }) {
     dueAt: item.dueAt,
     occurredAt: item.occurredAt,
     flags: item.flags || [],
+    resolutionNote: item.resolutionNote || null,
+    resolutionByName: item.resolutionByName || null,
     decision: item.decision,
     acceptedWithoutEvidence: Boolean(item.acceptedWithoutEvidence),
     reviewerNote: recipient ? undefined : item.reviewerNote,

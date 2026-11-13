@@ -51,6 +51,8 @@ const ACTION_META = {
   'source.deleted': { icon: Trash2, tone: 'red' },
   'source.reingest_requested': { icon: RefreshCw, tone: 'amber' },
   'claim.conflict_resolved': { icon: CheckCircle2, tone: 'teal' },
+  'claim.owner_assigned': { icon: UserPlus, tone: 'blue' },
+  'claim.resolved': { icon: CheckCircle2, tone: 'green' },
   'document.viewed': { icon: FileText, tone: 'slate' },
   'handover.created': { icon: FileSignature, tone: 'navy' },
   'handover.item_reviewed': { icon: CheckCircle2, tone: 'blue' },

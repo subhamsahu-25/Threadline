@@ -29,12 +29,26 @@ import {
   Card,
   EmptyState,
   ErrorState,
+  Field,
   LoadingBlock,
+  Modal,
   PageHeader,
   ReadinessRing,
   SectionHeading,
+  Select,
   Stat,
+  Textarea,
 } from '../components/ui.jsx';
+
+const ACTION_MODES = {
+  assign_owner: { mode: 'owner', label: 'Assign owner', title: 'Assign an owner' },
+  resolve_question: { mode: 'resolve', label: 'Answer', title: 'Answer this open question' },
+  mitigate_risk: { mode: 'resolve', label: 'Mitigate', title: 'Record a mitigation' },
+  overdue_task: { mode: 'done', label: 'Mark done', title: 'Mark this task done' },
+  continue_task: { mode: 'done', label: 'Mark done', title: 'Mark this task done' },
+  stale_item: { mode: 'stale', label: 'Resolve', title: 'Close out this stale item' },
+  resolve_conflict: { mode: 'jump', label: 'Review conflict', title: 'Confirm the current decision' },
+};
 
 function readinessCopy(score) {
   if (score >= 85) return 'Ready for reviewer sign-off';
@@ -50,6 +64,9 @@ export default function OverviewPage() {
   const toast = useToast();
   const [evidenceId, setEvidenceId] = useState(null);
   const [resolving, setResolving] = useState(null);
+  const [actionTarget, setActionTarget] = useState(null);
+  const [actionForm, setActionForm] = useState({ ownerName: '', note: '' });
+  const [savingAction, setSavingAction] = useState(false);
   const { data, error, loading, reload } = useAsync(
     () => api.get(`/api/projects/${projectId}/state`),
     [projectId],
@@ -112,6 +129,54 @@ export default function OverviewPage() {
     }
   };
 
+  const openAction = (action, claim) => {
+    const config = ACTION_MODES[action.kind];
+    if (!config || !claim) return;
+    if (config.mode === 'jump') {
+      document.getElementById('conflicts')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    setActionForm({ ownerName: '', note: '' });
+    setActionTarget({ action, claim, config });
+  };
+
+  const submitAction = async (event) => {
+    event.preventDefault();
+    if (!actionTarget || savingAction) return;
+    const { action, claim, config } = actionTarget;
+    const payload = {};
+    if (config.mode === 'owner') {
+      if (!actionForm.ownerName.trim()) {
+        toast.error('Choose who should own this item');
+        return;
+      }
+      payload.ownerName = actionForm.ownerName.trim();
+    } else if (config.mode === 'done') {
+      payload.status = 'done';
+    } else {
+      payload.status = 'resolved';
+    }
+    if (actionForm.note.trim()) payload.note = actionForm.note.trim();
+
+    setSavingAction(true);
+    try {
+      await api.post(`/api/projects/${projectId}/claims/${claim.id}/resolve`, payload);
+      toast.success(
+        config.mode === 'owner'
+          ? `Owner recorded — ${actionForm.ownerName.trim()} is now accountable`
+          : config.mode === 'done'
+            ? 'Task marked done'
+            : 'Item resolved — the project state will update on reload',
+      );
+      setActionTarget(null);
+      await reload();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setSavingAction(false);
+    }
+  };
+
   if (loading && !data) {
     return (
       <div>
@@ -138,6 +203,7 @@ export default function OverviewPage() {
     (data.conflicts?.length || 0) + (data.ownershipGaps?.length || 0) + (data.unverified?.length || 0);
   const canPrepare = ['lead', 'contributor'].includes(project.role);
   const canResolve = project.role === 'lead';
+  const canAct = ['lead', 'contributor'].includes(project.role);
 
   return (
     <div>
@@ -605,6 +671,16 @@ export default function OverviewPage() {
                         evidence
                       </button>
                     )}
+                    {canAct && claim && ACTION_MODES[action.kind] && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="shrink-0"
+                        onClick={() => openAction(action, claim)}
+                      >
+                        {ACTION_MODES[action.kind].label}
+                      </Button>
+                    )}
                   </div>
                 );
               })}
@@ -664,6 +740,86 @@ export default function OverviewPage() {
           }
         />
       )}
+
+      <Modal
+        open={Boolean(actionTarget)}
+        onClose={() => {
+          if (!savingAction) setActionTarget(null);
+        }}
+        title={actionTarget?.config.title || 'Update item'}
+        description={
+          actionTarget
+            ? truncate(actionTarget.claim.statement, 140)
+            : undefined
+        }
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setActionTarget(null)}
+              disabled={savingAction}
+            >
+              Cancel
+            </Button>
+            <Button form="claim-action-form" type="submit" size="sm" disabled={savingAction}>
+              {savingAction ? 'Saving…' : 'Save'}
+            </Button>
+          </>
+        }
+      >
+        {actionTarget && (
+          <form id="claim-action-form" onSubmit={submitAction} className="space-y-4">
+            {actionTarget.config.mode === 'owner' ? (
+              <Field
+                label="Owner"
+                htmlFor="action-owner"
+                required
+                hint="Recorded on the claim and audited. This closes the ownership gap in the readiness score."
+              >
+                <Select
+                  id="action-owner"
+                  value={actionForm.ownerName}
+                  onChange={(event) =>
+                    setActionForm((form) => ({ ...form, ownerName: event.target.value }))
+                  }
+                >
+                  <option value="">Select a project member…</option>
+                  {(project.members || []).map((member) => (
+                    <option key={member.userId} value={member.name || member.email}>
+                      {member.name || member.email} · {member.role}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <Field
+                label="Resolution note"
+                htmlFor="action-note"
+                hint="Optional. Stored with the item so the reviewer and recipient can see how it was closed out."
+              >
+                <Textarea
+                  id="action-note"
+                  rows={3}
+                  maxLength={600}
+                  placeholder="What was decided, agreed or completed?"
+                  value={actionForm.note}
+                  onChange={(event) =>
+                    setActionForm((form) => ({ ...form, note: event.target.value }))
+                  }
+                />
+              </Field>
+            )}
+            <p className="rounded-lg border border-line bg-slate-50 px-3 py-2 text-[10.5px] leading-4 text-ink-muted">
+              {actionTarget.config.mode === 'done'
+                ? 'The item stays in the record with its citation; only its state changes to done.'
+                : actionTarget.config.mode === 'owner'
+                  ? 'Assignment is audited and does not change what the source said.'
+                  : 'Resolving records a human decision. The original extracted statement and quote stay intact.'}
+            </p>
+          </form>
+        )}
+      </Modal>
 
       <EvidenceDrawer
         projectId={projectId}

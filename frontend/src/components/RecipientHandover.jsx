@@ -31,6 +31,14 @@ function ReadOnlyItem({ item, onEvidence }) {
         </span>
       </div>
       <p className="mt-2.5 text-[13px] font-medium leading-6 text-ink">{item.statement}</p>
+      {item.resolutionNote && (
+        <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50/70 px-2.5 py-2">
+          <p className="font-mono text-[9px] uppercase tracking-wider text-emerald-800">
+            Closure note{item.resolutionByName ? ` · ${item.resolutionByName}` : ''}
+          </p>
+          <p className="mt-1 text-[11px] leading-4 text-emerald-900">{item.resolutionNote}</p>
+        </div>
+      )}
       {edited && item.originalStatement && (
         <details className="mt-2">
           <summary className="cursor-pointer text-[10.5px] font-medium text-ink-muted">

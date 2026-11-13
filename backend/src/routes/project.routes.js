@@ -23,6 +23,7 @@ import {
   createProjectSchema,
   createSourceSchema,
   listClaimsQuerySchema,
+  resolveClaimSchema,
   resolveConflictSchema,
   updateProjectSchema,
   updateSourceSchema,
@@ -372,6 +373,78 @@ router.get(
         req.projectRole === 'lead' || sourceVisibleTo(source, req.project, req.user._id),
     );
     res.json({ sources: visible.map(serializeSource) });
+  }),
+);
+
+router.post(
+  '/:projectId/claims/:claimId/resolve',
+  loadProject,
+  requireProjectContributor,
+  validate({ body: resolveClaimSchema }),
+  asyncHandler(async (req, res) => {
+    const claim = await Claim.findOne({
+      _id: req.params.claimId,
+      project: req.project._id,
+      retiredAt: null,
+    });
+    if (!claim) throw notFound('Claim not found');
+
+    // Fail closed: acting on a claim requires reading its evidence.
+    const { claims: visibleClaims } = await loadVisibleClaims({
+      project: req.project,
+      userId: req.user._id,
+    });
+    if (!visibleClaims.some((entry) => String(entry._id) === String(claim._id))) {
+      throw forbidden('You are not authorized to act on this claim');
+    }
+
+    const { ownerName, note, status } = req.body;
+    const before = { ownerName: claim.ownerName, status: claim.status };
+
+    if (ownerName) {
+      claim.ownerName = ownerName;
+      await recordAudit({
+        projectId: req.project._id,
+        actor: req.user,
+        action: 'claim.owner_assigned',
+        targetType: 'claim',
+        targetId: claim._id,
+        targetLabel: claim.statement.slice(0, 120),
+        meta: { ownerName, before: before.ownerName || null },
+        req,
+      });
+    }
+
+    if (status) {
+      claim.status = status;
+      claim.resolution = {
+        note: note || '',
+        by: req.user._id,
+        byName: req.user.name,
+        at: new Date(),
+      };
+      await recordAudit({
+        projectId: req.project._id,
+        actor: req.user,
+        action: 'claim.resolved',
+        targetType: 'claim',
+        targetId: claim._id,
+        targetLabel: claim.statement.slice(0, 120),
+        meta: { status, before: before.status, note: note || null },
+        req,
+      });
+    }
+
+    await claim.save();
+    res.json({
+      resolved: true,
+      claim: {
+        id: String(claim._id),
+        status: claim.status,
+        ownerName: claim.ownerName || null,
+        resolution: claim.resolution || null,
+      },
+    });
   }),
 );
 

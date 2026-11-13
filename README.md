@@ -101,7 +101,9 @@ Google Drive            chunk + offsets           extraction + quote       confl
    ownership gaps, stale and unverified items, and computes a readiness score,
    project phase and suggested next actions. A lead can confirm the current
    decision on the overview — the other statements become superseded and are
-   excluded from every future draft.
+   excluded from every future draft. Every suggested next action is executable
+   in place: assign an owner, answer a question, record a mitigation or close a
+   task without leaving the overview.
 4. **Compose** — builds a recipient-specific draft. Claims are included only if
    all citations point to sources the recipient may read; excluded claims appear
    as withheld counts by type and reason (`permissions`, `template`,
@@ -187,7 +189,7 @@ cd backend
 npm test
 ```
 
-Six suites, 29 tests, each against its own ephemeral MongoDB — no external
+Seven suites, 37 tests, each against its own ephemeral MongoDB — no external
 services needed:
 
 - **extraction** — verbatim quote location, heuristic extraction, CSV handling.
@@ -200,6 +202,9 @@ services needed:
   recipient payloads.
 - **conflict-resolution** — lead confirms the current decision, the rest become
   superseded, fresh drafts exclude them, audit event, role guards.
+- **claim-actions** — assigning an owner, closing tasks, answering questions and
+  recording mitigations from the overview; closure notes reach the next draft;
+  observer rejection and audit events.
 - **llm-fallback** — Gemini model fallback on retired/unavailable models.
 
 The frontend is validated with `npm run build`; the end-to-end demo flow has been
