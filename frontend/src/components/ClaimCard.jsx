@@ -6,7 +6,7 @@ import {
   FileSearch,
   UserRound,
 } from 'lucide-react';
-import { formatDate } from '../lib/format.js';
+import { expectsOwner, formatDate } from '../lib/format.js';
 import { TypeBadge, StateBadge, SensitivityBadge } from './badges.jsx';
 import { Badge, Card } from './ui.jsx';
 
@@ -88,12 +88,14 @@ export default function ClaimCard({
         {claim.statement}
       </p>
 
-      {(claim.ownerName || claim.dueAt || claim.occurredAt) && (
+      {(expectsOwner(claim) || claim.dueAt || claim.occurredAt) && (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-muted">
-          <span className="inline-flex items-center gap-1">
-            <UserRound className="h-3 w-3 text-ink-faint" aria-hidden="true" />
-            {claim.ownerName || <span className="text-amber-700">No owner recorded</span>}
-          </span>
+          {expectsOwner(claim) && (
+            <span className="inline-flex items-center gap-1">
+              <UserRound className="h-3 w-3 text-ink-faint" aria-hidden="true" />
+              {claim.ownerName || <span className="text-amber-700">No owner recorded</span>}
+            </span>
+          )}
           {claim.dueAt && (
             <span className={`inline-flex items-center gap-1 ${overdue ? 'font-semibold text-red-600' : ''}`}>
               <CalendarClock className="h-3 w-3" aria-hidden="true" />

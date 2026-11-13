@@ -30,7 +30,7 @@ import {
   HANDOVER_STATUS,
   TEMPLATES,
 } from '../lib/constants.js';
-import { formatDate, formatDateTime, formatRelative, pluralize, truncate } from '../lib/format.js';
+import { expectsOwner, formatDate, formatDateTime, formatRelative, pluralize, truncate } from '../lib/format.js';
 import {
   DecisionBadge,
   HandoverStatusBadge,
@@ -157,12 +157,14 @@ function ReviewItem({
         </details>
       )}
 
-      {(item.ownerName || item.dueAt || item.occurredAt) && (
+      {(expectsOwner(item) || item.dueAt || item.occurredAt) && (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-muted">
-          <span className="inline-flex items-center gap-1">
-            <UserRound className="h-3 w-3 text-ink-faint" aria-hidden="true" />
-            {item.ownerName || <span className="text-amber-700">No owner recorded</span>}
-          </span>
+          {expectsOwner(item) && (
+            <span className="inline-flex items-center gap-1">
+              <UserRound className="h-3 w-3 text-ink-faint" aria-hidden="true" />
+              {item.ownerName || <span className="text-amber-700">No owner recorded</span>}
+            </span>
+          )}
           {item.dueAt && (
             <span className="inline-flex items-center gap-1">
               <CalendarClock className="h-3 w-3" aria-hidden="true" />

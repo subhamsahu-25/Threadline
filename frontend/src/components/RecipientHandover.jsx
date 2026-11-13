@@ -9,7 +9,7 @@ import {
   Sparkles,
   UserRound,
 } from 'lucide-react';
-import { formatDate, formatDateTime } from '../lib/format.js';
+import { expectsOwner, formatDate, formatDateTime } from '../lib/format.js';
 import { CLAIM_TYPES } from '../lib/constants.js';
 import { TypeBadge, StateBadge, SensitivityBadge, SeverityBadge } from './badges.jsx';
 import { CitationList } from './ClaimCard.jsx';
@@ -49,12 +49,14 @@ function ReadOnlyItem({ item, onEvidence }) {
           </p>
         </details>
       )}
-      {(item.ownerName || item.dueAt || item.occurredAt) && (
+      {(expectsOwner(item) || item.dueAt || item.occurredAt) && (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-muted">
-          <span className="inline-flex items-center gap-1">
-            <UserRound className="h-3 w-3 text-ink-faint" aria-hidden="true" />
-            {item.ownerName || 'No owner recorded'}
-          </span>
+          {expectsOwner(item) && (
+            <span className="inline-flex items-center gap-1">
+              <UserRound className="h-3 w-3 text-ink-faint" aria-hidden="true" />
+              {item.ownerName || 'No owner recorded'}
+            </span>
+          )}
           {item.dueAt && (
             <span className="inline-flex items-center gap-1">
               <CalendarClock className="h-3 w-3" aria-hidden="true" />

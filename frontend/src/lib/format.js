@@ -58,6 +58,13 @@ export function daysUntil(value) {
   return Math.ceil(diff / 86_400_000);
 }
 
+const OPEN_STATUSES = ['open', 'active', 'planned', 'unknown'];
+
+export function expectsOwner(claim) {
+  if (!claim) return false;
+  return Boolean(claim.ownerName) || (claim.type === 'task' && OPEN_STATUSES.includes(claim.status));
+}
+
 export function initials(name = '') {
   return name
     .split(/\s+/)
