@@ -165,11 +165,12 @@ export default function HandoversPage() {
   }, [location.state, canPrepare]);
 
   const counts = useMemo(() => {
-    const result = { all: handovers.length, active: 0, shared: 0, received: 0 };
+    const result = { all: handovers.length, active: 0, shared: 0, received: 0, rejected: 0 };
     for (const handover of handovers) {
       if (['draft', 'in_review'].includes(handover.status)) result.active += 1;
       if (['approved', 'shared', 'acknowledged'].includes(handover.status)) result.shared += 1;
       if (String(handover.recipient) === String(user.id)) result.received += 1;
+      if (handover.status === 'rejected') result.rejected += 1;
     }
     return result;
   }, [handovers, user.id]);
@@ -261,7 +262,7 @@ export default function HandoversPage() {
             { value: 'active', label: 'In progress', count: counts.active },
             { value: 'shared', label: 'Shared', count: counts.shared },
             { value: 'received', label: 'For me', count: counts.received },
-            { value: 'rejected', label: 'Rejected' },
+            { value: 'rejected', label: 'Rejected', count: counts.rejected },
           ]}
         />
         <SearchInput
@@ -353,6 +354,8 @@ export default function HandoversPage() {
               type="submit"
               form="create-handover"
               loading={creating}
+              disabled={recipients.length === 0}
+              title={recipients.length === 0 ? 'Add a second project member first' : undefined}
               icon={FileSignature}
             >
               Compose draft

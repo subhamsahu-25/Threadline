@@ -14,6 +14,7 @@ import {
   LockKeyhole,
   Pencil,
   RefreshCw,
+  RotateCcw,
   Send,
   ShieldCheck,
   Sparkles,
@@ -282,6 +283,7 @@ export default function HandoverReviewPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [shareLink, setShareLink] = useState('');
   const [shareExpiresAt, setShareExpiresAt] = useState(null);
+  const [shareRenewal, setShareRenewal] = useState(false);
   const [shareError, setShareError] = useState('');
   const [cachedShare, setCachedShare] = useState('');
   const [versionsOpen, setVersionsOpen] = useState(false);
@@ -414,7 +416,7 @@ export default function HandoverReviewPage() {
       update(response.handover);
       setRejectOpen(false);
       setRejectNote('');
-      toast.success('Handover rejected and returned to the author.');
+      toast.success('Handover rejected. The author can reopen it as a draft.');
     } catch (err) {
       setRejectError(errorMessage(err));
     } finally {
@@ -422,7 +424,22 @@ export default function HandoverReviewPage() {
     }
   };
 
+  const reopen = async () => {
+    setWorking('reopen');
+    try {
+      const response = await api.post(`/api/handovers/${handoverId}/reopen`);
+      update(response.handover);
+      toast.success('Reopened as a draft. Edit the items, then resubmit for review.');
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const share = async () => {
+    const renewing = handover.status === 'shared';
+    setShareRenewal(renewing);
     setWorking('share');
     setShareError('');
     try {
@@ -438,7 +455,11 @@ export default function HandoverReviewPage() {
         /* storage optional */
       }
       await reload({ quiet: true });
-      toast.success('Handover shared. The recipient must sign in to open the link.');
+      toast.success(
+        renewing
+          ? 'Share link renewed. The previous link no longer works.'
+          : 'Handover shared. The recipient must sign in to open the link.',
+      );
     } catch (err) {
       setShareError(errorMessage(err));
     } finally {
@@ -536,7 +557,12 @@ export default function HandoverReviewPage() {
   const canSubmit = handover.status === 'draft' && (isAuthor || isLead);
   const canApprove = handover.status === 'in_review' && isLead;
   const canReject = ['draft', 'in_review'].includes(handover.status) && isLead;
-  const canShare = handover.status === 'approved' && (isLead || isAuthor);
+  const canReopen = handover.status === 'rejected' && (isLead || isAuthor);
+  const canShare = ['approved', 'shared'].includes(handover.status) && (isLead || isAuthor);
+  const serverShareUrl = handover.sharePath
+    ? `${window.location.origin}/shared/${handover.sharePath.split('/').pop()}`
+    : '';
+  const shareUrl = cachedShare || serverShareUrl;
   const statusMeta = HANDOVER_STATUS[handover.status] || { label: handover.status };
   const snapshot = handover.snapshot || {};
   const withheld = handover.withheld || { total: 0, byType: {}, byReason: {} };
@@ -609,9 +635,19 @@ export default function HandoverReviewPage() {
                 Approve
               </Button>
             )}
+            {canReopen && (
+              <Button
+                size="sm"
+                icon={RotateCcw}
+                loading={working === 'reopen'}
+                onClick={reopen}
+              >
+                Reopen as draft
+              </Button>
+            )}
             {canShare && (
               <Button size="sm" icon={Send} onClick={() => setShareOpen(true)}>
-                Share
+                {handover.status === 'shared' ? 'Renew share link' : 'Share'}
               </Button>
             )}
           </>
@@ -634,10 +670,10 @@ export default function HandoverReviewPage() {
               Share expires {formatDate(handover.shareExpiresAt)}
             </Badge>
           )}
-          {cachedShare && ['shared', 'acknowledged'].includes(handover.status) && (
+          {shareUrl && ['shared', 'acknowledged'].includes(handover.status) && (
             <button
               type="button"
-              onClick={() => copyShareLink(cachedShare)}
+              onClick={() => copyShareLink(shareUrl)}
               className="inline-flex items-center gap-1 rounded border border-line bg-white px-2 py-0.5 font-mono text-[10px] text-brand-700 hover:border-brand-300"
             >
               <Copy className="h-2.5 w-2.5" /> Copy share link
@@ -653,7 +689,21 @@ export default function HandoverReviewPage() {
             <p className="font-semibold">This handover was rejected</p>
             <p className="text-red-800/90">
               {handover.rejectionNote || 'No rejection note was recorded.'} Rejected{' '}
-              {formatRelative(handover.rejectedAt)}.
+              {formatRelative(handover.rejectedAt)}. The author or a lead can reopen it as a draft,
+              make changes and resubmit.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {handover.status === 'draft' && handover.reopenedAt && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] leading-5 text-amber-900">
+          <RotateCcw className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+          <div>
+            <p className="font-semibold">Reopened after rejection</p>
+            <p className="text-amber-800/90">
+              {handover.rejectionNote || 'No rejection note was recorded.'} Edit the items below,
+              then submit for review again.
             </p>
           </div>
         </div>
@@ -664,8 +714,18 @@ export default function HandoverReviewPage() {
           <Send className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
           <p>
             Shared {formatRelative(handover.sharedAt)}. The recipient opens the link signed in as
-            themselves; permissions are re-evaluated on every open.
-            {!cachedShare && ' The share link is only shown right after sharing; share again if it was lost.'}
+            themselves; permissions are re-evaluated on every open. The link expires{' '}
+            {formatDate(handover.shareExpiresAt)} — renew it if the recipient loses access.
+          </p>
+        </div>
+      )}
+
+      {handover.status === 'acknowledged' && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-[12px] leading-5 text-emerald-900">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+          <p>
+            {handover.recipientSnapshot?.name || 'The recipient'} acknowledged this handover{' '}
+            {formatRelative(handover.acknowledgedAt)}. The acknowledgement is in the audit trail.
           </p>
         </div>
       )}
@@ -1078,7 +1138,7 @@ export default function HandoverReviewPage() {
         open={rejectOpen}
         onClose={() => setRejectOpen(false)}
         title="Reject this handover"
-        description="The author is returned to the draft stage. A reason is required and recorded in the audit log."
+        description="The author or a lead can reopen it as a draft and resubmit. A reason is required and recorded in the audit log."
         footer={
           <>
             <Button variant="ghost" onClick={() => setRejectOpen(false)}>
@@ -1117,13 +1177,22 @@ export default function HandoverReviewPage() {
         onClose={() => {
           setShareOpen(false);
           setShareLink('');
+          setShareRenewal(false);
           setShareError('');
         }}
-        title={shareLink ? 'Handover shared' : 'Share this handover'}
+        title={
+          shareLink
+            ? shareRenewal
+              ? 'Share link renewed'
+              : 'Handover shared'
+            : 'Share this handover'
+        }
         description={
           shareLink
             ? 'Give this link to the recipient. They must be signed in as the intended recipient.'
-            : 'Sharing creates a time-limited, recipient-bound link.'
+            : handover.status === 'shared'
+              ? 'Renewing replaces the current link and resets the expiry. The previous link stops working.'
+              : 'Sharing creates a time-limited, recipient-bound link.'
         }
         footer={
           shareLink ? (
@@ -1141,7 +1210,7 @@ export default function HandoverReviewPage() {
                 Cancel
               </Button>
               <Button icon={Send} loading={working === 'share'} onClick={share}>
-                Create share link
+                {handover.status === 'shared' ? 'Renew link' : 'Create share link'}
               </Button>
             </>
           )
@@ -1161,12 +1230,21 @@ export default function HandoverReviewPage() {
               after they sign in.
             </p>
             <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10.5px] leading-4 text-amber-900">
-              Save this link now. It is shown only at the moment of sharing and is not returned by
-              later reads.
+              You can copy this link again from this page while the handover is shared. Renewing
+              later issues a new link and invalidates this one.
             </p>
           </div>
         ) : (
           <div className="space-y-3">
+            {handover.status === 'shared' && shareUrl && (
+              <div className="rounded-lg border border-line bg-slate-50 px-3 py-2.5">
+                <p className="eyebrow mb-1">Current share link</p>
+                <p className="break-all font-mono text-[10.5px] text-ink-soft">{shareUrl}</p>
+                <p className="mt-1.5 text-[10.5px] text-ink-muted">
+                  Expires {formatDateTime(handover.shareExpiresAt)}. Renewing replaces it.
+                </p>
+              </div>
+            )}
             <div className="flex items-center gap-2.5 rounded-lg border border-line bg-slate-50 px-3 py-2.5">
               <Avatar name={handover.recipientSnapshot?.name} size="md" />
               <div>

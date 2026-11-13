@@ -110,7 +110,7 @@ export default function RecipientHandover({
               <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-brand-200">
                 {snapshot.projectKey || 'Handover'} · Prepared for {handover.recipientSnapshot?.name}
               </p>
-              <h1 className="mt-1.5 font-display text-[23px] font-semibold leading-tight tracking-[-0.02em] sm:text-[27px]">
+              <h1 className="mt-1.5 font-display text-[23px] font-semibold leading-tight tracking-[-0.02em] text-white sm:text-[27px]">
                 {snapshot.projectName || 'Project handover'}
               </h1>
               <p className="mt-1.5 max-w-2xl text-[12.5px] leading-5 text-brand-100/75">
@@ -131,12 +131,12 @@ export default function RecipientHandover({
           <div>
             <p className="eyebrow">Prepared by</p>
             <p className="mt-1 text-[12px] font-semibold">
-              {snapshot.outgoingName || 'Project team'}
+              {handover.createdBySnapshot?.name || 'Project team'}
             </p>
             <p className="text-[10.5px] text-ink-muted">
-              {snapshot.plannedDepartureAt
-                ? `Departure ${formatDate(snapshot.plannedDepartureAt)}`
-                : 'Project handover'}
+              {snapshot.outgoingName && snapshot.plannedDepartureAt
+                ? `${snapshot.outgoingName} rotates off ${formatDate(snapshot.plannedDepartureAt)}`
+                : 'Reviewed before release'}
             </p>
           </div>
           <div>

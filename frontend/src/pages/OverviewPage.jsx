@@ -64,6 +64,7 @@ export default function OverviewPage() {
   const toast = useToast();
   const [evidenceId, setEvidenceId] = useState(null);
   const [resolving, setResolving] = useState(null);
+  const [conflictTarget, setConflictTarget] = useState(null);
   const [actionTarget, setActionTarget] = useState(null);
   const [actionForm, setActionForm] = useState({ ownerName: '', note: '' });
   const [savingAction, setSavingAction] = useState(false);
@@ -100,15 +101,9 @@ export default function OverviewPage() {
     navigate(`/projects/${projectId}/claims${search ? `?${search}` : ''}`);
   };
 
-  const resolveConflict = async (conflict, statement) => {
-    if (resolving) return;
-    const confirmed = window.confirm(
-      `Keep "${truncate(statement.statement, 90)}" as the current decision on "${
-        conflict.topic || 'this topic'
-      }"?\n\nThe other statement(s) will be marked superseded and left out of future handovers.`,
-    );
-    if (!confirmed) return;
-
+  const resolveConflict = async () => {
+    if (!conflictTarget || resolving) return;
+    const { conflict, statement } = conflictTarget;
     setResolving(String(statement.claimId));
     try {
       const result = await api.post(`/api/projects/${projectId}/conflicts/resolve`, {
@@ -121,6 +116,7 @@ export default function OverviewPage() {
           'other statement',
         )} marked superseded`,
       );
+      setConflictTarget(null);
       await reload();
     } catch (err) {
       toast.error(errorMessage(err));
@@ -408,7 +404,7 @@ export default function OverviewPage() {
                               icon={CheckCircle2}
                               loading={resolving === String(statement.claimId)}
                               disabled={Boolean(resolving)}
-                              onClick={() => resolveConflict(conflict, statement)}
+                              onClick={() => setConflictTarget({ conflict, statement })}
                             >
                               Keep as current
                             </Button>
@@ -579,15 +575,26 @@ export default function OverviewPage() {
                     <span className="font-mono text-[9.5px] text-ink-faint">
                       {claim.dueAt ? `Due ${formatDate(claim.dueAt)}` : 'No due date'}
                     </span>
-                    {evidenceForClaim(claim) && (
-                      <button
-                        type="button"
-                        onClick={() => setEvidenceId(evidenceForClaim(claim))}
-                        className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-brand-700 hover:text-brand-900"
-                      >
-                        Inspect evidence <ArrowRight className="h-3 w-3" aria-hidden="true" />
-                      </button>
-                    )}
+                    <div className="flex items-center gap-3">
+                      {canAct && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => openAction({ kind: 'assign_owner' }, claim)}
+                        >
+                          Assign owner
+                        </Button>
+                      )}
+                      {evidenceForClaim(claim) && (
+                        <button
+                          type="button"
+                          onClick={() => setEvidenceId(evidenceForClaim(claim))}
+                          className="inline-flex items-center gap-1 text-[10.5px] font-semibold text-brand-700 hover:text-brand-900"
+                        >
+                          Inspect evidence <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </Card>
               ))}
@@ -818,6 +825,55 @@ export default function OverviewPage() {
                   : 'Resolving records a human decision. The original extracted statement and quote stay intact.'}
             </p>
           </form>
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(conflictTarget)}
+        onClose={() => {
+          if (!resolving) setConflictTarget(null);
+        }}
+        title="Confirm the current decision"
+        description={
+          conflictTarget
+            ? `Topic: ${conflictTarget.conflict.topic || 'unlabelled decision'}`
+            : undefined
+        }
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setConflictTarget(null)}
+              disabled={Boolean(resolving)}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              icon={CheckCircle2}
+              loading={Boolean(resolving)}
+              onClick={resolveConflict}
+            >
+              Keep as current
+            </Button>
+          </>
+        }
+      >
+        {conflictTarget && (
+          <div className="space-y-3">
+            <div className="rounded-lg border border-line bg-slate-50 px-3 py-2.5">
+              <p className="eyebrow mb-1">Statement kept</p>
+              <p className="text-[12px] leading-5 text-ink-soft">
+                {conflictTarget.statement.statement}
+              </p>
+            </div>
+            <p className="text-[11.5px] leading-5 text-ink-muted">
+              The other statement(s) on this topic will be marked superseded, excluded from
+              future handovers, and the decision is written to the audit log. The source quotes
+              stay untouched.
+            </p>
+          </div>
         )}
       </Modal>
 

@@ -82,6 +82,7 @@ export function buildReviewerView({ handover, project, user }) {
     status: handover.status,
     version: handover.version,
     createdBy: handover.createdBy,
+    createdBySnapshot: handover.createdBySnapshot,
     createdAt: handover.createdAt,
     updatedAt: handover.updatedAt,
     reviewer: handover.reviewer,
@@ -89,9 +90,13 @@ export function buildReviewerView({ handover, project, user }) {
     approvedBySnapshot: handover.approvedBySnapshot,
     rejectedAt: handover.rejectedAt,
     rejectionNote: handover.rejectionNote,
+    reopenedAt: handover.reopenedAt,
     sharedAt: handover.sharedAt,
     acknowledgedAt: handover.acknowledgedAt,
     shareExpiresAt: handover.shareExpiresAt,
+    sharePath: handover.shareToken
+      ? `/api/handovers/shared/${handover.shareToken}`
+      : null,
     items: (handover.items || []).map((item) => renderItem(item, { recipient: false })),
     alerts: handover.alerts || [],
     recommendations: handover.recommendations || [],
@@ -245,6 +250,7 @@ export async function buildRecipientView({ handover, project, user, req }) {
     id: handover._id,
     projectId: handover.project,
     recipientSnapshot: handover.recipientSnapshot,
+    createdBySnapshot: handover.createdBySnapshot,
     roleTemplate: handover.roleTemplate,
     status: handover.status,
     version: handover.version,
@@ -465,9 +471,35 @@ export async function rejectHandover({ handover, project, actor, note, req }) {
   });
 }
 
+export async function reopenHandover({ handover, project, actor, req }) {
+  if (handover.status !== 'rejected') {
+    throw badRequest(`Only a rejected handover can be reopened (current: ${handover.status})`);
+  }
+  if (!canManageProject(project, actor) && String(handover.createdBy) !== String(actor._id)) {
+    throw forbidden('Only the author or a project lead can reopen this handover');
+  }
+
+  handover.status = 'draft';
+  handover.reopenedAt = new Date();
+  await saveVersion(handover, actor, 'reopened');
+
+  await recordAudit({
+    projectId: project._id,
+    actor,
+    action: 'handover.reopened',
+    targetType: 'handover',
+    targetId: handover._id,
+    targetLabel: `Handover v${handover.version}`,
+    meta: { rejectionNote: handover.rejectionNote || null },
+    req,
+  });
+}
+
 export async function shareHandover({ handover, project, actor, req }) {
-  if (handover.status !== 'approved') {
-    throw badRequest(`Only an approved handover can be shared (current: ${handover.status})`);
+  if (!['approved', 'shared'].includes(handover.status)) {
+    throw badRequest(
+      `Only an approved handover can be shared (current: ${handover.status})`,
+    );
   }
   if (String(handover.recipient) === String(actor._id)) {
     throw forbidden('The recipient cannot share their own handover');
@@ -476,17 +508,18 @@ export async function shareHandover({ handover, project, actor, req }) {
     throw forbidden('Only the author or a project lead can share this handover');
   }
 
+  const renewing = handover.status === 'shared';
   const token = randomBytes(24).toString('hex');
   handover.status = 'shared';
   handover.sharedAt = new Date();
   handover.shareToken = token;
   handover.shareExpiresAt = new Date(Date.now() + env.shareTtlDays * 86_400_000);
-  await saveVersion(handover, actor, 'shared');
+  await saveVersion(handover, actor, renewing ? 'share link renewed' : 'shared');
 
   await recordAudit({
     projectId: project._id,
     actor,
-    action: 'handover.shared',
+    action: renewing ? 'handover.share_renewed' : 'handover.shared',
     targetType: 'handover',
     targetId: handover._id,
     targetLabel: `Handover v${handover.version}`,

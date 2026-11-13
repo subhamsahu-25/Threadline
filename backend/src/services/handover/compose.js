@@ -258,6 +258,7 @@ export async function composeHandover({
     roleTemplate,
     status: 'draft',
     createdBy: actor._id,
+    createdBySnapshot: { name: actor.name, email: actor.email },
     items,
     alerts: visibleAlerts,
     recommendations: visibleRecommendations,

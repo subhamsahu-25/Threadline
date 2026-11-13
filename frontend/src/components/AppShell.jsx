@@ -25,7 +25,7 @@ import { useWorkspace } from '../context/WorkspaceContext.jsx';
 import { api, errorMessage } from '../lib/api.js';
 import { daysUntil } from '../lib/format.js';
 import { DEMO_PASSWORD, DEMO_PERSONAS, ROLE_LABELS } from '../lib/constants.js';
-import { Avatar, Badge } from './ui.jsx';
+import { Avatar, Badge, Button, Modal } from './ui.jsx';
 
 export function BrandMark({ className = 'h-9 w-9' }) {
   return (
@@ -414,6 +414,8 @@ export default function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [personaOpen, setPersonaOpen] = useState(false);
   const [switching, setSwitching] = useState(null);
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const location = useLocation();
   const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/);
   const routeProject = projectMatch
@@ -443,23 +445,24 @@ export default function AppShell() {
     }
   };
 
-  const resetDemo = async () => {
+  const openResetConfirm = () => {
     setPersonaOpen(false);
-    if (
-      !window.confirm(
-        'Reset the Atlas demo data? Everyone is signed out and the synthetic workspace is rebuilt.',
-      )
-    ) {
-      return;
-    }
+    setResetOpen(true);
+  };
+
+  const resetDemo = async () => {
+    setResetting(true);
     try {
       await api.post('/api/demo/seed?reset=true');
       toast.success('Atlas demo data rebuilt.');
+      logout();
+      navigate('/login');
     } catch (err) {
       toast.error(errorMessage(err));
+    } finally {
+      setResetting(false);
+      setResetOpen(false);
     }
-    logout();
-    navigate('/login');
   };
 
   const departure = project?.transition?.plannedDepartureAt
@@ -514,7 +517,7 @@ export default function AppShell() {
               user={user}
               switching={switching}
               onSwitch={switchTo}
-              onReset={resetDemo}
+              onReset={openResetConfirm}
               onLogout={logout}
             />
           </div>
@@ -582,7 +585,7 @@ export default function AppShell() {
               user={user}
               switching={switching}
               onSwitch={switchTo}
-              onReset={resetDemo}
+              onReset={openResetConfirm}
               onLogout={logout}
             />
           </div>
@@ -656,6 +659,32 @@ export default function AppShell() {
         logout={logout}
         isLead={isLead}
       />
+
+      <Modal
+        open={resetOpen}
+        onClose={() => {
+          if (!resetting) setResetOpen(false);
+        }}
+        title="Reset demo data?"
+        description="This rebuilds the Atlas demo workspace from scratch and signs everyone out."
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setResetOpen(false)} disabled={resetting}>
+              Cancel
+            </Button>
+            <Button variant="danger" size="sm" icon={RefreshCw} loading={resetting} onClick={resetDemo}>
+              Reset demo data
+            </Button>
+          </>
+        }
+      >
+        <ul className="space-y-2 text-[12px] leading-5 text-ink-soft">
+          <li>· Every source, claim, handover, and audit entry returns to the seeded demo state.</li>
+          <li>· Any changes you made while exploring will be discarded.</li>
+          <li>· You will be signed out and returned to the profile picker.</li>
+        </ul>
+      </Modal>
     </div>
   );
 }

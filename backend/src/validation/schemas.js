@@ -86,6 +86,10 @@ export const addMemberSchema = z
     message: 'Provide the email or userId of an existing user',
   });
 
+export const updateMemberRoleSchema = z.object({
+  role: projectRoleField,
+});
+
 export const createSourceSchema = z.object({
   kind: z.enum(['github', 'drive']),
   name: z.string().trim().min(1).max(120).optional(),

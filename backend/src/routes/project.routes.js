@@ -25,6 +25,7 @@ import {
   listClaimsQuerySchema,
   resolveClaimSchema,
   resolveConflictSchema,
+  updateMemberRoleSchema,
   updateProjectSchema,
   updateSourceSchema,
   uploadSourceSchema,
@@ -210,6 +211,44 @@ router.post(
 
     await req.project.populate('members.user', 'name email');
     res.status(201).json({ project: serializeProject(req.project, req.user) });
+  }),
+);
+
+router.patch(
+  '/:projectId/members/:userId',
+  loadProject,
+  requireProjectLead,
+  validate({ body: updateMemberRoleSchema }),
+  asyncHandler(async (req, res) => {
+    const { userId } = req.params;
+    if (String(req.project.owner) === String(userId)) {
+      throw badRequest('The project owner always holds the lead role');
+    }
+    const member = req.project.members.find(
+      (entry) => String(entry.user?._id ?? entry.user) === String(userId),
+    );
+    if (!member) throw notFound('That person is not a member');
+    const role = req.body.role;
+    if (member.role === role) {
+      res.json({ project: serializeProject(req.project, req.user) });
+      return;
+    }
+
+    const previousRole = member.role;
+    member.role = role;
+    await req.project.save();
+    await recordAudit({
+      projectId: req.project._id,
+      actor: req.user,
+      action: 'member.role_changed',
+      targetType: 'user',
+      targetId: userId,
+      meta: { from: previousRole, to: role },
+      req,
+    });
+
+    await req.project.populate('members.user', 'name email');
+    res.json({ project: serializeProject(req.project, req.user) });
   }),
 );
 

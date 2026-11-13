@@ -91,6 +91,7 @@ export default function App() {
             <Route path="handovers/:handoverId" element={<HandoverReviewPage />} />
             <Route path="audit" element={<AuditPage />} />
             <Route path="people" element={<PeoplePage />} />
+            <Route path="settings" element={<Navigate to="../people" replace />} />
           </Route>
           <Route path="*" element={<NotFoundPage />} />
         </Route>

@@ -44,6 +44,7 @@ const ACTION_META = {
   'project.updated': { icon: Pencil, tone: 'blue' },
   'member.added': { icon: UserPlus, tone: 'green' },
   'member.removed': { icon: UserMinus, tone: 'red' },
+  'member.role_changed': { icon: SlidersHorizontal, tone: 'amber' },
   'source.created': { icon: Database, tone: 'blue' },
   'source.ingested': { icon: ShieldCheck, tone: 'green' },
   'source.ingest_failed': { icon: XCircle, tone: 'red' },
@@ -59,7 +60,9 @@ const ACTION_META = {
   'handover.submitted': { icon: Send, tone: 'amber' },
   'handover.approved': { icon: CheckCircle2, tone: 'green' },
   'handover.rejected': { icon: XCircle, tone: 'red' },
+  'handover.reopened': { icon: RefreshCw, tone: 'amber' },
   'handover.shared': { icon: Send, tone: 'blue' },
+  'handover.share_renewed': { icon: RefreshCw, tone: 'blue' },
   'handover.acknowledged': { icon: ShieldCheck, tone: 'teal' },
   'handover.recipient_viewed': { icon: FileText, tone: 'slate' },
   'handover.permissions_rechecked': { icon: ShieldCheck, tone: 'amber' },
@@ -78,7 +81,8 @@ const TONE_STYLES = {
 function metaSummary(meta) {
   if (!meta || typeof meta !== 'object') return null;
   const parts = [];
-  if (meta.role) parts.push(`role: ${meta.role}`);
+  if (meta.from && meta.to) parts.push(`role: ${meta.from} → ${meta.to}`);
+  else if (meta.role) parts.push(`role: ${meta.role}`);
   if (meta.changed) parts.push(`changed: ${[].concat(meta.changed).join(', ')}`);
   if (meta.files) parts.push(`${meta.files.length} file${meta.files.length === 1 ? '' : 's'}`);
   if (meta.visibility?.scope) parts.push(`visible to: ${meta.visibility.scope}`);

@@ -105,6 +105,7 @@ export default function PeoplePage() {
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState(null);
   const [removeBusy, setRemoveBusy] = useState(false);
+  const [roleBusy, setRoleBusy] = useState(null);
   const [form, setForm] = useState(() => settingsForm(project));
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
@@ -167,6 +168,24 @@ export default function PeoplePage() {
       toast.error(errorMessage(error));
     } finally {
       setRemoveBusy(false);
+    }
+  };
+
+  const changeRole = async (member, role) => {
+    if (!member || role === member.role || roleBusy) return;
+    setRoleBusy(member.userId);
+    try {
+      const data = await api.patch(`/api/projects/${projectId}/members/${member.userId}`, {
+        role,
+      });
+      await applyProject(data.project);
+      toast.success(
+        `${member.name || member.email} now has ${ROLE_LABELS[role].toLowerCase()} access from their next request.`,
+      );
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setRoleBusy(null);
     }
   };
 
@@ -263,7 +282,23 @@ export default function PeoplePage() {
                       <p className="truncate text-[11px] text-ink-muted">{member.email}</p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <RoleBadge role={member.role} />
+                      {isLead && !isOwner ? (
+                        <Select
+                          aria-label={`Change role for ${member.name || member.email}`}
+                          value={member.role}
+                          onChange={(event) => changeRole(member, event.target.value)}
+                          disabled={roleBusy === member.userId}
+                          className="h-8 w-[140px] py-0 text-[11.5px]"
+                        >
+                          {ROLE_CHOICES.map((choice) => (
+                            <option key={choice.value} value={choice.value}>
+                              {choice.label}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <RoleBadge role={member.role} />
+                      )}
                       {isLead && !isOwner && (
                         <button
                           type="button"

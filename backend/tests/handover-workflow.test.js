@@ -218,4 +218,121 @@ describe('review and handover workflow', () => {
     ).toBe(true);
     expect(recipientView.body.handover).not.toHaveProperty('withheld');
   });
+
+  it('reopens a rejected handover instead of leaving it stranded', async () => {
+    const handover = await createDraft();
+    const handoverId = handover.id;
+
+    await request(app)
+      .post(`/api/handovers/${handoverId}/submit`)
+      .set(auth(leadToken))
+      .expect(200);
+    await request(app)
+      .post(`/api/handovers/${handoverId}/reject`)
+      .set(auth(leadToken))
+      .send({ note: 'The vendor clause quote needs a second source.' })
+      .expect(200);
+
+    const contributorReopen = await request(app)
+      .post(`/api/handovers/${handoverId}/reopen`)
+      .set(auth(tokenOf(seeded, OUTGOING)));
+    expect(contributorReopen.status).toBe(403);
+
+    const reopened = await request(app)
+      .post(`/api/handovers/${handoverId}/reopen`)
+      .set(auth(leadToken))
+      .expect(200);
+    expect(reopened.body.handover.status).toBe('draft');
+    expect(reopened.body.handover.reopenedAt).toBeTruthy();
+    expect(reopened.body.handover.rejectionNote).toBe(
+      'The vendor clause quote needs a second source.',
+    );
+
+    const duplicate = await request(app)
+      .post(`/api/handovers/${handoverId}/reopen`)
+      .set(auth(leadToken));
+    expect(duplicate.status).toBe(400);
+
+    await request(app)
+      .post(`/api/handovers/${handoverId}/submit`)
+      .set(auth(leadToken))
+      .expect(200);
+
+    const versions = await request(app)
+      .get(`/api/handovers/${handoverId}/versions`)
+      .set(auth(leadToken))
+      .expect(200);
+    expect(versions.body.versions.map((entry) => entry.reason)).toContain('reopened');
+
+    const audit = await request(app)
+      .get(`/api/projects/${projectId}/audit`)
+      .set(auth(leadToken))
+      .expect(200);
+    const reopenedEvent = audit.body.events.find(
+      (event) => event.action === 'handover.reopened',
+    );
+    expect(reopenedEvent).toBeTruthy();
+    expect(reopenedEvent.meta.rejectionNote).toBe(
+      'The vendor clause quote needs a second source.',
+    );
+  });
+
+  it('renews a share link and invalidates the previous one', async () => {
+    const handover = await createDraft();
+    const handoverId = handover.id;
+
+    await request(app)
+      .post(`/api/handovers/${handoverId}/submit`)
+      .set(auth(leadToken))
+      .expect(200);
+    await request(app)
+      .post(`/api/handovers/${handoverId}/approve`)
+      .set(auth(leadToken))
+      .send({})
+      .expect(200);
+
+    const first = await request(app)
+      .post(`/api/handovers/${handoverId}/share`)
+      .set(auth(leadToken))
+      .expect(200);
+    const firstToken = first.body.sharePath.split('/').pop();
+
+    const renewed = await request(app)
+      .post(`/api/handovers/${handoverId}/share`)
+      .set(auth(leadToken))
+      .expect(200);
+    const secondToken = renewed.body.sharePath.split('/').pop();
+    expect(renewed.body.status).toBe('shared');
+    expect(secondToken).not.toBe(firstToken);
+
+    const staleLink = await request(app)
+      .get(`/api/handovers/shared/${firstToken}`)
+      .set(auth(incomingToken));
+    expect(staleLink.status).toBe(404);
+
+    await request(app)
+      .get(`/api/handovers/shared/${secondToken}`)
+      .set(auth(incomingToken))
+      .expect(200);
+
+    const detail = await request(app)
+      .get(`/api/handovers/${handoverId}`)
+      .set(auth(leadToken))
+      .expect(200);
+    expect(detail.body.handover.sharePath).toBe(`/api/handovers/shared/${secondToken}`);
+
+    const versions = await request(app)
+      .get(`/api/handovers/${handoverId}/versions`)
+      .set(auth(leadToken))
+      .expect(200);
+    expect(versions.body.versions.map((entry) => entry.reason)).toContain('share link renewed');
+
+    const audit = await request(app)
+      .get(`/api/projects/${projectId}/audit`)
+      .set(auth(leadToken))
+      .expect(200);
+    const actions = audit.body.events.map((event) => event.action);
+    expect(actions.filter((action) => action === 'handover.shared')).toHaveLength(1);
+    expect(actions.filter((action) => action === 'handover.share_renewed')).toHaveLength(1);
+  });
 });

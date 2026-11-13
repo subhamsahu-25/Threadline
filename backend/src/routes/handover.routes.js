@@ -13,6 +13,7 @@ import {
   handoverAccess,
   listVersions,
   rejectHandover,
+  reopenHandover,
   reviewItem,
   shareHandover,
   submitForReview,
@@ -232,6 +233,15 @@ router.post(
       note: req.body.note,
       req,
     });
+    res.json({ handover: buildReviewerView({ handover, project, user: req.user }) });
+  }),
+);
+
+router.post(
+  '/:id/reopen',
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    await reopenHandover({ handover, project, actor: req.user, req });
     res.json({ handover: buildReviewerView({ handover, project, user: req.user }) });
   }),
 );
