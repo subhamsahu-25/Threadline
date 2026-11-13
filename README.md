@@ -185,7 +185,7 @@ cd backend
 npm test
 ```
 
-Four suites, 20 tests, each against its own ephemeral MongoDB — no external
+Five suites, 23 tests, each against its own ephemeral MongoDB — no external
 services needed:
 
 - **extraction** — verbatim quote location, heuristic extraction, CSV handling.
@@ -196,9 +196,12 @@ services needed:
 - **handover-workflow** — edit/submit/approve/share/acknowledge, version history,
   pending-item approval guard, transition guards, no restricted text in
   recipient payloads.
+- **llm-fallback** — Gemini model fallback on retired/unavailable models.
 
 The frontend is validated with `npm run build`; the end-to-end demo flow has been
-exercised in-browser across all four personas.
+exercised in-browser across all four personas. Full testing notes, including
+failure cases and hosted-deployment verification, are in
+[`docs/TESTING_NOTES.md`](docs/TESTING_NOTES.md).
 
 ---
 
@@ -214,6 +217,12 @@ exercised in-browser across all four personas.
 - Audit events record actor, action, target, IP and user agent for project,
   source, document, handover and authentication operations.
 - Pipeline failures are logged without exposing document text.
+
+The full privacy, security, accessibility and responsible-design statement is
+in [`docs/SECURITY_PRIVACY_DESIGN.md`](docs/SECURITY_PRIVACY_DESIGN.md), and
+the disclosure of AI tools used to build Threadline is in
+[`docs/AI_DISCLOSURE.md`](docs/AI_DISCLOSURE.md). The project is licensed
+under the MIT License ([`LICENSE`](LICENSE)).
 
 ---
 

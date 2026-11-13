@@ -282,7 +282,7 @@ silently rewriting history.
 ## 8. Tests
 
 ```bash
-npm test          # 20 Vitest + Supertest tests against an in-memory MongoDB
+npm test          # 23 Vitest + Supertest tests against an in-memory MongoDB
 npm run test:watch
 ```
 
@@ -299,6 +299,8 @@ Suites:
 - `tests/handover-workflow.test.js` — edit/submit/approve/share/acknowledge,
   version history and audit events, pending-item approval guard, rejection and
   transition guards, no restricted text in recipient payloads.
+- `tests/llm-fallback.test.js` — Gemini model fallback retries on retired or
+  unavailable models (404 / 429 / 503).
 
 Each suite boots its own ephemeral MongoDB, so no external services are needed.
 
