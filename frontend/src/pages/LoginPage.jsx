@@ -117,25 +117,6 @@ function BrandPanel() {
         </ul>
       </div>
 
-      <div className="relative mt-12 max-w-lg rounded-2xl border border-white/15 bg-white/[0.06] p-4 backdrop-blur-sm">
-        <div className="flex items-center justify-between gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded border border-white/15 bg-white/10 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider text-brand-100">
-            Decision
-          </span>
-          <span className="font-mono text-[10px] text-brand-200/70">REF · architecture-decisions.md</span>
-        </div>
-        <p className="mt-2.5 text-[13.5px] font-medium leading-6 text-white">
-          Stay on MySQL for the ledger until Q1 2027 and revisit PostgreSQL after the beta; this
-          supersedes the earlier PostgreSQL-only plan.
-        </p>
-        <div className="mt-3 flex items-center gap-2 border-t border-white/10 pt-3">
-          <span className="inline-flex items-center gap-1 rounded border border-emerald-300/25 bg-emerald-400/10 px-1.5 py-0.5 font-mono text-[9.5px] text-emerald-200">
-            <Check className="h-2.5 w-2.5" /> Exact quote
-          </span>
-          <span className="font-mono text-[10px] text-brand-200/60">2026-10-18 · verified</span>
-        </div>
-      </div>
-
       <p className="relative mt-10 text-[10.5px] text-brand-200/45">
         Demo workspace uses synthetic data only. No enterprise systems are connected.
       </p>
