@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowRight,
   ArrowUpRight,
+  CheckCircle2,
   CircleHelp,
   FileWarning,
   GitCompareArrows,
@@ -15,8 +16,9 @@ import {
   Timer,
   UserRoundX,
 } from 'lucide-react';
-import { api } from '../lib/api.js';
+import { api, errorMessage } from '../lib/api.js';
 import { useAsync } from '../hooks/useAsync.js';
+import { useToast } from '../context/ToastContext.jsx';
 import { useProject } from './ProjectLayout.jsx';
 import { formatDate, formatRelative, pluralize, truncate } from '../lib/format.js';
 import { TypeIcon } from '../components/badges.jsx';
@@ -45,7 +47,9 @@ export default function OverviewPage() {
   const { projectId } = useParams();
   const { project, stats } = useProject();
   const navigate = useNavigate();
+  const toast = useToast();
   const [evidenceId, setEvidenceId] = useState(null);
+  const [resolving, setResolving] = useState(null);
   const { data, error, loading, reload } = useAsync(
     () => api.get(`/api/projects/${projectId}/state`),
     [projectId],
@@ -79,6 +83,35 @@ export default function OverviewPage() {
     navigate(`/projects/${projectId}/claims${search ? `?${search}` : ''}`);
   };
 
+  const resolveConflict = async (conflict, statement) => {
+    if (resolving) return;
+    const confirmed = window.confirm(
+      `Keep "${truncate(statement.statement, 90)}" as the current decision on "${
+        conflict.topic || 'this topic'
+      }"?\n\nThe other statement(s) will be marked superseded and left out of future handovers.`,
+    );
+    if (!confirmed) return;
+
+    setResolving(String(statement.claimId));
+    try {
+      const result = await api.post(`/api/projects/${projectId}/conflicts/resolve`, {
+        topicKey: conflict.topicKey,
+        keepClaimId: statement.claimId,
+      });
+      toast.success(
+        `Decision confirmed — ${pluralize(
+          result.supersededClaimIds?.length || 0,
+          'other statement',
+        )} marked superseded`,
+      );
+      await reload();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setResolving(null);
+    }
+  };
+
   if (loading && !data) {
     return (
       <div>
@@ -104,6 +137,7 @@ export default function OverviewPage() {
   const attentionCount =
     (data.conflicts?.length || 0) + (data.ownershipGaps?.length || 0) + (data.unverified?.length || 0);
   const canPrepare = ['lead', 'contributor'].includes(project.role);
+  const canResolve = project.role === 'lead';
 
   return (
     <div>
@@ -300,13 +334,29 @@ export default function OverviewPage() {
                           )}
                         </div>
                         <p className="text-[12.5px] leading-5 text-ink-soft">{statement.statement}</p>
+                        {canResolve && conflict.topicKey && (
+                          <div className="mt-2 flex justify-end">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              icon={CheckCircle2}
+                              loading={resolving === String(statement.claimId)}
+                              disabled={Boolean(resolving)}
+                              onClick={() => resolveConflict(conflict, statement)}
+                            >
+                              Keep as current
+                            </Button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line bg-slate-50/70 px-4 py-2.5">
                   <p className="text-[10.5px] text-ink-muted">
-                    Confirm the current decision before this handover is approved.
+                    {canResolve
+                      ? 'Confirm the current decision — superseded statements are excluded from future handovers.'
+                      : 'Confirm the current decision before this handover is approved.'}
                   </p>
                   <button
                     type="button"

@@ -123,9 +123,27 @@ export async function buildRecipientView({ handover, project, user, req }) {
   const sourceById = await loadSourceMap(project._id);
   const items = [];
   let revoked = 0;
+  let supersededItems = 0;
+
+  const itemClaimIds = (handover.items || [])
+    .map((item) => item.claimId)
+    .filter(Boolean);
+  const liveClaims = await Claim.find({ _id: { $in: itemClaimIds }, project: project._id })
+    .select('_id status')
+    .lean();
+  const liveStatusById = new Map(
+    liveClaims.map((claim) => [String(claim._id), claim.status]),
+  );
 
   for (const item of handover.items || []) {
     if (!['accepted', 'edited'].includes(item.decision)) continue;
+
+    // A conflict resolved after this draft was composed leaves the losing
+    // statement superseded; it must not reach the recipient.
+    if (liveStatusById.get(String(item.claimId)) === 'superseded') {
+      supersededItems += 1;
+      continue;
+    }
 
     const allVisible = (item.citations || []).every((citation) =>
       sourceVisibleTo(sourceById.get(String(citation.sourceId)), project, user._id),
@@ -200,11 +218,11 @@ export async function buildRecipientView({ handover, project, user, req }) {
     targetType: 'handover',
     targetId: handover._id,
     targetLabel: `Handover v${handover.version}`,
-    meta: { revokedItems: revoked },
+    meta: { revokedItems: revoked, supersededItems },
     req,
   });
 
-  if (revoked > 0) {
+  if (revoked > 0 || supersededItems > 0) {
     await recordAudit({
       projectId: project._id,
       actor: { name: 'threadline-permissions' },
@@ -212,7 +230,11 @@ export async function buildRecipientView({ handover, project, user, req }) {
       targetType: 'handover',
       targetId: handover._id,
       targetLabel: `Handover v${handover.version}`,
-      meta: { revokedItems: revoked, reason: 'Access re-evaluated when the recipient opened the handover' },
+      meta: {
+        revokedItems: revoked,
+        supersededItems,
+        reason: 'Access re-evaluated when the recipient opened the handover',
+      },
       req,
     });
   }
@@ -234,10 +256,13 @@ export async function buildRecipientView({ handover, project, user, req }) {
     permissionRecheck: {
       checkedAt,
       revokedItems: revoked,
+      supersededItems,
       note:
         revoked > 0
           ? 'Some items are no longer shown because your access to their source changed.'
-          : undefined,
+          : supersededItems > 0
+            ? 'Some items are no longer shown because a reviewer confirmed a newer decision.'
+            : undefined,
     },
   };
 }

@@ -8,7 +8,7 @@ no metric is projected or estimated.
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **5 suites, 23 tests**, green on every run during
+`cd backend && npm test` — **6 suites, 29 tests**, green on every run during
 the build window. Each suite boots its own ephemeral
 (`mongodb-memory-server`) database, so no external services are required.
 
@@ -18,6 +18,7 @@ the build window. Each suite boots its own ephemeral
 | `api-ingestion.test.js` | Auth, project creation, upload → ingestion → claims → evidence preview, role-restricted source isolation, unsupported-file rejection, audit trail |
 | `handover-permissions.test.js` | Recipient-specific withholding, hidden-until-shared, **live permission re-check after a visibility change**, executive template exclusions, review boundaries, non-member rejection |
 | `handover-workflow.test.js` | Edit / submit / approve / share / acknowledge, version history + audit events, pending-item approval guard, transition guards, **no restricted text in recipient payloads** |
+| `conflict-resolution.test.js` (6) | Lead confirms the current decision → other statements superseded, conflict clears, fresh drafts exclude the superseded version, audit event, contributor/observer rejection |
 | `llm-fallback.test.js` (3) | Gemini model fallback retries on 404 (retired model), 429 and 503 instead of failing extraction |
 
 The frontend is validated with `npm run build` (clean Vite production
@@ -50,6 +51,11 @@ stack (Vercel frontend + Render backend + hosted MongoDB), at desktop
    404 was observed in production).
 6. **Version history** — every workflow transition snapshots a version;
    the review screen's version drawer lists them with actor and reason.
+7. **Conflict resolution** — the lead opens the overview, clicks *Keep as
+   current* on the correct statement, confirms; the other statement becomes
+   superseded, the conflict card disappears, a success toast appears and the
+   audit log records `claim.conflict_resolved`. Verified in-browser: two
+   seeded conflicts → one after a single confirmation.
 
 ---
 

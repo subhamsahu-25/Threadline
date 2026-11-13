@@ -149,6 +149,10 @@ export async function composeHandover({
       continue;
     }
 
+    // A reviewer has confirmed a different statement is current, so the
+    // superseded version must not appear in any new handover draft.
+    if (claim.status === 'superseded') continue;
+
     visibleClaims.push(claim);
 
     if (

@@ -140,6 +140,7 @@ export const AUDIT_ACTION_LABELS = {
   'source.access_changed': 'Source access changed',
   'source.deleted': 'Source removed',
   'source.reingest_requested': 'Re-ingestion requested',
+  'claim.conflict_resolved': 'Decision conflict resolved',
   'document.viewed': 'Document opened',
   'handover.created': 'Handover created',
   'handover.item_reviewed': 'Handover item reviewed',

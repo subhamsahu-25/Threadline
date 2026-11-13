@@ -3,7 +3,7 @@ import { AppError, asyncHandler, badRequest, conflict, forbidden, notFound } fro
 import { uploadFiles } from '../middleware/upload.js';
 import { loadProject, requireProjectContributor, requireProjectLead } from '../middleware/project.js';
 import { validate } from '../middleware/validate.js';
-import { AuditEvent, Document, Evidence, Handover, Project, Source, User } from '../models/index.js';
+import { AuditEvent, Claim, Document, Evidence, Handover, Project, Source, User } from '../models/index.js';
 import { assertSourceVisible, roleOf, sourceVisibleTo } from '../services/access/policy.js';
 import { recordAudit } from '../services/audit.js';
 import { enqueue } from '../services/queue.js';
@@ -23,6 +23,7 @@ import {
   createProjectSchema,
   createSourceSchema,
   listClaimsQuerySchema,
+  resolveConflictSchema,
   updateProjectSchema,
   updateSourceSchema,
   uploadSourceSchema,
@@ -286,6 +287,75 @@ router.get(
     res.json({
       claims: filtered.slice(0, limit).map((claim) => decorateClaim(claim, citationsByClaim)),
       total: filtered.length,
+    });
+  }),
+);
+
+router.post(
+  '/:projectId/conflicts/resolve',
+  loadProject,
+  requireProjectLead,
+  validate({ body: resolveConflictSchema }),
+  asyncHandler(async (req, res) => {
+    const { topicKey, keepClaimId } = req.body;
+    const group = await Claim.find({
+      project: req.project._id,
+      type: 'decision',
+      topicKey,
+      retiredAt: null,
+    });
+
+    const active = group.filter((claim) => claim.status !== 'superseded');
+    if (active.length < 2) throw badRequest('This conflict is already resolved');
+    const keep = active.find((claim) => String(claim._id) === keepClaimId);
+    if (!keep) throw notFound('The selected statement is not part of this conflict');
+
+    // Fail closed: a lead may only confirm a decision when every statement in
+    // the conflict resolves to a source they are themselves allowed to read.
+    const { claims: visibleClaims } = await loadVisibleClaims({
+      project: req.project,
+      userId: req.user._id,
+    });
+    const visibleIds = new Set(visibleClaims.map((claim) => String(claim._id)));
+    if (group.some((claim) => !visibleIds.has(String(claim._id)))) {
+      throw forbidden(
+        'You cannot resolve a conflict that includes statements you are not authorized to read',
+      );
+    }
+
+    const superseded = active.filter((claim) => String(claim._id) !== keepClaimId);
+    await Claim.updateMany(
+      { _id: { $in: superseded.map((claim) => claim._id) } },
+      {
+        $set: { status: 'superseded', supersededBy: keep._id },
+        $addToSet: { flags: 'superseded_by_reviewer' },
+      },
+    );
+    await Claim.updateOne(
+      { _id: keep._id },
+      { $set: { status: 'active' }, $addToSet: { flags: 'reviewer_confirmed_current' } },
+    );
+
+    await recordAudit({
+      projectId: req.project._id,
+      actor: req.user,
+      action: 'claim.conflict_resolved',
+      targetType: 'claim',
+      targetId: keep._id,
+      targetLabel: `Current decision: ${keep.topic || topicKey}`,
+      meta: {
+        topicKey,
+        topic: keep.topic,
+        keptClaimId: String(keep._id),
+        supersededClaimIds: superseded.map((claim) => String(claim._id)),
+      },
+      req,
+    });
+
+    res.json({
+      resolved: true,
+      keptClaimId: String(keep._id),
+      supersededClaimIds: superseded.map((claim) => String(claim._id)),
     });
   }),
 );

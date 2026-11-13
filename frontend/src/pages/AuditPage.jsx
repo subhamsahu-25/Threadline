@@ -50,6 +50,7 @@ const ACTION_META = {
   'source.access_changed': { icon: SlidersHorizontal, tone: 'amber' },
   'source.deleted': { icon: Trash2, tone: 'red' },
   'source.reingest_requested': { icon: RefreshCw, tone: 'amber' },
+  'claim.conflict_resolved': { icon: CheckCircle2, tone: 'teal' },
   'document.viewed': { icon: FileText, tone: 'slate' },
   'handover.created': { icon: FileSignature, tone: 'navy' },
   'handover.item_reviewed': { icon: CheckCircle2, tone: 'blue' },

@@ -112,6 +112,11 @@ export const reviewItemSchema = z.object({
   note: z.string().trim().max(600).optional(),
 });
 
+export const resolveConflictSchema = z.object({
+  topicKey: z.string().trim().min(1).max(200),
+  keepClaimId: objectId,
+});
+
 export const noteSchema = z.object({
   note: z.string().trim().min(1).max(600),
 });

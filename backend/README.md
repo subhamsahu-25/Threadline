@@ -216,6 +216,7 @@ require `Authorization: Bearer <token>`.
 | DELETE | `/projects/:projectId/members/:userId` | lead only |
 | GET | `/projects/:projectId/state` | reconstructed state, timeline, conflicts, next actions |
 | GET | `/projects/:projectId/claims?type=&limit=` | visible, decorated claims |
+| POST | `/projects/:projectId/conflicts/resolve` | lead only; `{ topicKey, keepClaimId }` — confirms the current decision, supersedes the rest |
 | GET | `/projects/:projectId/audit?limit=` | lead only |
 
 ### Sources and evidence
@@ -282,7 +283,7 @@ silently rewriting history.
 ## 8. Tests
 
 ```bash
-npm test          # 23 Vitest + Supertest tests against an in-memory MongoDB
+npm test          # 29 Vitest + Supertest tests against an in-memory MongoDB
 npm run test:watch
 ```
 
@@ -299,6 +300,9 @@ Suites:
 - `tests/handover-workflow.test.js` — edit/submit/approve/share/acknowledge,
   version history and audit events, pending-item approval guard, rejection and
   transition guards, no restricted text in recipient payloads.
+- `tests/conflict-resolution.test.js` — lead confirms the current decision,
+  conflicting statements become superseded, the conflict clears, fresh drafts
+  exclude the superseded version, audit event, role and membership guards.
 - `tests/llm-fallback.test.js` — Gemini model fallback retries on retired or
   unavailable models (404 / 429 / 503).
 
