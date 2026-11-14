@@ -3,11 +3,9 @@ import { env } from '../config/env.js';
 import { AppError, asyncHandler, unauthorized } from '../lib/errors.js';
 import { User } from '../models/index.js';
 
-export const authenticate = asyncHandler(async (req, _res, next) => {
+async function userFromRequest(req) {
   const header = req.get('authorization') || '';
-  if (!header.toLowerCase().startsWith('bearer ')) {
-    throw unauthorized('Provide an Authorization: Bearer <token> header');
-  }
+  if (!header.toLowerCase().startsWith('bearer ')) return null;
 
   const token = header.slice(7).trim();
   let payload;
@@ -19,8 +17,21 @@ export const authenticate = asyncHandler(async (req, _res, next) => {
 
   const user = await User.findById(payload.sub);
   if (!user) throw unauthorized('This account no longer exists');
+  return user;
+}
 
-  req.user = user;
+export const authenticate = asyncHandler(async (req, _res, next) => {
+  const header = req.get('authorization') || '';
+  if (!header.toLowerCase().startsWith('bearer ')) {
+    throw unauthorized('Provide an Authorization: Bearer <token> header');
+  }
+
+  req.user = await userFromRequest(req);
+  next();
+});
+
+export const authenticateOptional = asyncHandler(async (req, _res, next) => {
+  req.user = await userFromRequest(req);
   next();
 });
 

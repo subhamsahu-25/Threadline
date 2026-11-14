@@ -156,6 +156,11 @@ export default function ProjectsPage() {
     );
   }, [projects, query]);
 
+  const canManageDemo = useMemo(
+    () => projects.some((project) => project.role === 'lead'),
+    [projects],
+  );
+
   const totals = useMemo(() => {
     const people = new Set();
     for (const project of projects) {
@@ -230,9 +235,11 @@ export default function ProjectsPage() {
         description="Each project turns authorized activity into an evidence-linked state of record, then into handovers that people can review and trust."
         actions={
           <>
-            <Button variant="secondary" icon={RefreshCw} onClick={() => setDemoOpen(true)}>
-              Demo data
-            </Button>
+            {canManageDemo && (
+              <Button variant="secondary" icon={RefreshCw} onClick={() => setDemoOpen(true)}>
+                Demo data
+              </Button>
+            )}
             <Button icon={FolderPlus} onClick={() => setModalOpen(true)}>
               New project
             </Button>

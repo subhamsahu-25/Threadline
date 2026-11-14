@@ -265,9 +265,9 @@ export default function OverviewPage() {
             <ShieldCheck className="h-4 w-4 text-ink-faint" aria-hidden="true" />
           </div>
 
-          <div className="mt-4 flex items-center gap-5">
+          <div className="mt-4 flex flex-wrap items-center gap-4 sm:gap-5">
             <ReadinessRing score={readiness} />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1 basis-40">
               <p className="text-[13px] font-semibold leading-5">{readinessCopy(readiness)}</p>
               <p className="mt-1 text-[11.5px] leading-5 text-ink-muted">
                 A deterministic score from unresolved conflicts, ownership gaps, unverified evidence

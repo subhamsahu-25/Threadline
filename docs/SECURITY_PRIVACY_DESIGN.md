@@ -52,9 +52,12 @@ that keep a handover honest.
   environment configuration; the database is network-scoped to the backend.
 
 Known, accepted demo-scope limitations (also in the README): JWTs are
-stateless with no revocation list; the demo seeder endpoint is gated by
-`ALLOW_DEMO_SEED` rather than authentication; the background queue is
-in-process.
+stateless with no revocation list; an existing demo workspace can only be
+rebuilt by the Atlas lead; the background queue is in-process. Handover
+composition runs a redaction pass over statements, quotes, alerts and
+recommendations (emails, phone numbers, API keys/tokens, credentials, private
+keys, bearer tokens and 12-digit IDs), and the affected item count is shown to
+the reviewer and recipient.
 
 ## 3. Accessibility
 

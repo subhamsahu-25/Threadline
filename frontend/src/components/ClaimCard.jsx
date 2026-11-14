@@ -6,7 +6,7 @@ import {
   FileSearch,
   UserRound,
 } from 'lucide-react';
-import { expectsOwner, formatDate } from '../lib/format.js';
+import { evidenceStatus, expectsOwner, formatDate } from '../lib/format.js';
 import { TypeBadge, StateBadge, SensitivityBadge } from './badges.jsx';
 import { Badge, Card } from './ui.jsx';
 
@@ -62,12 +62,16 @@ export default function ClaimCard({
   const overdue = claim.dueAt && new Date(claim.dueAt).getTime() < Date.now();
   const superseded = claim.status === 'superseded';
   const unverified = (claim.flags || []).includes('unverified_citation');
+  const certainty = evidenceStatus(claim);
 
   return (
     <Card className={`${compact ? 'p-3.5' : 'p-4'} ${superseded ? 'opacity-80' : ''} ${className}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         <TypeBadge type={claim.type} />
         <StateBadge state={claim.state} />
+        <Badge tone={certainty.tone} title={certainty.title}>
+          {certainty.label}
+        </Badge>
         {claim.sensitivity === 'confidential' && <SensitivityBadge sensitivity="confidential" />}
         {superseded && <Badge tone="slate">Superseded</Badge>}
         {claim.topic && (

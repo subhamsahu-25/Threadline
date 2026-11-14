@@ -42,8 +42,12 @@ npm run dev
 Open `http://localhost:5173`, then seed the demo dataset:
 
 ```bash
-curl -X POST "http://localhost:4000/api/demo/seed?reset=true"
+curl -X POST "http://localhost:4000/api/demo/seed"
 ```
+
+This only creates the workspace when it is missing; it never overwrites an
+existing project. Rebuilding with `?reset=true` requires the Atlas lead's
+bearer token.
 
 Pick any of the four demo profiles on the sign-in screen — one click, no
 password, no registration. The same password (`Threadline#2026`) still works
@@ -254,8 +258,9 @@ worker, assignment/SLA reminders and organisation-level SSO.
 
 ## API
 
-Base path `/api`. Auth, health, shared links and the demo seeder are public; all
-other endpoints require `Authorization: Bearer <token>`.
+Base path `/api`. Auth, health and shared links are public; all other endpoints
+require `Authorization: Bearer <token>`. The demo seeder is public only while
+the workspace is missing — rebuilding requires the Atlas lead.
 
 Key groups: `/auth`, `/projects` (state, claims, sources, documents, evidence,
 audit), `/handovers` (review, submit, approve, reject, share, acknowledge,

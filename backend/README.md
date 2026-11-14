@@ -35,13 +35,18 @@ curl http://localhost:4000/api/health
 
 ### Seed the demo project
 
-`POST /api/demo/seed?reset=true` builds the "Project Atlas" demo (4 users, 6
-sources, 28 claims, a superseded decision, a conflicting decision set and two
-ownership gaps). It returns JWTs so you can drive the API immediately:
+`POST /api/demo/seed` builds the "Project Atlas" demo (4 users, 6 sources, 28
+claims, a superseded decision, a conflicting decision set and two ownership
+gaps). It only creates data when the workspace is missing, so it is safe to
+call publicly and on sign-in retries. It returns JWTs so you can drive the API
+immediately:
 
 ```bash
-curl -X POST http://localhost:4000/api/demo/seed?reset=true
+curl -X POST http://localhost:4000/api/demo/seed
 ```
+
+`?reset=true` rebuilds an existing workspace and therefore requires the Atlas
+lead's bearer token (`403` for any other role, `401` without a session).
 
 Demo password for all accounts: `Threadline#2026`
 
@@ -128,7 +133,11 @@ Pipeline stages:
    phase and inferred next actions.
 4. **Compose** (`src/services/handover/compose.js`) — recipient-specific draft.
    Claims are included only when **every** citation resolves to a source the
-   recipient may read. Excluded claims are reported as counts only.
+   recipient may read. Excluded claims are reported as counts only. Every
+   statement, quote, alert and recommendation passes a redaction pass
+   (emails, phone numbers, API keys/tokens, credentials and 12-digit IDs become
+   `[REDACTED: kind]`); counts are stored per item and per handover so the UI can
+   show what was removed.
 5. **Review workflow** (`src/services/handover/workflow.js`) — draft →
    in_review → approved → shared → acknowledged (or rejected). Every transition
    snapshots a `HandoverVersion` and writes an `AuditEvent`.
@@ -188,6 +197,12 @@ Guards enforced by the API:
 Role templates: `onboarding` (full), `audit` (full, intended for reviewers) and
 `executive` (excludes tasks, responsibilities and questions plus confidential
 items). Template exclusions are reported in `withheld.byReason.template`.
+
+Certainty is visible, not just stored. Each handover item carries a plain label
+derived from its citations: **Verified** (quotes matched across two or more
+sources), **Single source**, **Partly verified**, **Conflicting** (topic has
+competing decisions) or **Not found in source**. Redacted items also carry a
+`redactionCount` and the handover records `redactions: { count, kinds }`.
 
 ---
 
@@ -256,7 +271,7 @@ require `Authorization: Bearer <token>`.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/health` | liveness, DB state, extraction mode |
-| POST | `/demo/seed?reset=true` | disabled in production unless `ALLOW_DEMO_SEED=true` |
+| POST | `/demo/seed` | seeds only when the workspace is missing; `?reset=true` requires the Atlas lead |
 
 Errors use `{ error: { code, message, details? } }`. Notable statuses: `400`
 validation/bad transition, `403` permission boundary, `404` not found, `410`
@@ -324,6 +339,12 @@ Each suite boots its own ephemeral MongoDB, so no external services are needed.
   do not name the lead's role.
 - Recipient payloads never include `withheld` details, reviewer-only alerts or
   reviewer notes.
+- Demo seeding is idempotent and public only while the workspace is empty; a
+  destructive rebuild requires the Atlas lead, and the UI never seeds on a
+  failed login.
+- Handover composition redacts emails, phone numbers, API keys/tokens,
+  credentials, private keys, bearer tokens and 12-digit IDs before anything
+  reaches a reviewer or recipient.
 - Audit events are written for every sensitive read/write; pipeline failures are
   logged but never expose document text.
 

@@ -1,5 +1,6 @@
 import { env, llmEnabled } from '../../config/env.js';
 import { badRequest } from '../../lib/errors.js';
+import { createRedactionTally, redactText } from '../../lib/redaction.js';
 import { Claim, Document, Evidence, Handover, HandoverVersion, Source } from '../../models/index.js';
 import { claimVisibleTo, roleOf } from '../access/policy.js';
 import { recordAudit } from '../audit.js';
@@ -50,10 +51,20 @@ function buildCitation(evidence, docById, sourceById) {
   };
 }
 
-function buildItem({ claim, evidence, docById, sourceById }) {
+function buildItem({ claim, evidence, docById, sourceById, redactions }) {
+  const statement = redactText(claim.statement);
+  redactions.add(statement);
+  let redactionCount = statement.count;
+
   const citations = evidence
     .map((entry) => buildCitation(entry, docById, sourceById))
     .filter(Boolean)
+    .map((citation) => {
+      const quote = redactText(citation.quote || '');
+      redactions.add(quote);
+      redactionCount += quote.count;
+      return { ...citation, quote: quote.text };
+    })
     .sort((a, b) => new Date(a.occurredAt || 0) - new Date(b.occurredAt || 0));
 
   const hasVerifiedCitation = citations.some((citation) => citation.validation !== 'failed');
@@ -61,7 +72,7 @@ function buildItem({ claim, evidence, docById, sourceById }) {
   return {
     claimId: claim._id,
     type: claim.type,
-    statement: claim.statement,
+    statement: statement.text,
     topic: claim.topic,
     status: claim.status,
     state: hasVerifiedCitation ? claim.state : 'needs_review',
@@ -71,12 +82,25 @@ function buildItem({ claim, evidence, docById, sourceById }) {
     dueAt: claim.dueAt,
     occurredAt: claim.occurredAt || claim.createdAt,
     flags: claim.flags || [],
+    conflicting: false,
+    redactionCount,
     resolutionNote: claim.resolution?.note || null,
     resolutionByName: claim.resolution?.byName || null,
     citations,
     decision: hasVerifiedCitation ? 'accepted' : 'pending',
     acceptedWithoutEvidence: false,
   };
+}
+
+function redactFields(entry, fields, redactions) {
+  for (const field of fields) {
+    if (typeof entry[field] !== 'string') continue;
+    const result = redactText(entry[field]);
+    if (result.count > 0) {
+      entry[field] = result.text;
+      redactions.add(result);
+    }
+  }
 }
 
 /**
@@ -132,6 +156,7 @@ export async function composeHandover({
     byReason: { permissions: 0, template: 0, unverified: 0 },
   };
 
+  const redactions = createRedactionTally();
   const visibleClaims = [];
   const items = [];
 
@@ -167,7 +192,7 @@ export async function composeHandover({
       continue;
     }
 
-    items.push(buildItem({ claim, evidence: claimEvidence, docById, sourceById }));
+    items.push(buildItem({ claim, evidence: claimEvidence, docById, sourceById, redactions }));
   }
 
   items.sort((a, b) => {
@@ -181,6 +206,13 @@ export async function composeHandover({
     claims: visibleClaims,
     staleDays: env.staleDays,
   });
+
+  const conflictingClaimIds = new Set(
+    state.conflicts.flatMap((conflict) => conflict.claimIds.map((id) => String(id))),
+  );
+  for (const item of items) {
+    if (conflictingClaimIds.has(String(item.claimId))) item.conflicting = true;
+  }
 
   const alerts = [];
   for (const conflict of state.conflicts) {
@@ -232,10 +264,20 @@ export async function composeHandover({
   const visibleAlerts = alerts.filter(referencesIncludedClaims);
   const visibleRecommendations = recommendations.filter(referencesIncludedClaims);
 
+  for (const alert of visibleAlerts) redactFields(alert, ['message'], redactions);
+  for (const recommendation of visibleRecommendations) {
+    redactFields(recommendation, ['title', 'reason'], redactions);
+  }
+
+  const description = redactText(project.description || '');
+  redactions.add(description);
+  const transitionContext = redactText(project.transition?.context || '');
+  redactions.add(transitionContext);
+
   const snapshot = {
     projectName: project.name,
     projectKey: project.key,
-    description: project.description,
+    description: description.text,
     phase: state.phase,
     readinessScore: state.readinessScore,
     lastActivityAt: state.lastActivityAt,
@@ -243,7 +285,7 @@ export async function composeHandover({
     counts: state.counts,
     outgoingName: project.transition?.outgoingName,
     plannedDepartureAt: project.transition?.plannedDepartureAt,
-    transitionContext: project.transition?.context,
+    transitionContext: transitionContext.text,
     generatedSummary: `Handover for ${recipient.name}: ${summarizeCounts(state)}.`,
   };
 
@@ -263,6 +305,7 @@ export async function composeHandover({
     alerts: visibleAlerts,
     recommendations: visibleRecommendations,
     withheld,
+    redactions: redactions.toJSON(),
     snapshot,
     version: 1,
     generation: {
@@ -296,6 +339,7 @@ export async function composeHandover({
       items: items.length,
       withheld: withheld.total,
       permissionsWithheld: withheld.byReason.permissions,
+      redactions: redactions.count,
     },
     req,
   });

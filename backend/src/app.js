@@ -4,8 +4,10 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import mongoose from 'mongoose';
 import { env, isTest } from './config/env.js';
+import { DEMO_PROJECT_KEY } from './demo/seed.js';
 import { authenticate } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
+import { Project } from './models/index.js';
 import authRoutes from './routes/auth.routes.js';
 import demoRoutes from './routes/demo.routes.js';
 import handoverRoutes from './routes/handover.routes.js';
@@ -50,7 +52,15 @@ app.get('/', (_req, res) => {
   });
 });
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
+  let demoProjectReady = false;
+  if (mongoose.connection.readyState === 1) {
+    try {
+      demoProjectReady = Boolean(await Project.exists({ key: DEMO_PROJECT_KEY }));
+    } catch {
+      demoProjectReady = false;
+    }
+  }
   res.json({
     status: 'ok',
     service: 'threadline-api',
@@ -59,6 +69,7 @@ app.get('/api/health', (_req, res) => {
     database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
     extraction: llmStatus(),
     demoSeedEnabled: env.allowDemoSeed,
+    demoProjectReady,
   });
 });
 

@@ -30,7 +30,7 @@ import {
   HANDOVER_STATUS,
   TEMPLATES,
 } from '../lib/constants.js';
-import { expectsOwner, formatDate, formatDateTime, formatRelative, pluralize, truncate } from '../lib/format.js';
+import { evidenceStatus, expectsOwner, formatDate, formatDateTime, formatRelative, pluralize, truncate } from '../lib/format.js';
 import {
   DecisionBadge,
   HandoverStatusBadge,
@@ -122,6 +122,7 @@ function ReviewItem({
 }) {
   const edited = item.decision === 'edited';
   const current = item.statement;
+  const certainty = evidenceStatus(item);
   const buttonBase =
     'inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[10.5px] font-semibold transition disabled:cursor-not-allowed disabled:opacity-50';
 
@@ -130,8 +131,19 @@ function ReviewItem({
       <div className="flex flex-wrap items-center gap-1.5">
         <TypeBadge type={item.type} />
         <StateBadge state={item.state} />
+        <Badge tone={certainty.tone} title={certainty.title}>
+          {certainty.label}
+        </Badge>
         <DecisionBadge decision={item.decision} />
         {item.sensitivity === 'confidential' && <SensitivityBadge sensitivity="confidential" />}
+        {item.redactionCount > 0 && (
+          <Badge
+            tone="slate"
+            title="Emails, phone numbers, credentials and 12-digit IDs were replaced with a typed marker when this draft was composed."
+          >
+            {item.redactionCount} redacted
+          </Badge>
+        )}
         {edited && <Badge tone="blue">Edited</Badge>}
         {item.acceptedWithoutEvidence && <Badge tone="orange">No verified evidence</Badge>}
         {item.topic && (
@@ -670,6 +682,14 @@ export default function HandoverReviewPage() {
           {handover.status === 'shared' && (
             <Badge tone="blue">
               Share expires {formatDate(handover.shareExpiresAt)}
+            </Badge>
+          )}
+          {handover.redactions?.count > 0 && (
+            <Badge
+              tone="slate"
+              title="Emails, phone numbers, credentials and 12-digit IDs were replaced with a typed marker when this draft was composed."
+            >
+              {handover.redactions.count} redacted
             </Badge>
           )}
           {shareUrl && ['shared', 'acknowledged'].includes(handover.status) && (

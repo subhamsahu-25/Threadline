@@ -41,6 +41,8 @@ function renderItem(item, { recipient }) {
     dueAt: item.dueAt,
     occurredAt: item.occurredAt,
     flags: item.flags || [],
+    conflicting: Boolean(item.conflicting),
+    redactionCount: item.redactionCount || 0,
     resolutionNote: item.resolutionNote || null,
     resolutionByName: item.resolutionByName || null,
     decision: item.decision,
@@ -101,6 +103,10 @@ export function buildReviewerView({ handover, project, user }) {
     alerts: handover.alerts || [],
     recommendations: handover.recommendations || [],
     withheld: handover.withheld,
+    redactions: {
+      count: handover.redactions?.count || 0,
+      kinds: handover.redactions?.kinds || [],
+    },
     snapshot: handover.snapshot,
     generation: handover.generation,
     permissionsCheckedAt: handover.permissionsCheckedAt,
@@ -260,6 +266,10 @@ export async function buildRecipientView({ handover, project, user, req }) {
     items,
     alerts,
     recommendations,
+    redactions: {
+      count: handover.redactions?.count || 0,
+      kinds: handover.redactions?.kinds || [],
+    },
     snapshot: handover.snapshot,
     permissionRecheck: {
       checkedAt,

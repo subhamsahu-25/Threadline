@@ -65,6 +65,59 @@ export function expectsOwner(claim) {
   return Boolean(claim.ownerName) || (claim.type === 'task' && OPEN_STATUSES.includes(claim.status));
 }
 
+/**
+ * Plain-language certainty label. "Verified" means every quote matched a
+ * document the reader can open; a single failed quote downgrades the item
+ * instead of silently presenting it as fact.
+ */
+export function evidenceStatus(claim) {
+  const citations = claim?.citations || [];
+  const matched = citations.filter((citation) => citation.validation !== 'failed');
+  const failed = citations.length - matched.length;
+  const sources = new Set(
+    matched.map((citation) => String(citation.sourceId || citation.sourceName || citation.docTitle)),
+  );
+
+  if (claim?.conflicting) {
+    return {
+      label: 'Conflicting',
+      tone: 'red',
+      title: 'Sources disagree about this topic. A reviewer must confirm which version is current.',
+    };
+  }
+
+  const hasEvidence = matched.length > 0 || (claim?.verifiedEvidenceCount ?? 0) > 0;
+  if (!hasEvidence) {
+    return {
+      label: 'Not found in source',
+      tone: 'red',
+      title: 'No verbatim source quote backs this item. A reviewer must confirm it.',
+    };
+  }
+
+  if (failed > 0) {
+    return {
+      label: 'Partly verified',
+      tone: 'orange',
+      title: `${failed} quote(s) could not be matched to the source text.`,
+    };
+  }
+
+  if (sources.size <= 1) {
+    return {
+      label: 'Single source',
+      tone: 'amber',
+      title: 'Only one source document supports this item.',
+    };
+  }
+
+  return {
+    label: 'Verified',
+    tone: 'green',
+    title: 'Every quote matches a source document you can read.',
+  };
+}
+
 export function initials(name = '') {
   return name
     .split(/\s+/)

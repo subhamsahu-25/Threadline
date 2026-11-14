@@ -312,7 +312,7 @@ function MobileMoreSheet({ open, onClose, project, logout, isLead }) {
   );
 }
 
-function PersonaMenu({ open, onClose, user, switching, onSwitch, onReset, onLogout }) {
+function PersonaMenu({ open, onClose, user, switching, onSwitch, onReset, onLogout, canReset }) {
   const ref = useRef(null);
 
   useEffect(() => {
@@ -380,15 +380,17 @@ function PersonaMenu({ open, onClose, user, switching, onSwitch, onReset, onLogo
         })}
       </div>
       <div className="mt-1 space-y-0.5 border-t border-line pt-1">
-        <button
-          type="button"
-          role="menuitem"
-          onClick={onReset}
-          className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[12px] font-medium text-ink-soft transition hover:bg-slate-50"
-        >
-          <RefreshCw className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
-          Reset demo data
-        </button>
+        {canReset && (
+          <button
+            type="button"
+            role="menuitem"
+            onClick={onReset}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2 text-left text-[12px] font-medium text-ink-soft transition hover:bg-slate-50"
+          >
+            <RefreshCw className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+            Reset demo data
+          </button>
+        )}
         <button
           type="button"
           role="menuitem"
@@ -423,6 +425,7 @@ export default function AppShell() {
     : null;
   const project = routeProject;
   const isLead = project?.role === 'lead';
+  const canResetDemo = isLead || projects.some((entry) => entry.role === 'lead');
   const routeProjectId = project?.id || projectMatch?.[1] || null;
   const inProject = Boolean(routeProjectId);
 
@@ -519,6 +522,7 @@ export default function AppShell() {
               onSwitch={switchTo}
               onReset={openResetConfirm}
               onLogout={logout}
+              canReset={canResetDemo}
             />
           </div>
         </div>
@@ -549,18 +553,18 @@ export default function AppShell() {
             </>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           {departure !== null && (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-mono text-[10.5px] font-medium text-amber-800">
-              <CalendarClock className="h-3 w-3" aria-hidden="true" />
+            <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-mono text-[10.5px] font-medium text-amber-800">
+              <CalendarClock className="h-3 w-3 shrink-0" aria-hidden="true" />
               {departure >= 0 ? `Handover due in ${departure}d` : `Handover ${Math.abs(departure)}d overdue`}
             </span>
           )}
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 font-mono text-[10.5px] text-ink-muted">
-            <ShieldCheck className="h-3 w-3 text-emerald-600" aria-hidden="true" />
+          <span className="hidden items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-white px-2.5 py-1 font-mono text-[10.5px] text-ink-muted xl:inline-flex">
+            <ShieldCheck className="h-3 w-3 shrink-0 text-emerald-600" aria-hidden="true" />
             Permission-aware
           </span>
-          <div className="relative flex items-center gap-2 border-l border-line pl-3">
+          <div className="relative flex shrink-0 items-center gap-2 border-l border-line pl-3">
             <button
               type="button"
               onClick={() => setPersonaOpen((value) => !value)}
@@ -568,7 +572,7 @@ export default function AppShell() {
               aria-expanded={personaOpen}
               title="Switch demo profile"
               data-persona-toggle
-              className="flex items-center gap-2 rounded-lg px-1.5 py-1 text-left transition hover:bg-slate-100"
+              className="flex items-center gap-2 whitespace-nowrap rounded-lg px-1.5 py-1 text-left transition hover:bg-slate-100"
             >
               <Avatar name={user?.name} size="sm" />
               <span className="leading-tight">
@@ -587,6 +591,7 @@ export default function AppShell() {
               onSwitch={switchTo}
               onReset={openResetConfirm}
               onLogout={logout}
+              canReset={canResetDemo}
             />
           </div>
         </div>

@@ -3,13 +3,14 @@ import {
   AlertTriangle,
   CalendarClock,
   CheckCircle2,
+  EyeOff,
   Info,
   LockKeyhole,
   ShieldCheck,
   Sparkles,
   UserRound,
 } from 'lucide-react';
-import { expectsOwner, formatDate, formatDateTime } from '../lib/format.js';
+import { evidenceStatus, expectsOwner, formatDate, formatDateTime } from '../lib/format.js';
 import { CLAIM_TYPES } from '../lib/constants.js';
 import { TypeBadge, StateBadge, SensitivityBadge, SeverityBadge } from './badges.jsx';
 import { CitationList } from './ClaimCard.jsx';
@@ -18,12 +19,24 @@ import { Badge, Button, Card, EmptyState, SectionHeading } from './ui.jsx';
 
 function ReadOnlyItem({ item, onEvidence }) {
   const edited = item.decision === 'edited';
+  const certainty = evidenceStatus(item);
   return (
     <Card className="p-4">
       <div className="flex flex-wrap items-center gap-1.5">
         <TypeBadge type={item.type} />
         <StateBadge state={item.state} />
+        <Badge tone={certainty.tone} title={certainty.title}>
+          {certainty.label}
+        </Badge>
         {item.sensitivity === 'confidential' && <SensitivityBadge sensitivity="confidential" />}
+        {item.redactionCount > 0 && (
+          <Badge
+            tone="slate"
+            title="Emails, phone numbers, credentials and 12-digit IDs were replaced with a typed marker before sharing."
+          >
+            {item.redactionCount} redacted
+          </Badge>
+        )}
         {edited && <Badge tone="blue">Reviewed wording</Badge>}
         {item.acceptedWithoutEvidence && <Badge tone="orange">Accepted without evidence</Badge>}
         <span className="ml-auto font-mono text-[9.5px] uppercase tracking-wider text-ink-faint">
@@ -194,6 +207,21 @@ export default function RecipientHandover({
         </div>
       )}
 
+      {handover.redactions?.count > 0 && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-line bg-white/70 px-3.5 py-2.5 text-[11px] leading-5 text-ink-muted">
+          <EyeOff className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-faint" aria-hidden="true" />
+          <p>
+            <span className="font-semibold text-ink-soft">
+              {handover.redactions.count === 1
+                ? '1 sensitive value was redacted'
+                : `${handover.redactions.count} sensitive values were redacted`}
+            </span>{' '}
+            before this handover was shared. Emails, phone numbers, credentials and 12-digit IDs
+            are replaced with a typed marker; the source documents are unchanged.
+          </p>
+        </div>
+      )}
+
       {handover.alerts?.length > 0 && (
         <div className="mb-4 space-y-2">
           {handover.alerts.map((alert, index) => (
@@ -336,8 +364,11 @@ export default function RecipientHandover({
           <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-600" aria-hidden="true" />
           <p className="text-[10.5px] leading-4 text-ink-muted">
             This handover was assembled by Threadline and approved by a project lead. Every included
-            claim is linked to a verbatim source quote. Items you are not authorized to see are never
-            sent to this view.
+            claim is linked to a source quote
+            {handover.redactions?.count > 0
+              ? '; sensitive values were replaced before sharing.'
+              : '.'}{' '}
+            Items you are not authorized to see are never sent to this view.
           </p>
         </div>
       </div>

@@ -379,7 +379,10 @@ export function ReadinessRing({ score = 0, size = 128, label = 'readiness' }) {
   const tone = score >= 80 ? '#15803d' : score >= 60 ? '#d97706' : '#dc2626';
   const offset = circumference * (1 - Math.min(100, Math.max(0, score)) / 100);
   return (
-    <div className="relative inline-flex items-center justify-center" style={{ width: size, height: size }}>
+    <div
+      className="relative inline-flex shrink-0 items-center justify-center"
+      style={{ width: size, height: size }}
+    >
       <svg viewBox="0 0 128 128" className="h-full w-full -rotate-90" aria-hidden="true">
         <circle cx="64" cy="64" r={radius} fill="none" stroke="#e7ecf2" strokeWidth="9" />
         <circle

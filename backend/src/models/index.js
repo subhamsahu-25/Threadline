@@ -299,6 +299,8 @@ const handoverItemSchema = new Schema(
     dueAt: Date,
     occurredAt: Date,
     flags: { type: [String], default: [] },
+    conflicting: { type: Boolean, default: false },
+    redactionCount: { type: Number, default: 0 },
     citations: { type: [citationSchema], default: [] },
     decision: {
       type: String,
@@ -384,6 +386,10 @@ const handoverSchema = new Schema(
         template: { type: Number, default: 0 },
         unverified: { type: Number, default: 0 },
       },
+    },
+    redactions: {
+      count: { type: Number, default: 0 },
+      kinds: { type: [String], default: [] },
     },
     snapshot: {
       projectName: String,
