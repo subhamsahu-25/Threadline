@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useCallback, useEffect, useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowRight,
@@ -9,16 +8,16 @@ import {
   Loader2,
   LockKeyhole,
   RefreshCw,
-  Server,
   ShieldCheck,
-  X,
 } from 'lucide-react';
 import { BrandMark } from '../components/AppShell.jsx';
+import { ColdStartNotice } from '../components/ColdStartNotice.jsx';
 import { Avatar, Badge } from '../components/ui.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { api, errorMessage } from '../lib/api.js';
 import { DEMO_PASSWORD, DEMO_PERSONAS } from '../lib/constants.js';
+import { wakeNoticeEnabled } from '../lib/wake.js';
 
 const PERSONA_RING = {
   navy: 'border-brand-200 bg-brand-50/60',
@@ -37,136 +36,12 @@ const PERSONA_TONE = {
 const COLD_START_KEY = 'threadline.cold-start-notice';
 
 function shouldShowColdStart() {
+  if (!wakeNoticeEnabled()) return false;
   try {
-    if (sessionStorage.getItem(COLD_START_KEY) === 'dismissed') return false;
+    return sessionStorage.getItem(COLD_START_KEY) !== 'dismissed';
   } catch {
-    /* storage can be unavailable in private mode */
+    return true;
   }
-  const host = window.location.hostname;
-  return !(
-    host === 'localhost' ||
-    host === '127.0.0.1' ||
-    host === '[::1]' ||
-    host.endsWith('.localhost')
-  );
-}
-
-function ColdStartNotice({ health, onDismiss }) {
-  const titleId = useId();
-  const descriptionId = useId();
-  const dismissRef = useRef(null);
-
-  useEffect(() => {
-    dismissRef.current?.focus();
-    const onKey = (event) => {
-      if (event.key === 'Escape') onDismiss();
-    };
-    document.addEventListener('keydown', onKey);
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = previous;
-    };
-  }, [onDismiss]);
-
-  const ready = health?.status === 'ok';
-  const offline = health?.status === 'offline';
-
-  return createPortal(
-    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-[#081422]/70 backdrop-blur-[3px]" aria-hidden="true" />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-        className="relative z-10 w-full max-w-[440px] animate-fade-up overflow-hidden rounded-2xl border border-white/10 bg-brand-950 shadow-[0_30px_90px_-20px_rgba(2,12,27,0.95)]"
-      >
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.09]"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(255,255,255,.2) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.2) 1px, transparent 1px)',
-            backgroundSize: '40px 40px',
-            maskImage: 'radial-gradient(ellipse at 20% 0%, black, transparent 70%)',
-          }}
-          aria-hidden="true"
-        />
-        <div
-          className="pointer-events-none absolute -left-12 -top-16 h-44 w-44 rounded-full bg-amber-400/10 blur-3xl"
-          aria-hidden="true"
-        />
-
-        <div className="relative p-6">
-          <div className="flex items-start justify-between gap-4">
-            <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-400/15 ring-1 ring-amber-300/30">
-              <Server className="h-5 w-5 text-amber-300" aria-hidden="true" />
-              <span className="absolute -right-1 -top-1 flex h-3 w-3">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-70" />
-                <span className="relative inline-flex h-3 w-3 rounded-full bg-amber-400" />
-              </span>
-            </span>
-            <button
-              type="button"
-              onClick={onDismiss}
-              aria-label="Dismiss wake-up notice"
-              className="rounded-lg p-1.5 text-brand-200/60 transition hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/70"
-            >
-              <X className="h-4 w-4" aria-hidden="true" />
-            </button>
-          </div>
-
-          <p className="mt-5 text-[10.5px] font-semibold uppercase tracking-[0.18em] text-amber-300">
-            Before you sign in
-          </p>
-          <h2
-            id={titleId}
-            className="mt-1.5 font-display text-[24px] font-semibold leading-[1.2] tracking-[-0.02em] text-white"
-          >
-            The demo backend is waking up.
-          </h2>
-          <p id={descriptionId} className="mt-2.5 text-[13px] leading-6 text-brand-100/75">
-            Threadline&apos;s API runs on Render&apos;s free tier. After a quiet spell the instance
-            sleeps, so the first request can take{' '}
-            <span className="font-semibold text-white">30–60 seconds</span> to load and connect.
-            Profiles sign in normally once it does.
-          </p>
-
-          <div className="mt-5 flex items-center gap-2.5 rounded-lg border border-white/10 bg-white/[0.06] px-3 py-2.5 text-[12px]">
-            {ready ? (
-              <>
-                <Check className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden="true" />
-                <span className="text-emerald-200">API connected — you&apos;re ready to enter.</span>
-              </>
-            ) : (
-              <>
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-amber-300" aria-hidden="true" />
-                <span className="text-brand-100/85">
-                  {offline
-                    ? 'Still starting up — give it a few more seconds.'
-                    : 'Contacting the API…'}
-                </span>
-              </>
-            )}
-          </div>
-
-          <button
-            ref={dismissRef}
-            type="button"
-            onClick={onDismiss}
-            className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-[13px] font-semibold text-brand-950 transition hover:bg-brand-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
-          >
-            {ready ? 'Continue' : "Got it — I'll wait"}
-          </button>
-          <p className="mt-3 text-center text-[10px] text-brand-200/45">
-            This notice appears once per browser session.
-          </p>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
 }
 
 function BrandPanel() {
@@ -510,7 +385,14 @@ export default function LoginPage() {
         </div>
       </div>
 
-      {coldStartOpen && <ColdStartNotice health={health} onDismiss={dismissColdStart} />}
+      {coldStartOpen && (
+        <ColdStartNotice
+          health={health}
+          onDismiss={dismissColdStart}
+          eyebrow="Before you sign in"
+          footnote="This notice appears once per browser session."
+        />
+      )}
     </div>
   );
 }

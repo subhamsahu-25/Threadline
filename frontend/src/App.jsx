@@ -1,6 +1,7 @@
 import { Component, useEffect } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import AppShell from './components/AppShell.jsx';
+import { IdleWakeNotice } from './components/ColdStartNotice.jsx';
 import { ErrorState, LoadingScreen } from './components/ui.jsx';
 import { useAuth } from './context/AuthContext.jsx';
 import { WorkspaceProvider } from './context/WorkspaceContext.jsx';
@@ -63,6 +64,7 @@ export default function App() {
   return (
     <ErrorBoundary>
       <ScrollToTop />
+      <IdleWakeNotice />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
