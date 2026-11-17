@@ -214,8 +214,15 @@ export async function seedDemo({ reset = true } = {}) {
 
   let project = await Project.findOne({ key: DEMO_PROJECT_KEY });
   if (project && !reset) {
+    // Older seeds created different demo accounts. Keep the corpus but repair
+    // the identity of the workspace so every persona gets the role it is shown.
+    project.owner = users.subham._id;
+    project.members = members;
+    project.transition = transition;
+    await project.save();
     return {
       alreadySeeded: true,
+      reconciled: true,
       project: { id: String(project._id), key: project.key, name: project.name },
       hint: 'Pass reset=true to rebuild the seeded sources',
     };
@@ -312,4 +319,15 @@ export async function seedDemo({ reset = true } = {}) {
   }
 
   return result;
+}
+
+/**
+ * Repairs an existing demo workspace after a deploy without touching its
+ * sources, claims or handovers. A missing workspace is left alone so a fresh
+ * database still starts empty until someone explicitly loads the demo.
+ */
+export async function reconcileDemoWorkspace() {
+  const existing = await Project.exists({ key: DEMO_PROJECT_KEY });
+  if (!existing) return null;
+  return seedDemo({ reset: false });
 }

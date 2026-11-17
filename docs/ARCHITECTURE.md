@@ -198,7 +198,7 @@ not silently rewritten.
 | Share link | token, recipient identity | token stored as SHA-256 hash, recipient-bound session, expiry, revocation, read-time re-check; demo-workspace links open read-only without a session and log `channel: public_share_link` when acknowledged |
 | Audit reader | lead with partial access | unreadable targets are redacted to `Restricted item` |
 | Clarification | answer text | only the addressee can answer; answer is redacted, stored as evidence, typed as `person_confirmed` |
-| Demo reset | anonymous caller | public seed only when the workspace is missing; scoped rebuild requires the Atlas lead |
+| Demo reset | anonymous caller | public seed only when the workspace is missing; an existing workspace is reconciled to the current personas at startup and on a non-reset seed; scoped rebuild requires the Atlas lead |
 
 Known residual risks and roadmap items are listed in
 [`ROADMAP.md`](ROADMAP.md).

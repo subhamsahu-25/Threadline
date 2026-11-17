@@ -1,5 +1,6 @@
 const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
 const TOKEN_KEY = 'threadline.token';
+const SESSIONLESS_PATHS = ['/api/auth/login', '/api/auth/register'];
 
 let unauthorizedHandler = null;
 
@@ -36,7 +37,10 @@ export function setToken(token) {
 
 async function request(path, { method = 'GET', body, signal, headers = {} } = {}) {
   const finalHeaders = { Accept: 'application/json', ...headers };
-  const token = getToken();
+  // A failed sign-in must not carry the previous persona's token: otherwise the
+  // 401 handler below would sign the current user out mid-switch.
+  const sessionless = SESSIONLESS_PATHS.some((prefix) => path.startsWith(prefix));
+  const token = sessionless ? null : getToken();
   if (token) finalHeaders.Authorization = `Bearer ${token}`;
 
   let payload = body;

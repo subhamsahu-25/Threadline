@@ -37,9 +37,12 @@ curl http://localhost:4000/api/health
 
 `POST /api/demo/seed` builds the "Project Atlas" demo (4 users, 6 sources, 28
 claims, a superseded decision, a conflicting decision set and two ownership
-gaps). It only creates data when the workspace is missing, so it is safe to
-call publicly and on sign-in retries. It returns JWTs so you can drive the API
-immediately:
+gaps). When the workspace already exists it reconciles membership, the owner and
+the outgoing member to the seeded personas without touching sources, claims or
+handovers, so an older deployment repairs itself instead of showing stale names.
+It only creates data when the workspace is missing, so it is safe to call
+publicly and on sign-in retries. The server also runs the same reconciliation at
+startup when Atlas exists. It returns JWTs so you can drive the API immediately:
 
 ```bash
 curl -X POST http://localhost:4000/api/demo/seed
@@ -82,7 +85,7 @@ All variables are optional in development.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `NODE_ENV` | `development` | `production` enforces a real `JWT_SECRET` and disables demo seeding by default |
+| `NODE_ENV` | `development` | `production` enforces a real `JWT_SECRET`; demo seeding stays available unless `ALLOW_DEMO_SEED=false` |
 | `PORT` | `4000` | HTTP port |
 | `MONGODB_URI` | empty (in-memory) | MongoDB connection string |
 | `DB_NAME` | path in `MONGODB_URI` | Overrides the database name; set to `Threadline` for Atlas |
@@ -103,7 +106,7 @@ All variables are optional in development.
 | `EXTRACT_TIME_BUDGET_MS` | `120000` | Time budget for one extraction pass |
 | `STALE_DAYS` | `30` | Age before an open item is flagged stale |
 | `SHARE_TTL_DAYS` | `7` | Share-link lifetime |
-| `ALLOW_DEMO_SEED` | true outside production | Enables `POST /api/demo/seed` |
+| `ALLOW_DEMO_SEED` | `true` | Enables `POST /api/demo/seed`; creating a missing workspace is public, rebuilding requires the Atlas lead |
 | `INGEST_CONCURRENCY` | `2` | Background ingestion workers |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 
@@ -371,7 +374,7 @@ silently rewriting history.
 ## 8. Tests
 
 ```bash
-npm test          # 115 Vitest + Supertest tests across 17 suites
+npm test          # 117 Vitest + Supertest tests across 17 suites
 npm run test:watch
 npm run eval:quotes   # quote-accuracy report
 ```
@@ -427,9 +430,12 @@ CI runs the same command on every push and pull request
 - Recipient payloads never include `withheld` details, reviewer-only alerts or
   reviewer notes.
 - Demo seeding is idempotent and public only while the workspace is empty; a
-  seeded-source rebuild requires the Atlas lead. It removes only the six seeded
-  sources and their derived data, so other visitors' uploads and handovers are
-  preserved. The UI never seeds on a failed login.
+  seeded-source rebuild requires the Atlas lead. An existing workspace is
+  reconciled to the current persona set at startup and on every non-reset seed,
+  so stale member ids cannot lock a demo profile out. A rebuild removes only the
+  six seeded sources and their derived data, so other visitors' uploads and
+  handovers are preserved. The UI seeds only through the explicit demo action,
+  never silently on a failed login.
 - Share tokens are stored as a SHA-256 hash only; links expire and can be
   revoked. Clarifications are addressee-only and person-confirmed evidence is
   scoped to the answering member plus project leads.

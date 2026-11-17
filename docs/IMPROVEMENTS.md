@@ -56,7 +56,7 @@ quote-accuracy rate.
 `npm ci && npm run build && npm run smoke` on every push and pull request.
 **No red-run screenshot is included**, because the Round 3 branch was not pushed
 during this build. The oracle is written to fail if any canary appears in a
-response a viewer may not read; the suite runs green locally (115 tests across
+response a viewer may not read; the suite runs green locally (117 tests across
 17 files).
 
 ### 2. Connected-source freshness
@@ -127,7 +127,7 @@ in `docs/screens/round3-recipient-person-confirmed.png`.
 | At least 90% of demo claims have a verified source quote | 100% exact, 0 failed | `QUOTE_ACCURACY.md`: 29/29 rules, 35/35 Gemini |
 | A source change updates the overview within one refresh cycle (target 5 minutes) | Connector path proven by tests; no live five-minute observation | `source-sync.test.js` (7 tests); `SYNC_EVIDENCE.md` §4 states the environment limit |
 | At least one missing detail answered by a departing member and approved | Done in ATLAS: owner answer → person-confirmed claim → shared → approved | `CLARIFICATION_FLOW.md`, `clarifications.test.js` T-C5, `round3-recipient-person-confirmed.png` |
-| Zero test failures, existing and new | 115/115 pass, 17 suites | Full local run 17 Nov 2026; CI workflow present but not triggered in this build window |
+| Zero test failures, existing and new | 117/117 pass, 17 suites | Full local run 18 Nov 2026; CI workflow present but not triggered in this build window |
 
 ---
 

@@ -371,6 +371,10 @@ function PersonaMenu({ open, onClose, user, switching, onSwitch, onReset, onLogo
     };
     const onPointerDown = (event) => {
       if (event.target.closest?.('[data-persona-toggle]')) return;
+      // Both the mobile and desktop headers keep a menu mounted. Without this
+      // guard the hidden menu's outside-click handler unmounts the open one
+      // before a menu item can receive its click.
+      if (event.target.closest?.('[data-persona-menu]')) return;
       if (ref.current && !ref.current.contains(event.target)) onClose();
     };
     document.addEventListener('keydown', onKeyDown);
@@ -388,6 +392,7 @@ function PersonaMenu({ open, onClose, user, switching, onSwitch, onReset, onLogo
       ref={ref}
       role="menu"
       aria-label="Switch demo profile"
+      data-persona-menu
       className="absolute right-0 top-[calc(100%+10px)] z-[70] w-[320px] rounded-xl border border-line bg-white p-2 shadow-lift"
     >
       <div className="flex items-baseline justify-between px-2 pb-1.5 pt-1">

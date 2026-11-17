@@ -9,8 +9,8 @@ been pushed; every Round 3 result below is from the local dev stack.
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **17 suites, 115 tests**, green on the last full run
-(17 Nov 2026). Each suite boots its own ephemeral MongoDB
+`cd backend && npm test` — **17 suites, 117 tests**, green on the last full run
+(17 Nov 2026, 94.29 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
@@ -28,7 +28,7 @@ been pushed; every Round 3 result below is from the local dev stack.
 | `extraction.test.js` | 8 | Verbatim quote location (`exact` / `normalized` / `failed`), heuristic extraction, CSV normalization |
 | `redaction.test.js` | 4 | Emails, phones, credentials and 12-digit IDs; no double-redaction; ordinary text untouched; compose-time redaction of statements and quotes |
 | `api-ingestion.test.js` | 3 | Auth, upload → ingestion → claims → evidence preview, role-restricted isolation, unsupported files, audit trail |
-| `demo-seed.test.js` | 5 | Public seed only when the workspace is missing, scoped reset requires the lead, retired accounts |
+| `demo-seed.test.js` | 7 | Public seed only when the workspace is missing, scoped reset requires the lead, retired accounts, stale membership/owner/outgoing repaired without losing content, startup reconciliation leaves a missing workspace alone |
 | `membership.test.js` | 2 | Role changes and access boundaries |
 | `llm-fallback.test.js` | 3 | Gemini retry on 404 (retired model), 429 and 503 |
 | `notifications.test.js` | 10 | Notices routed by role and event, one per recipient and event, removed when access ends, read state isolated per user, payload limited to a title, detail, project key and link |

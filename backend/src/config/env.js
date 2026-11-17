@@ -48,7 +48,10 @@ export const env = {
   shareTtlDays: int('SHARE_TTL_DAYS', 7),
   extractConcurrency: Math.max(1, int('EXTRACT_CONCURRENCY', 3)),
   extractTimeBudgetMs: Math.max(5_000, int('EXTRACT_TIME_BUDGET_MS', 120_000)),
-  allowDemoSeed: bool('ALLOW_DEMO_SEED', process.env.NODE_ENV !== 'production'),
+  // The demo workspace must be loadable on the public evaluation deployment.
+  // Creating it is safe: an existing workspace is only reconciled (membership),
+  // while a rebuild still requires the Atlas lead (see demo.routes.js).
+  allowDemoSeed: bool('ALLOW_DEMO_SEED', true),
   rootDir,
 };
 

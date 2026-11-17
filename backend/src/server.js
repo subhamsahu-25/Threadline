@@ -5,6 +5,7 @@ import { logger } from './lib/logger.js';
 import { processSourceJob, recoverInterruptedSources } from './services/ingest/index.js';
 import { startSyncScheduler } from './services/ingest/sync.js';
 import { configureQueue, setJobHandler } from './services/queue.js';
+import { reconcileDemoWorkspace } from './demo/seed.js';
 
 setJobHandler(processSourceJob);
 configureQueue({ concurrency: Number(process.env.INGEST_CONCURRENCY || 2), maxAttempts: 2 });
@@ -13,6 +14,18 @@ await connectDB();
 
 const recovered = await recoverInterruptedSources();
 if (recovered > 0) logger.info({ recovered }, 'Re-queued interrupted ingestion jobs');
+
+try {
+  const repaired = await reconcileDemoWorkspace();
+  if (repaired) {
+    logger.info(
+      { project: repaired.project.id },
+      'Reconciled the demo workspace with the current demo personas',
+    );
+  }
+} catch (error) {
+  logger.warn({ err: error }, 'Could not reconcile the demo workspace');
+}
 
 const stopSync = startSyncScheduler();
 
