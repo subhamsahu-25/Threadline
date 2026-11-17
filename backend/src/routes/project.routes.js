@@ -1,11 +1,23 @@
 import { Router } from 'express';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { AppError, asyncHandler, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { env } from '../config/env.js';
 import { uploadFiles } from '../middleware/upload.js';
 import { loadProject, requireProjectContributor, requireProjectLead } from '../middleware/project.js';
 import { validate } from '../middleware/validate.js';
-import { AuditEvent, Claim, Document, Evidence, Handover, Project, Source, User } from '../models/index.js';
-import { assertSourceVisible, roleOf, sourceVisibleTo } from '../services/access/policy.js';
-import { recordAudit } from '../services/audit.js';
+import { AuditEvent, Claim, Clarification, Document, Evidence, Handover, Project, Source, User } from '../models/index.js';
+import {
+  assertSourceVisible,
+  canManageProject,
+  claimVisibleTo,
+  roleOf,
+  sourceVisibleTo,
+} from '../services/access/policy.js';
+import { recordAudit, redactAuditEventsForViewer } from '../services/audit.js';
+import { notify } from '../services/notifications.js';
+import { askClarifications, buildClarificationCandidates } from '../services/clarifications.js';
+import { redactText } from '../lib/redaction.js';
 import { enqueue } from '../services/queue.js';
 import {
   buildStateForUser,
@@ -17,14 +29,17 @@ import {
 } from '../services/projectState.js';
 import { parseDriveRef } from '../services/ingest/googleDrive.js';
 import { parseRepoRef } from '../services/ingest/github.js';
+import { isSyncable } from '../services/ingest/sync.js';
 import {
   addMemberSchema,
+  askClarificationsSchema,
   auditQuerySchema,
   createProjectSchema,
   createSourceSchema,
   listClaimsQuerySchema,
   resolveClaimSchema,
   resolveConflictSchema,
+  syncSourceSchema,
   updateMemberRoleSchema,
   updateProjectSchema,
   updateSourceSchema,
@@ -43,6 +58,17 @@ function zodError(error) {
       message: issue.message,
     })),
   );
+}
+
+/**
+ * Connectors and confidential uploads fail closed: unless the creator names a
+ * wider audience, only project leads can read the source.
+ */
+function defaultSourceVisibility({ kind, sensitivity, visibility }) {
+  if (visibility) return visibility;
+  const restricted = kind === 'github' || kind === 'drive' || sensitivity === 'confidential';
+  if (!restricted) return { scope: 'project', roles: [], users: [] };
+  return { scope: 'roles', roles: ['lead'], users: [] };
 }
 
 router.get(
@@ -123,18 +149,25 @@ router.get(
   asyncHandler(async (req, res) => {
     await req.project.populate('members.user', 'name email');
     const sources = await Source.find({ project: req.project._id, deletedAt: null }).lean();
-    const visibleSources = sources.filter(
-      (source) =>
-        req.projectRole === 'lead' || sourceVisibleTo(source, req.project, req.user._id),
+    const visibleSources = sources.filter((source) =>
+      sourceVisibleTo(source, req.project, req.user._id),
     );
     const handovers = await Handover.countDocuments({ project: req.project._id });
+    const sharedHandovers = await Handover.countDocuments({
+      project: req.project._id,
+      status: { $in: ['shared', 'acknowledged'] },
+    });
 
+    // Counts are description of what the viewer may read. Leads manage every
+    // source but do not implicitly read content restricted to other people, so
+    // both totals come from the same fail-closed visibility rule.
     res.json({
       project: serializeProject(req.project, req.user),
       stats: {
         sources: visibleSources.length,
-        totalSources: req.projectRole === 'lead' ? sources.length : visibleSources.length,
+        totalSources: visibleSources.length,
         handovers,
+        sharedHandovers,
       },
     });
   }),
@@ -209,6 +242,15 @@ router.post(
       req,
     });
 
+    await notify({
+      project: req.project,
+      recipients: [user._id],
+      type: 'member.added',
+      entityType: 'user',
+      entityId: user._id,
+      actor: req.user,
+    });
+
     await req.project.populate('members.user', 'name email');
     res.status(201).json({ project: serializeProject(req.project, req.user) });
   }),
@@ -245,6 +287,15 @@ router.patch(
       targetId: userId,
       meta: { from: previousRole, to: role },
       req,
+    });
+
+    await notify({
+      project: req.project,
+      recipients: [userId],
+      type: 'member.role_changed',
+      entityType: 'user',
+      entityId: userId,
+      actor: req.user,
     });
 
     await req.project.populate('members.user', 'name email');
@@ -310,6 +361,37 @@ router.get(
       nextActions: result.nextActions,
       visibleClaimCount: result.claims.length,
     });
+  }),
+);
+
+router.get(
+  '/:projectId/clarifications/candidates',
+  loadProject,
+  requireProjectContributor,
+  asyncHandler(async (req, res) => {
+    const result = await buildClarificationCandidates({
+      project: req.project,
+      actor: req.user,
+    });
+    res.json(result);
+  }),
+);
+
+router.post(
+  '/:projectId/clarifications',
+  loadProject,
+  requireProjectContributor,
+  validate({ body: askClarificationsSchema }),
+  asyncHandler(async (req, res) => {
+    const { claimIds, askForAll, prompt } = req.body;
+    const result = await askClarifications({
+      project: req.project,
+      actor: req.user,
+      claimIds,
+      askForAll,
+      prompt,
+    });
+    res.status(201).json(result);
   }),
 );
 
@@ -407,9 +489,8 @@ router.get(
     const sources = await Source.find({ project: req.project._id, deletedAt: null }).sort({
       createdAt: -1,
     });
-    const visible = sources.filter(
-      (source) =>
-        req.projectRole === 'lead' || sourceVisibleTo(source, req.project, req.user._id),
+    const visible = sources.filter((source) =>
+      sourceVisibleTo(source, req.project, req.user._id),
     );
     res.json({ sources: visible.map(serializeSource) });
   }),
@@ -456,8 +537,9 @@ router.post(
 
     if (status) {
       claim.status = status;
+      const safeNote = redactText(note || '').text;
       claim.resolution = {
-        note: note || '',
+        note: safeNote,
         by: req.user._id,
         byName: req.user.name,
         at: new Date(),
@@ -469,7 +551,7 @@ router.post(
         targetType: 'claim',
         targetId: claim._id,
         targetLabel: claim.statement.slice(0, 120),
-        meta: { status, before: before.status, note: note || null },
+        meta: { status, before: before.status, note: safeNote || null },
         req,
       });
     }
@@ -504,10 +586,18 @@ router.post(
       kind,
       name: name || `${kind === 'github' ? 'GitHub' : 'Google Drive'}: ${normalizedRef}`,
       externalRef: normalizedRef,
-      visibility: visibility || { scope: 'project', roles: [], users: [] },
+      visibility: defaultSourceVisibility({
+        kind,
+        sensitivity: sensitivity || 'internal',
+        visibility,
+      }),
       sensitivity: sensitivity || 'internal',
       createdBy: req.user._id,
       status: 'queued',
+      sync: {
+        enabled: kind === 'github' || kind === 'drive',
+        intervalMinutes: 5,
+      },
     });
 
     enqueue('ingest_source', { sourceId: String(source._id) });
@@ -558,7 +648,11 @@ router.post(
       kind: 'upload',
       name: parsed.data.name || files[0].originalname,
       externalRef: '',
-      visibility: parsed.data.visibility || { scope: 'project', roles: [], users: [] },
+      visibility: defaultSourceVisibility({
+        kind: 'upload',
+        sensitivity: parsed.data.sensitivity,
+        visibility: parsed.data.visibility,
+      }),
       sensitivity: parsed.data.sensitivity,
       createdBy: req.user._id,
       status: 'queued',
@@ -601,7 +695,7 @@ router.get(
       deletedAt: null,
     });
     if (!source) throw notFound('Source not found');
-    if (!sourceVisibleTo(source, req.project, req.user._id) && req.projectRole !== 'lead') {
+    if (!sourceVisibleTo(source, req.project, req.user._id)) {
       throw forbidden('You are not authorized to access this source');
     }
     res.json({ source: serializeSource(source) });
@@ -664,23 +758,74 @@ router.delete(
       deletedAt: null,
     });
     if (!source) throw notFound('Source not found');
+    if (['queued', 'processing'].includes(source.status)) {
+      throw conflict('Wait for ingestion to finish before removing this source');
+    }
+
+    // Purging removes the content a permission decision was based on. The
+    // source row itself is kept (marked deleted) so citations and audits can
+    // still explain why an item disappeared, but no text, evidence or file
+    // survives, and every claim it produced is retired.
+    const documents = await Document.find({ source: source._id }).select('_id').lean();
+    const documentIds = documents.map((document) => document._id);
+    const claims = await Claim.find({ source: source._id }).select('_id').lean();
+    const claimIds = claims.map((claim) => claim._id);
+
+    const evidence = await Evidence.deleteMany({
+      $or: [
+        { source: source._id },
+        ...(documentIds.length > 0 ? [{ document: { $in: documentIds } }] : []),
+        ...(claimIds.length > 0 ? [{ claim: { $in: claimIds } }] : []),
+      ],
+    });
+    if (documentIds.length > 0) {
+      await Document.deleteMany({ _id: { $in: documentIds } });
+    }
+    if (claimIds.length > 0) {
+      await Claim.updateMany(
+        { _id: { $in: claimIds }, retiredAt: null },
+        { $set: { retiredAt: new Date() }, $unset: { document: 1 } },
+      );
+    }
+
+    for (const file of source.files || []) {
+      if (!file.storedName) continue;
+      await fs
+        .unlink(path.join(env.uploadDir, path.basename(file.storedName)))
+        .catch(() => {});
+    }
+    const fileCount = (source.files || []).length;
 
     source.deletedAt = new Date();
-    source.statusMessage = 'Source removed; documents retained for audit history';
+    source.statusMessage =
+      'Source purged: stored text, evidence and files deleted; its claims are retired';
+    source.files = [];
+    if (source.sync) source.sync.enabled = false;
     await source.save();
 
     await recordAudit({
       projectId: req.project._id,
       actor: req.user,
-      action: 'source.deleted',
+      action: 'source.purged',
       targetType: 'source',
       targetId: source._id,
       targetLabel: source.name,
-      meta: {},
+      meta: {
+        documents: documentIds.length,
+        evidence: evidence.deletedCount || 0,
+        claimsRetired: claimIds.length,
+        files: fileCount,
+      },
       req,
     });
 
-    res.json({ deleted: true });
+    res.json({
+      deleted: true,
+      purged: true,
+      documents: documentIds.length,
+      evidence: evidence.deletedCount || 0,
+      claimsRetired: claimIds.length,
+    });
   }),
 );
 
@@ -689,16 +834,31 @@ router.post(
   loadProject,
   requireProjectContributor,
   asyncHandler(async (req, res) => {
-    const source = await Source.findOne({
-      _id: req.params.sourceId,
-      project: req.project._id,
-      deletedAt: null,
-    });
-    if (!source) throw notFound('Source not found');
+    const source = await Source.findOneAndUpdate(
+      {
+        _id: req.params.sourceId,
+        project: req.project._id,
+        deletedAt: null,
+        status: { $in: ['ready', 'partial', 'failed'] },
+      },
+      { $set: { status: 'queued', statusMessage: 'Re-ingestion requested' } },
+      { new: true },
+    );
 
-    source.status = 'queued';
-    source.statusMessage = 'Re-ingestion requested';
-    await source.save();
+    if (!source) {
+      const existing = await Source.findOne({
+        _id: req.params.sourceId,
+        project: req.project._id,
+        deletedAt: null,
+      }).select('status');
+      if (!existing) throw notFound('Source not found');
+      throw conflict(
+        existing.status === 'queued'
+          ? 'This source is already queued for ingestion'
+          : 'This source is already being ingested',
+      );
+    }
+
     enqueue('ingest_source', { sourceId: String(source._id) });
 
     await recordAudit({
@@ -713,6 +873,87 @@ router.post(
     });
 
     res.status(202).json({ source: serializeSource(source) });
+  }),
+);
+
+router.post(
+  '/:projectId/sources/:sourceId/sync',
+  loadProject,
+  requireProjectContributor,
+  asyncHandler(async (req, res) => {
+    const source = await Source.findOne({
+      _id: req.params.sourceId,
+      project: req.project._id,
+      deletedAt: null,
+    });
+    if (!source) throw notFound('Source not found');
+    if (!isSyncable(source)) {
+      throw badRequest('Only connected GitHub and Drive sources can be synced');
+    }
+    if (['queued', 'processing'].includes(source.status)) {
+      throw conflict('This source is already queued or being refreshed');
+    }
+
+    enqueue('sync_source', { sourceId: String(source._id) });
+    await recordAudit({
+      projectId: req.project._id,
+      actor: req.user,
+      action: 'source.sync_requested',
+      targetType: 'source',
+      targetId: source._id,
+      targetLabel: source.name,
+      meta: { intervalMinutes: source.sync?.intervalMinutes || 5 },
+      req,
+    });
+
+    res.status(202).json({ queued: true, source: serializeSource(source) });
+  }),
+);
+
+router.patch(
+  '/:projectId/sources/:sourceId/sync',
+  loadProject,
+  requireProjectLead,
+  validate({ body: syncSourceSchema }),
+  asyncHandler(async (req, res) => {
+    const source = await Source.findOne({
+      _id: req.params.sourceId,
+      project: req.project._id,
+      deletedAt: null,
+    });
+    if (!source) throw notFound('Source not found');
+    if (!isSyncable(source)) {
+      throw badRequest('Only connected GitHub and Drive sources can be synced');
+    }
+
+    const before = {
+      enabled: Boolean(source.sync?.enabled),
+      intervalMinutes: source.sync?.intervalMinutes || 5,
+    };
+    if (req.body.enabled !== undefined) source.sync.enabled = req.body.enabled;
+    if (req.body.intervalMinutes !== undefined) {
+      source.sync.intervalMinutes = req.body.intervalMinutes;
+    }
+    await source.save();
+
+    await recordAudit({
+      projectId: req.project._id,
+      actor: req.user,
+      action: 'source.sync_updated',
+      targetType: 'source',
+      targetId: source._id,
+      targetLabel: source.name,
+      meta: {
+        before,
+        after: {
+          enabled: Boolean(source.sync?.enabled),
+          intervalMinutes: source.sync?.intervalMinutes || 5,
+        },
+      },
+      req,
+    });
+
+    res.json({ source: serializeSource(source) });
   }),
 );
 
@@ -787,22 +1028,100 @@ router.get(
     assertSourceVisible(source, req.project, req.user._id);
     if (!document) throw notFound('The source document for this citation is unavailable');
 
+    let handover = null;
+    if (req.query.handover) {
+      handover = await Handover.findOne({
+        _id: req.query.handover,
+        project: req.project._id,
+      });
+      if (!handover) throw notFound('Handover not found');
+
+      const isRecipient = String(handover.recipient) === String(req.user._id);
+      const isCreator = String(handover.createdBy) === String(req.user._id);
+      if (!isRecipient && !isCreator && !canManageProject(req.project, req.user)) {
+        throw forbidden('You do not have access to this handover');
+      }
+
+      if (isRecipient) {
+        // A recipient may only resolve evidence that is actually cited by a
+        // shareable item in this handover, never arbitrary evidence IDs.
+        const cited = (handover.items || []).some(
+          (item) =>
+            ['accepted', 'edited'].includes(item.decision) &&
+            (item.citations || []).some(
+              (citation) => String(citation.evidenceId) === String(evidence._id),
+            ),
+        );
+        if (!cited) throw notFound('Evidence not found');
+      }
+    }
+
+    const asRecipient = Boolean(
+      handover && String(handover.recipient) === String(req.user._id),
+    );
+
     const contextStart = Math.max(0, evidence.charStart - 600);
     const contextEnd = Math.min(document.rawText.length, evidence.charEnd + 600);
+
+    let quote = evidence.quote;
+    let context = document.rawText.slice(contextStart, contextEnd);
+    let highlight = {
+      start: evidence.charStart - contextStart,
+      end: evidence.charEnd - contextStart,
+    };
+    let redactions = { count: 0, kinds: [] };
+
+    if (asRecipient) {
+      // Redact the three slices independently, then rebuild the highlight from
+      // the redacted lengths so it still lands on the right words.
+      const before = redactText(document.rawText.slice(contextStart, evidence.charStart));
+      const middle = redactText(evidence.quote);
+      const after = redactText(document.rawText.slice(evidence.charEnd, contextEnd));
+      context = `${before.text}${middle.text}${after.text}`;
+      quote = middle.text;
+      highlight = {
+        start: before.text.length,
+        end: before.text.length + middle.text.length,
+      };
+      redactions = {
+        count: before.count + middle.count + after.count,
+        kinds: [...new Set([...before.kinds, ...middle.kinds, ...after.kinds])],
+      };
+    }
+
+    const isPersonConfirmed = evidence.validation === 'person_confirmed';
+    let confirmation = null;
+    if (isPersonConfirmed) {
+      const clarification = evidence.answerRef
+        ? await Clarification.findById(evidence.answerRef).lean()
+        : null;
+      confirmation = {
+        answer: quote,
+        by: evidence.confirmedByName || null,
+        at: evidence.confirmedAt || null,
+        prompt: clarification?.prompt || null,
+        kind: clarification?.kind || null,
+      };
+    }
 
     res.json({
       evidence: {
         id: String(evidence._id),
-        quote: evidence.quote,
+        quote,
         validation: evidence.validation,
         charStart: evidence.charStart,
         charEnd: evidence.charEnd,
+        origin: isPersonConfirmed ? 'person_confirmed' : 'document',
+        confirmedByName: evidence.confirmedByName || null,
+        confirmedAt: evidence.confirmedAt || null,
       },
-      context: document.rawText.slice(contextStart, contextEnd),
-      highlight: {
-        start: evidence.charStart - contextStart,
-        end: evidence.charEnd - contextStart,
-      },
+      confirmation,
+      // A confirmed answer has no document context to show; the drawer renders
+      // the answer, the person and the date from `confirmation` instead.
+      context: isPersonConfirmed ? null : context,
+      highlight: isPersonConfirmed ? null : highlight,
+      redacted: asRecipient,
+      redactions: asRecipient ? redactions : undefined,
       source: { name: source.name, kind: source.kind },
       document: {
         id: String(document._id),
@@ -827,19 +1146,25 @@ router.get(
       .limit(req.query.limit)
       .lean();
 
-    res.json({
-      events: events.map((event) => ({
-        id: String(event._id),
-        action: event.action,
-        actorName: event.actorName,
-        targetType: event.targetType,
-        targetId: event.targetId ? String(event.targetId) : undefined,
-        targetLabel: event.targetLabel,
-        meta: event.meta,
-        createdAt: event.createdAt,
-        ip: event.ip,
-      })),
+    const serialized = events.map((event) => ({
+      id: String(event._id),
+      action: event.action,
+      actorName: event.actorName,
+      targetType: event.targetType,
+      targetId: event.targetId ? String(event.targetId) : undefined,
+      targetLabel: event.targetLabel,
+      meta: event.meta,
+      createdAt: event.createdAt,
+      ip: event.ip,
+    }));
+
+    const visibleEvents = await redactAuditEventsForViewer({
+      events: serialized,
+      project: req.project,
+      userId: req.user._id,
     });
+
+    res.json({ events: visibleEvents });
   }),
 );
 

@@ -3,12 +3,10 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { env } from '../config/env.js';
 import {
-  AuditEvent,
   Claim,
+  Clarification,
   Document,
   Evidence,
-  Handover,
-  HandoverVersion,
   Project,
   Source,
   User,
@@ -21,9 +19,9 @@ export const DEMO_PROJECT_KEY = 'ATLAS';
 
 const DEMO_USERS = [
   { key: 'subham', name: 'Subham Sahu', email: 'subham@threadline.demo', role: 'lead' },
-  { key: 'soumyajit', name: 'Soumyajit Jena', email: 'soumyajit@threadline.demo', role: 'contributor' },
-  { key: 'partho', name: 'Partho Prateem Satypatty', email: 'partho@threadline.demo', role: 'contributor' },
-  { key: 'sabyasachi', name: 'Sabyasachi Behera', email: 'sabyasachi@threadline.demo', role: 'observer' },
+  { key: 'rohan', name: 'Rohan Mehta', email: 'rohan@threadline.demo', role: 'contributor' },
+  { key: 'ananya', name: 'Ananya Rao', email: 'ananya@threadline.demo', role: 'contributor' },
+  { key: 'vikram', name: 'Vikram Nair', email: 'vikram@threadline.demo', role: 'observer' },
 ];
 
 const DEMO_DOCUMENTS = [
@@ -41,7 +39,7 @@ Dependency: The payments team must ship settlement webhook v2 before beta. (date
 
 ## Open items
 Open question: Do we need to migrate invoices older than 24 months? (date: 2026-08-19, status: open)
-Task: Write the invoice data backfill script (owner: Soumyajit, due: 2026-11-20, status: open)
+Task: Write the invoice data backfill script (owner: Rohan, due: 2026-11-20, status: open)
 Task: Publish the migration runbook (status: open)
 `,
   },
@@ -66,10 +64,10 @@ Dependency: The mobile app team needs a stable invoice download endpoint until t
     sensitivity: 'internal',
     visibility: { scope: 'project', roles: [], users: [] },
     content: `type,title,owner,due,status
-task,Write billing smoke tests,Partho,2026-11-12,open
+task,Write billing smoke tests,Ananya,2026-11-12,open
 task,Add ledger drift alerting,Sana,2026-11-08,open
 task,Migrate invoice PDF templates,,2026-11-25,open
-task,Update on-call documentation,Soumyajit,2026-10-30,done
+task,Update on-call documentation,Rohan,2026-10-30,done
 question,Who owns reconciliation alerting after the handover?,,,open
 `,
   },
@@ -84,21 +82,21 @@ Decision: Introduce v2 invoice endpoints before the beta. (date: 2026-10-20, sta
 Risk: The v2 change breaks invoice downloads in the current mobile client until a new app release ships. (date: 2026-10-20, status: open)
 
 ## Reconciliation
-Open question: Who owns the reconciliation drift alerting after Soumyajit leaves? (date: 2026-10-20, status: open)
-Task: Record a runbook walkthrough with Soumyajit before their last day (owner: Subham, due: 2026-11-14, status: open)
+Open question: Who owns the reconciliation drift alerting after Rohan leaves? (date: 2026-10-20, status: open)
+Task: Record a runbook walkthrough with Rohan before their last day (owner: Subham, due: 2026-11-14, status: open)
 `,
   },
   {
     name: 'handover-notes.txt',
     sensitivity: 'internal',
     visibility: { scope: 'roles', roles: ['lead', 'contributor'], users: [] },
-    content: `# Soumyajit's handover notes
+    content: `# Rohan's handover notes
 
 ## Payment provider
 Decision: Continue with Razorpay for the beta and review the enterprise contract after launch. (date: 2026-10-21, status: active)
 Dependency: Finance must approve the vendor contract before the beta launch. (date: 2026-10-21, status: open)
-Task: Send the vendor security questionnaire to finance (owner: Soumyajit, due: 2026-11-15, status: open)
-Task: Hand over the Grafana dashboard access (owner: Soumyajit, status: open)
+Task: Send the vendor security questionnaire to finance (owner: Rohan, due: 2026-11-15, status: open)
+Task: Hand over the Grafana dashboard access (owner: Rohan, status: open)
 `,
   },
   {
@@ -141,20 +139,38 @@ async function ensureUser(definition, passwordHash) {
   return user;
 }
 
-async function removeExistingDemoProject() {
-  const project = await Project.findOne({ key: DEMO_PROJECT_KEY });
-  if (!project) return;
-  const projectId = project._id;
-  await Promise.all([
-    Evidence.deleteMany({ project: projectId }),
-    Claim.deleteMany({ project: projectId }),
-    Document.deleteMany({ project: projectId }),
-    Source.deleteMany({ project: projectId }),
-    Handover.deleteMany({ project: projectId }),
-    HandoverVersion.deleteMany({ project: projectId }),
-    AuditEvent.deleteMany({ project: projectId }),
-    Project.deleteOne({ _id: projectId }),
-  ]);
+const SEEDED_SOURCE_NAMES = DEMO_DOCUMENTS.map((document) => document.name);
+
+/**
+ * The demo workspace is shared by every visitor, so a reset must restore the
+ * seeded corpus without erasing work someone else uploaded. Only sources whose
+ * name matches a seeded document are removed, together with the claims and
+ * evidence that came from them.
+ */
+async function removeSeededContent(project) {
+  const seededSources = await Source.find({
+    project: project._id,
+    name: { $in: SEEDED_SOURCE_NAMES },
+  });
+  if (seededSources.length === 0) return;
+
+  const sourceIds = seededSources.map((source) => source._id);
+  const seededClaims = await Claim.find({ project: project._id, source: { $in: sourceIds } })
+    .select('_id')
+    .lean();
+  const claimIds = seededClaims.map((claim) => claim._id);
+
+  await Evidence.deleteMany({ project: project._id, source: { $in: sourceIds } });
+  await Clarification.deleteMany({ project: project._id, claim: { $in: claimIds } });
+  await Claim.deleteMany({ project: project._id, source: { $in: sourceIds } });
+  await Document.deleteMany({ project: project._id, source: { $in: sourceIds } });
+
+  for (const source of seededSources) {
+    for (const file of source.files || []) {
+      await fs.rm(path.join(env.uploadDir, file.storedName), { force: true }).catch(() => {});
+    }
+  }
+  await Source.deleteMany({ project: project._id, _id: { $in: sourceIds } });
 }
 
 async function removeStaleDemoUsers() {
@@ -184,40 +200,55 @@ export async function seedDemo({ reset = true } = {}) {
     users[definition.key] = await ensureUser(definition, passwordHash);
   }
 
-  if (reset) {
-    await removeExistingDemoProject();
+  const members = DEMO_USERS.map((definition) => ({
+    user: users[definition.key]._id,
+    role: definition.role,
+  }));
+  const transition = {
+    outgoingUserId: users.rohan._id,
+    outgoingName: 'Rohan Mehta',
+    plannedDepartureAt: new Date(Date.now() + 14 * 86_400_000),
+    context:
+      'Rohan is rotating off Atlas to lead the payments platform team. Ananya joins as their replacement in two weeks.',
+  };
+
+  let project = await Project.findOne({ key: DEMO_PROJECT_KEY });
+  if (project && !reset) {
+    return {
+      alreadySeeded: true,
+      project: { id: String(project._id), key: project.key, name: project.name },
+      hint: 'Pass reset=true to rebuild the seeded sources',
+    };
+  }
+  if (project && reset) {
+    await removeSeededContent(project);
     await removeStaleDemoUsers();
   }
 
-  const existing = await Project.findOne({ key: DEMO_PROJECT_KEY });
-  if (existing) {
-    return {
-      alreadySeeded: true,
-      project: { id: String(existing._id), key: existing.key, name: existing.name },
-      hint: 'Pass reset=true to rebuild the demo project',
-    };
+  if (!project) {
+    project = await Project.create({
+      key: DEMO_PROJECT_KEY,
+      name: 'Project Atlas - Billing Service Migration',
+      description:
+        'Migration of the billing ledger and invoice pipeline to a modular service. Used as the Threadline demo project.',
+      owner: users.subham._id,
+      members,
+      transition,
+      startedAt: new Date('2026-08-19'),
+      targetDate: new Date('2026-12-15'),
+    });
+  } else {
+    project.name = 'Project Atlas - Billing Service Migration';
+    project.description =
+      'Migration of the billing ledger and invoice pipeline to a modular service. Used as the Threadline demo project.';
+    project.owner = users.subham._id;
+    project.members = members;
+    project.transition = transition;
+    project.settings = { requireSeparateApprover: false };
+    project.startedAt = new Date('2026-08-19');
+    project.targetDate = new Date('2026-12-15');
+    await project.save();
   }
-
-  const project = await Project.create({
-    key: DEMO_PROJECT_KEY,
-    name: 'Project Atlas - Billing Service Migration',
-    description:
-      'Migration of the billing ledger and invoice pipeline to a modular service. Used as the Threadline demo project.',
-    owner: users.subham._id,
-    members: DEMO_USERS.map((definition) => ({
-      user: users[definition.key]._id,
-      role: definition.role,
-    })),
-    transition: {
-      outgoingUserId: users.soumyajit._id,
-      outgoingName: 'Soumyajit Jena',
-      plannedDepartureAt: new Date(Date.now() + 14 * 86_400_000),
-      context:
-        'Soumyajit is rotating off Atlas to lead the payments platform team. Partho joins as their replacement in two weeks.',
-    },
-    startedAt: new Date('2026-08-19'),
-    targetDate: new Date('2026-12-15'),
-  });
 
   const sourceIds = [];
   for (const document of DEMO_DOCUMENTS) {
@@ -265,12 +296,14 @@ export async function seedDemo({ reset = true } = {}) {
       stats: source.stats,
     })),
     suggestedFlow: [
-      'Open the workspace as Partho (incoming contributor) to see the recipient experience.',
-      'Open it as Subham (project lead) and create a handover for Partho.',
+      'Open the workspace as Ananya (incoming contributor) to see the recipient experience.',
+      'Open it as Subham (project lead) and create a handover for Ananya.',
       'Review pending items, accept or reject them, then submit for review.',
-      'Approve the handover, share it, then switch to Partho and open the share link.',
-      'Change the visibility of handover-notes.txt and reload Partho\'s handover to see live permission re-checks.',
+      'Approve the handover, share it, then switch to Ananya and open the share link.',
+      'Change the visibility of handover-notes.txt and reload Ananya\'s handover to see live permission re-checks.',
     ],
+    resetScope:
+      'Reset restores only the seeded sources. Uploads and handovers created by other visitors are preserved.',
   };
 
   if (sources.some((source) => source.status === 'failed')) {

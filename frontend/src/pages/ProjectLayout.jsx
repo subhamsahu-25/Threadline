@@ -3,6 +3,7 @@ import { Link, Outlet, useNavigate, useOutletContext, useParams } from 'react-ro
 import { ArrowUpRight, CalendarClock, FileSignature, ShieldAlert } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useAsync } from '../hooks/useAsync.js';
+import { useAuth } from '../context/AuthContext.jsx';
 import { useWorkspace } from '../context/WorkspaceContext.jsx';
 import { daysUntil, formatDate } from '../lib/format.js';
 import { RoleBadge } from '../components/badges.jsx';
@@ -21,10 +22,13 @@ export function useProject() {
 export default function ProjectLayout() {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { setCurrentProject, upsertProject } = useWorkspace();
   const { data, error, loading, reload } = useAsync(
     () => api.get(`/api/projects/${projectId}`),
-    [projectId],
+    // Refetch when the signed-in identity changes: the project payload carries
+    // the caller's role, so a persona switch must not reuse the old one.
+    [projectId, user?.id],
   );
 
   const project = data?.project;

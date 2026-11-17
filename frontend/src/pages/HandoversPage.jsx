@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Clock3,
   FileSignature,
+  GitCompareArrows,
   LockKeyhole,
   Plus,
   RefreshCw,
@@ -36,13 +37,15 @@ import {
   Select,
 } from '../components/ui.jsx';
 
-function HandoverCard({ handover, projectId, isLead, currentUserId, onOpen }) {
+function HandoverCard({ handover, projectId, currentUserId, onOpen }) {
   const received = String(handover.recipient) === String(currentUserId);
   const status = HANDOVER_STATUS[handover.status] || { label: handover.status };
   const actionable =
     handover.status === 'draft' || handover.status === 'in_review'
       ? handover.pendingCount
       : null;
+  const showsReviewState = typeof handover.itemCount === 'number';
+  const outdated = handover.freshness?.status === 'outdated';
 
   return (
     <Card className="p-4 transition hover:border-brand-200">
@@ -55,6 +58,11 @@ function HandoverCard({ handover, projectId, isLead, currentUserId, onOpen }) {
                 Handover for {handover.recipientSnapshot?.name || 'recipient'}
               </h2>
               <HandoverStatusBadge status={handover.status} />
+              {outdated && (
+                <Badge tone="orange" dot title="A connected source changed after this handover was reviewed">
+                  Outdated
+                </Badge>
+              )}
               {received && <Badge tone="navy">Yours</Badge>}
             </div>
             <p className="mt-0.5 text-[11px] text-ink-muted">
@@ -62,28 +70,26 @@ function HandoverCard({ handover, projectId, isLead, currentUserId, onOpen }) {
               {handover.version} · updated {formatRelative(handover.updatedAt)}
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-muted">
-              <span>{pluralize(handover.itemCount, 'reviewable item')}</span>
-              {handover.status === 'draft' || handover.status === 'in_review' ? (
-                <span
-                  className={
-                    handover.pendingCount > 0 ? 'font-medium text-amber-700' : 'text-emerald-700'
-                  }
-                >
-                  {handover.pendingCount > 0
-                    ? `${handover.pendingCount} awaiting decision`
-                    : 'All items decided'}
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3 text-emerald-600" aria-hidden="true" />
-                  {status.label}
-                </span>
-              )}
-              {isLead && handover.withheld > 0 && (
-                <span className="inline-flex items-center gap-1 text-ink-muted">
-                  <LockKeyhole className="h-3 w-3" aria-hidden="true" />
-                  {handover.withheld} withheld
-                </span>
+              {showsReviewState && (
+                <>
+                  <span>{pluralize(handover.itemCount, 'reviewable item')}</span>
+                  {handover.status === 'draft' || handover.status === 'in_review' ? (
+                    <span
+                      className={
+                        handover.pendingCount > 0 ? 'font-medium text-amber-700' : 'text-emerald-700'
+                      }
+                    >
+                      {handover.pendingCount > 0
+                        ? `${handover.pendingCount} awaiting decision`
+                        : 'All items decided'}
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3 text-emerald-600" aria-hidden="true" />
+                      {status.label}
+                    </span>
+                  )}
+                </>
               )}
               {handover.status === 'shared' && (
                 <span className="inline-flex items-center gap-1">
@@ -151,7 +157,6 @@ export default function HandoversPage() {
   const [createError, setCreateError] = useState('');
 
   const canPrepare = ['lead', 'contributor'].includes(project.role);
-  const isLead = project.role === 'lead';
   const recipients = project.members.filter((member) => String(member.userId) !== String(user.id));
   const handovers = data?.handovers || [];
 
@@ -315,7 +320,6 @@ export default function HandoversPage() {
               key={handover.id}
               handover={handover}
               projectId={projectId}
-              isLead={isLead}
               currentUserId={user.id}
               onOpen={() => navigate(`/projects/${projectId}/handovers/${handover.id}`)}
             />
@@ -422,7 +426,7 @@ export default function HandoversPage() {
             <div className="flex items-start gap-2 rounded-lg border border-line bg-slate-50 px-3 py-2 text-[10.5px] leading-4 text-ink-muted">
               <LockKeyhole className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
               Items citing a source the recipient cannot read are excluded entirely. The withheld
-              count is shown only to reviewers.
+              tally is recomputed on the handover page for whoever is viewing it.
             </div>
 
             {createError && (

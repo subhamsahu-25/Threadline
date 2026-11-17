@@ -2,9 +2,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { app, auth, idOf, request, seed, startDb, stopDb, tokenOf } from './helpers.js';
 
 const LEAD = 'subham@threadline.demo';
-const OUTGOING = 'soumyajit@threadline.demo';
-const OBSERVER = 'sabyasachi@threadline.demo';
-const INCOMING = 'partho@threadline.demo';
+const OUTGOING = 'rohan@threadline.demo';
+const OBSERVER = 'vikram@threadline.demo';
+const INCOMING = 'ananya@threadline.demo';
 
 describe('claim actions from the overview deck', () => {
   let seeded;
@@ -53,7 +53,7 @@ describe('claim actions from the overview deck', () => {
     const gap = before.body.ownershipGaps[0];
     expect(gap).toBeTruthy();
 
-    const ownerName = 'Partho Prateem Satypatty';
+    const ownerName = 'Ananya Rao';
     const result = await act(gap.id, { ownerName }).expect(200);
     expect(result.body.resolved).toBe(true);
     expect(result.body.claim.ownerName).toBe(ownerName);

@@ -9,8 +9,10 @@ import { authenticate } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
 import { Project } from './models/index.js';
 import authRoutes from './routes/auth.routes.js';
+import clarificationRoutes from './routes/clarification.routes.js';
 import demoRoutes from './routes/demo.routes.js';
-import handoverRoutes from './routes/handover.routes.js';
+import handoverRoutes, { sharedHandoverRouter } from './routes/handover.routes.js';
+import notificationRoutes from './routes/notification.routes.js';
 import projectRoutes from './routes/project.routes.js';
 import { llmStatus } from './services/ai/llm.js';
 import { processSourceJob } from './services/ingest/index.js';
@@ -75,7 +77,10 @@ app.get('/api/health', async (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', authenticate, projectRoutes);
+app.use('/api/handovers/shared', sharedHandoverRouter);
 app.use('/api/handovers', authenticate, handoverRoutes);
+app.use('/api/clarifications', authenticate, clarificationRoutes);
+app.use('/api/notifications', authenticate, notificationRoutes);
 app.use('/api/demo', demoRoutes);
 
 app.use(notFoundHandler);

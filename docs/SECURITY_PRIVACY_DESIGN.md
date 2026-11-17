@@ -41,7 +41,11 @@ that keep a handover honest.
   readable source, so restricted content cannot be inferred from included
   claims.
 - **Share links:** recipient-bound, expiring (`SHARE_TTL_DAYS`, 7 days
-  default), and still require a valid session for that recipient.
+  default), and still require a valid session for that recipient. The seeded
+  demo workspace is the one deliberate exception: its links open read-only
+  without a session so judges can evaluate the recipient journey. Those
+  acknowledgements are audited with `channel: public_share_link`, and every
+  other project refuses anonymous visitors.
 - **Auditability:** every sensitive read and write (project, source,
   document, handover, authentication) writes an audit event with actor,
   action, target, IP and user agent. Leads can inspect the full trail via

@@ -11,8 +11,8 @@ export const DEMO_PERSONAS = [
     abilities: ['Approve', 'Share', 'Restrict sources', 'Audit log'],
   },
   {
-    name: 'Soumyajit Jena',
-    email: 'soumyajit@threadline.demo',
+    name: 'Rohan Mehta',
+    email: 'rohan@threadline.demo',
     role: 'contributor',
     tag: 'OUTGOING · T-14',
     description: 'Rotating off Atlas. Their notes and decisions are the handover’s source material.',
@@ -20,8 +20,8 @@ export const DEMO_PERSONAS = [
     abilities: ['Upload sources', 'Review items'],
   },
   {
-    name: 'Partho Prateem Satypatty',
-    email: 'partho@threadline.demo',
+    name: 'Ananya Rao',
+    email: 'ananya@threadline.demo',
     role: 'contributor',
     tag: 'INCOMING',
     description: 'The handover recipient. Sees only items backed by sources they may read.',
@@ -29,8 +29,8 @@ export const DEMO_PERSONAS = [
     abilities: ['Open shared link', 'Acknowledge'],
   },
   {
-    name: 'Sabyasachi Behera',
-    email: 'sabyasachi@threadline.demo',
+    name: 'Vikram Nair',
+    email: 'vikram@threadline.demo',
     role: 'observer',
     tag: 'OBSERVER',
     description: 'Read-only oversight. Cannot upload, review, approve or edit project content.',
@@ -112,6 +112,7 @@ export const SOURCE_STATUS = {
   queued: { label: 'Queued', tone: 'slate' },
   processing: { label: 'Processing', tone: 'amber' },
   ready: { label: 'Ready', tone: 'green' },
+  partial: { label: 'Partial', tone: 'orange' },
   failed: { label: 'Failed', tone: 'red' },
 };
 

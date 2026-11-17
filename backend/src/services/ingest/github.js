@@ -8,6 +8,18 @@ const MAX_ISSUES = 25;
 const MAX_PULLS = 15;
 const MAX_ISSUE_THREADS = 10;
 
+export function assertRepoAllowed(fullName) {
+  if (env.githubAllowedRepos.length === 0) return;
+  if (!env.githubAllowedRepos.includes(fullName.toLowerCase())) {
+    throw new AppError(
+      403,
+      'repo_not_allowlisted',
+      `Repository ${fullName} is not on the GITHUB_ALLOWED_REPOS allowlist`,
+      { allowed: env.githubAllowedRepos },
+    );
+  }
+}
+
 export function parseRepoRef(input) {
   const raw = String(input ?? '')
     .trim()
@@ -22,7 +34,9 @@ export function parseRepoRef(input) {
       'Use the form owner/repository (or a github.com URL) for the repository',
     );
   }
-  return { owner: match[1], repo: match[2], fullName: `${match[1]}/${match[2]}` };
+  const fullName = `${match[1]}/${match[2]}`;
+  assertRepoAllowed(fullName);
+  return { owner: match[1], repo: match[2], fullName };
 }
 
 async function ghFetch(path, { accept = 'application/vnd.github+json' } = {}) {
@@ -64,8 +78,16 @@ async function ghFetch(path, { accept = 'application/vnd.github+json' } = {}) {
   return response;
 }
 
-function doc({ kind, title, rawText, author, occurredAt, url, meta = {} }) {
-  const text = truncate(String(rawText ?? '').replace(/\r\n?/g, '\n'), MAX_DOC_CHARS);
+function doc({ kind, title, rawText, author, occurredAt, url, meta = {}, warnings = [] }) {
+  const fullText = String(rawText ?? '').replace(/\r\n?/g, '\n');
+  const truncated = fullText.length > MAX_DOC_CHARS;
+  const text = truncate(fullText, MAX_DOC_CHARS);
+  const parseWarnings = [...warnings];
+  if (truncated) {
+    parseWarnings.push(
+      `Truncated from ${fullText.length.toLocaleString('en-US')} to ${MAX_DOC_CHARS.toLocaleString('en-US')} characters`,
+    );
+  }
   return {
     kind,
     title,
@@ -76,6 +98,7 @@ function doc({ kind, title, rawText, author, occurredAt, url, meta = {} }) {
     locator: { url },
     rawText: text,
     size: text.length,
+    parseWarnings,
     meta,
   };
 }
@@ -83,6 +106,11 @@ function doc({ kind, title, rawText, author, occurredAt, url, meta = {} }) {
 function labelLine(prefix, text) {
   const cleaned = String(text ?? '').replace(/\s+/g, ' ').trim();
   return cleaned ? `${prefix}: ${cleaned}` : '';
+}
+
+function attachWarning(documents, warning) {
+  if (documents.length === 0) return;
+  documents[0].parseWarnings = [...(documents[0].parseWarnings || []), warning];
 }
 
 async function collectIssues(fullName) {
@@ -206,6 +234,8 @@ async function collectCommits(fullName) {
     rawText: lines.join('\n'),
     occurredAt: commits[0]?.commit?.author?.date,
     url: `https://github.com/${fullName}/commits`,
+    warnings:
+      commits.length >= 30 ? ['Only the latest 30 commits were ingested'] : [],
   });
 }
 
@@ -236,8 +266,15 @@ export async function collectGithubDocuments(ref) {
   }
 
   documents.push(...(await collectIssues(fullName)));
+  if (documents.filter((entry) => entry.kind === 'github_issue').length >= MAX_ISSUES) {
+    attachWarning(documents, `Only the ${MAX_ISSUES} most recently updated issues were ingested`);
+  }
   try {
-    documents.push(...(await collectPullRequests(fullName)));
+    const pulls = await collectPullRequests(fullName);
+    if (pulls.length >= MAX_PULLS) {
+      attachWarning(pulls, `Only the ${MAX_PULLS} most recently updated pull requests were ingested`);
+    }
+    documents.push(...pulls);
   } catch (error) {
     if (error.status === 429) throw error;
   }

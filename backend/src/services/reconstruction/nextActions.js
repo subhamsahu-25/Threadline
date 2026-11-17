@@ -71,6 +71,7 @@ export function deriveNextActions({ state, now = new Date(), limit = 10 }) {
   }
 
   for (const claim of state.openTasks || []) {
+    if (claim.status === 'blocked') continue;
     if (claim.dueAt && new Date(claim.dueAt) < now) {
       actions.push(
         action({
@@ -98,7 +99,22 @@ export function deriveNextActions({ state, now = new Date(), limit = 10 }) {
     );
   }
 
+  for (const claim of state.blockers || []) {
+    actions.push(
+      action({
+        kind: 'unblock_task',
+        priority: 'critical',
+        title: `Unblock task: ${truncate(claim.statement, 90)}`,
+        reason: claim.ownerName
+          ? `Recorded as blocked; owner is ${claim.ownerName}.`
+          : 'Recorded as blocked with no owner to clear the blocker.',
+        claimIds: [claim._id],
+      }),
+    );
+  }
+
   for (const claim of state.openTasks || []) {
+    if (claim.status === 'blocked') continue;
     if (claim.dueAt && new Date(claim.dueAt) < now) continue;
     actions.push(
       action({

@@ -376,8 +376,11 @@ export function ProgressBar({ value = 0, tone = 'brand', className = '', label }
 export function ReadinessRing({ score = 0, size = 128, label = 'readiness' }) {
   const radius = 52;
   const circumference = 2 * Math.PI * radius;
-  const tone = score >= 80 ? '#15803d' : score >= 60 ? '#d97706' : '#dc2626';
-  const offset = circumference * (1 - Math.min(100, Math.max(0, score)) / 100);
+  const hasScore = typeof score === 'number' && Number.isFinite(score);
+  const tone = !hasScore ? '#94a3b8' : score >= 80 ? '#15803d' : score >= 60 ? '#d97706' : '#dc2626';
+  const offset = hasScore
+    ? circumference * (1 - Math.min(100, Math.max(0, score)) / 100)
+    : circumference;
   return (
     <div
       className="relative inline-flex shrink-0 items-center justify-center"
@@ -399,7 +402,9 @@ export function ReadinessRing({ score = 0, size = 128, label = 'readiness' }) {
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-display text-[30px] font-semibold leading-none text-ink">{score}</span>
+        <span className="font-display text-[30px] font-semibold leading-none text-ink">
+          {hasScore ? score : '—'}
+        </span>
         <span className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-ink-muted">
           {label}
         </span>

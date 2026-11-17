@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  BadgeCheck,
   CalendarClock,
   CheckCircle2,
   EyeOff,
+  GitCompareArrows,
   Info,
   LockKeyhole,
   ShieldCheck,
@@ -29,6 +31,17 @@ function ReadOnlyItem({ item, onEvidence }) {
           {certainty.label}
         </Badge>
         {item.sensitivity === 'confidential' && <SensitivityBadge sensitivity="confidential" />}
+        {item.origin === 'person_confirmed' && (
+          <Badge tone="violet" title="Answered by a named teammate instead of a document quote.">
+            <BadgeCheck className="mr-0.5 inline h-3 w-3" aria-hidden="true" />
+            Person-confirmed
+          </Badge>
+        )}
+        {item.changedSinceApproval && (
+          <Badge tone="amber" title="This item changed in the live project state after the handover was approved.">
+            Changed since approval
+          </Badge>
+        )}
         {item.redactionCount > 0 && (
           <Badge
             tone="slate"
@@ -44,6 +57,25 @@ function ReadOnlyItem({ item, onEvidence }) {
         </span>
       </div>
       <p className="mt-2.5 text-[13px] font-medium leading-6 text-ink">{item.statement}</p>
+      {item.origin === 'person_confirmed' && (
+        <p className="mt-1 flex items-center gap-1 text-[10.5px] text-violet-800">
+          <BadgeCheck className="h-3 w-3" aria-hidden="true" />
+          Confirmed by {item.confirmedByName || 'a teammate'}
+          {item.confirmedAt ? ` · ${formatDate(item.confirmedAt)}` : ''}
+        </p>
+      )}
+      {item.changedSinceApproval && (
+        <p className="mt-1.5 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10.5px] leading-4 text-amber-900">
+          Current state: {item.status}
+          {item.previousStatus && item.previousStatus !== item.status
+            ? ` (was ${item.previousStatus})`
+            : ''}
+          {item.previousOwnerName !== undefined &&
+          (item.previousOwnerName || null) !== (item.ownerName || null)
+            ? ` · owner ${item.ownerName || 'unassigned'} (was ${item.previousOwnerName || 'unassigned'})`
+            : ''}
+        </p>
+      )}
       {item.resolutionNote && (
         <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50/70 px-2.5 py-2">
           <p className="font-mono text-[9px] uppercase tracking-wider text-emerald-800">
@@ -114,7 +146,8 @@ export default function RecipientHandover({
 
   const acknowledged = handover.status === 'acknowledged';
   const snapshot = handover.snapshot || {};
-  const revoked = handover.permissionRecheck?.revokedItems || 0;
+  const contentChanged = Boolean(handover.permissionRecheck?.contentChanged);
+  const firstWeek = handover.firstWeek;
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -177,11 +210,67 @@ export default function RecipientHandover({
         </div>
       </div>
 
-      {revoked > 0 ? (
+      {handover.freshness?.status === 'outdated' && (
+        <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3.5 py-2.5 text-[12px] leading-5 text-orange-900">
+          <div className="flex items-start gap-2">
+            <GitCompareArrows className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">
+                A connected source changed after this handover was approved
+              </p>
+              <p className="text-orange-800/90">
+                The project moved on since approval, so some of the items below may differ from
+                what the reviewer signed off. The change list shows only what you are allowed to
+                read.
+              </p>
+              {(handover.freshness.changes || []).length > 0 && (
+                <details className="mt-2">
+                  <summary className="cursor-pointer text-[11px] font-semibold underline-offset-2 hover:underline">
+                    View {handover.freshness.changes.length} change
+                    {handover.freshness.changes.length === 1 ? '' : 's'}
+                  </summary>
+                  <ul className="mt-1.5 space-y-1.5">
+                    {handover.freshness.changes.map((change) => (
+                      <li
+                        key={`${change.claimId}-${change.change}`}
+                        className="rounded-md border border-orange-200/70 bg-white/70 px-2.5 py-1.5 text-[11px] leading-4"
+                      >
+                        <Badge tone={change.change === 'removed' ? 'red' : change.change === 'added' ? 'green' : 'amber'}>
+                          {change.change}
+                        </Badge>
+                        <span className="ml-1.5 text-ink-soft">{change.statement}</span>
+                        {change.change === 'updated' && (
+                          <span className="mt-0.5 block font-mono text-[9.5px] text-ink-muted">
+                            {change.fields
+                              .map(
+                                (field) =>
+                                  `${field.field}: ${field.from ?? 'none'} → ${field.to ?? 'none'}`,
+                              )
+                              .join(' · ')}
+                          </span>
+                        )}
+                        {change.change === 'removed' && change.reason && (
+                          <span className="mt-0.5 block font-mono text-[9.5px] text-ink-muted">
+                            {change.reason === 'source_removed'
+                              ? 'source removed by the project lead'
+                              : 'no longer part of the current record'}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {contentChanged ? (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] leading-5 text-amber-900">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
           <div>
-            <p className="font-semibold">Some items are no longer shown</p>
+            <p className="font-semibold">Some items changed since this handover was approved</p>
             <p className="text-amber-800/90">
               {handover.permissionRecheck?.note ||
                 'Your access to a source changed after this handover was shared. The affected items were removed when you opened this page.'}
@@ -262,6 +351,76 @@ export default function RecipientHandover({
               <Badge tone="slate">Last activity {formatDate(snapshot.lastActivityAt)}</Badge>
             )}
           </div>
+        </Card>
+      )}
+
+      {firstWeek && (
+        <Card className="mb-4 p-4">
+          <SectionHeading
+            eyebrow="Your first week"
+            title="What you own, what is blocked, what to do first"
+            description="Built from the approved items in this handover. Recommendations are prompts, not extracted facts."
+          />
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <div>
+              <p className="eyebrow mb-1.5">You own {firstWeek.youOwn.length}</p>
+              {firstWeek.youOwn.length === 0 ? (
+                <p className="text-[11px] leading-4 text-ink-muted">
+                  No open item in this handover names you as the owner.
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {firstWeek.youOwn.slice(0, 6).map((entry) => (
+                    <li key={entry.claimId} className="rounded-md border border-line bg-slate-50/70 px-2.5 py-1.5">
+                      <p className="text-[11.5px] font-medium leading-4">{entry.statement}</p>
+                      <p className="mt-0.5 flex flex-wrap items-center gap-x-2 font-mono text-[9.5px] text-ink-muted">
+                        <span>{CLAIM_TYPES[entry.type]?.label || entry.type}</span>
+                        <span>{entry.dueAt ? `due ${formatDate(entry.dueAt)}` : 'no due date'}</span>
+                        {entry.changedSinceApproval && <span className="text-amber-700">changed since approval</span>}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div>
+              <p className="eyebrow mb-1.5">Blocked {firstWeek.blocked.length}</p>
+              {firstWeek.blocked.length === 0 ? (
+                <p className="text-[11px] leading-4 text-ink-muted">
+                  Nothing in this handover is recorded as blocked.
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {firstWeek.blocked.slice(0, 6).map((entry) => (
+                    <li key={entry.claimId} className="rounded-md border border-line bg-slate-50/70 px-2.5 py-1.5">
+                      <p className="text-[11.5px] font-medium leading-4">{entry.statement}</p>
+                      <p className="mt-0.5 font-mono text-[9.5px] text-ink-muted">
+                        {CLAIM_TYPES[entry.type]?.label || entry.type}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+          {firstWeek.doFirst.length > 0 && (
+            <div className="mt-3.5 border-t border-line pt-2.5">
+              <p className="eyebrow mb-1.5">Do first</p>
+              <ol className="space-y-1.5">
+                {firstWeek.doFirst.map((entry, index) => (
+                  <li key={`${entry.kind}-${index}`} className="flex items-start gap-2.5">
+                    <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand-900 font-mono text-[9px] font-semibold text-white">
+                      {index + 1}
+                    </span>
+                    <div>
+                      <p className="text-[11.5px] font-medium leading-4">{entry.title}</p>
+                      <p className="text-[10.5px] leading-4 text-ink-muted">{entry.reason}</p>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
         </Card>
       )}
 
@@ -388,6 +547,7 @@ export default function RecipientHandover({
 
       <EvidenceDrawer
         projectId={projectId}
+        handoverId={handover.id}
         evidenceId={evidenceId}
         open={Boolean(evidenceId)}
         onClose={() => setEvidenceId(null)}

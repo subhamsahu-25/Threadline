@@ -32,6 +32,10 @@ export function WorkspaceProvider({ children }) {
   }, [user]);
 
   useEffect(() => {
+    // Drop the previous identity's project list before refetching, so a role
+    // pill or action set never survives a persona switch.
+    setProjects([]);
+    setCurrentProject(null);
     reloadProjects().catch(() => {});
   }, [reloadProjects]);
 

@@ -14,8 +14,8 @@ export default {
         ink: {
           DEFAULT: '#12202f',
           soft: '#33465c',
-          muted: '#64748b',
-          faint: '#94a3b8',
+          muted: '#5b6a7e',
+          faint: '#63718a',
         },
         line: {
           DEFAULT: '#e4e8ef',

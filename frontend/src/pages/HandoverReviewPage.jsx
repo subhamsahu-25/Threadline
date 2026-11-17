@@ -3,14 +3,18 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowLeft,
+  BadgeCheck,
   CalendarClock,
   Check,
+  CheckCheck,
   CheckCircle2,
   Clock,
   Copy,
   FileSignature,
+  GitCompareArrows,
   History,
   Info,
+  Link2Off,
   LockKeyhole,
   Pencil,
   RefreshCw,
@@ -115,10 +119,12 @@ function WorkflowStepper({ status }) {
 function ReviewItem({
   item,
   canReview,
+  canShareAnswer,
   busy,
   onDecision,
   onEdit,
   onEvidence,
+  onShare,
 }) {
   const edited = item.decision === 'edited';
   const current = item.statement;
@@ -135,6 +141,12 @@ function ReviewItem({
           {certainty.label}
         </Badge>
         <DecisionBadge decision={item.decision} />
+        {item.origin === 'person_confirmed' && (
+          <Badge tone="violet" title="Answered by a named teammate instead of a document quote.">
+            <BadgeCheck className="mr-0.5 inline h-3 w-3" aria-hidden="true" />
+            Person-confirmed
+          </Badge>
+        )}
         {item.sensitivity === 'confidential' && <SensitivityBadge sensitivity="confidential" />}
         {item.redactionCount > 0 && (
           <Badge
@@ -157,6 +169,37 @@ function ReviewItem({
       </div>
 
       <p className="mt-2.5 text-[13px] font-medium leading-6 text-ink">{current}</p>
+      {item.origin === 'person_confirmed' && (
+        <p className="mt-1 flex items-center gap-1 text-[10.5px] text-violet-800">
+          <BadgeCheck className="h-3 w-3" aria-hidden="true" />
+          Confirmed by {item.confirmedByName || 'a teammate'}
+          {item.confirmedAt ? ` · ${formatDate(item.confirmedAt)}` : ''}
+        </p>
+      )}
+
+      {item.origin === 'person_confirmed' && canReview && (
+        item.restrictedToRecipient ? (
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50/70 px-2.5 py-1.5">
+            <p className="text-[10.5px] leading-4 text-amber-900">
+              The recipient cannot open this answer until it is shared with the project.
+            </p>
+            {canShareAnswer ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onShare(item)}
+                className={`${buttonBase} border-amber-300 bg-white text-amber-900 hover:border-amber-400`}
+              >
+                Share with project
+              </button>
+            ) : (
+              <span className="text-[10px] text-amber-800">A project lead must share it</span>
+            )}
+          </div>
+        ) : (
+          <p className="mt-1 text-[10.5px] text-emerald-800">Shared with the project</p>
+        )
+      )}
 
       {edited && item.originalStatement && (
         <details className="mt-1.5">
@@ -303,6 +346,13 @@ export default function HandoverReviewPage() {
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [versions, setVersions] = useState({ loading: false, error: null, data: null });
   const [acknowledging, setAcknowledging] = useState(false);
+  const [revokeOpen, setRevokeOpen] = useState(false);
+  const [revokeReason, setRevokeReason] = useState('');
+  const [revokeError, setRevokeError] = useState('');
+  const [diffVersion, setDiffVersion] = useState(null);
+  const [diff, setDiff] = useState({ loading: false, error: null, data: null });
+  const [freshnessOpen, setFreshnessOpen] = useState(false);
+  const [acceptAllOpen, setAcceptAllOpen] = useState(false);
 
   useEffect(() => {
     if (data?.handover) {
@@ -357,6 +407,72 @@ export default function HandoverReviewPage() {
       toast.error(errorMessage(err));
     } finally {
       setBusyItem(null);
+    }
+  };
+
+  const shareAnswer = async (item) => {
+    setBusyItem(item.claimId);
+    try {
+      const decision = ['accepted', 'edited'].includes(item.decision)
+        ? item.decision
+        : 'accepted';
+      const body = { decision, shareWithProject: true };
+      if (decision === 'edited') body.editedStatement = item.statement;
+      const response = await api.patch(
+        `/api/handovers/${handoverId}/items/${item.claimId}`,
+        body,
+      );
+      update(response.handover);
+      toast.success('Confirmed answer shared with the project. The recipient can now open it.');
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusyItem(null);
+    }
+  };
+
+  const isVerified = (item) => {
+    const citations = item.citations || [];
+    if (citations.length === 0) return false;
+    return citations.every((citation) => citation.validation !== 'failed');
+  };
+
+  const verifiedPending = items.filter(
+    (item) => item.decision === 'pending' && isVerified(item) && !item.conflicting,
+  );
+
+  const acceptAll = async () => {
+    const pending = verifiedPending;
+    if (pending.length === 0) {
+      setAcceptAllOpen(false);
+      toast.error('No pending items are fully verified. Review the rest individually.');
+      return;
+    }
+    setAcceptAllOpen(false);
+    setWorking('accept-all');
+    let accepted = 0;
+    const failures = [];
+    for (const item of pending) {
+      try {
+        const response = await api.patch(`/api/handovers/${handoverId}/items/${item.claimId}`, {
+          decision: 'accepted',
+        });
+        update(response.handover);
+        accepted += 1;
+      } catch (err) {
+        failures.push({ item, error: errorMessage(err) });
+      }
+    }
+    setWorking(null);
+    if (accepted > 0) {
+      toast.success(
+        `${accepted} verified item${accepted === 1 ? '' : 's'} accepted${
+          failures.length ? `; ${failures.length} could not be accepted` : ''
+        }.`,
+      );
+    }
+    if (failures.length > 0) {
+      toast.error(failures[0].error);
     }
   };
 
@@ -451,20 +567,44 @@ export default function HandoverReviewPage() {
     }
   };
 
+  const regenerate = async () => {
+    setWorking('regenerate');
+    try {
+      const response = await api.post(`/api/handovers/${handoverId}/regenerate`);
+      update(response.handover);
+      toast.success(
+        `Rebuilt from the current state: ${response.carried} kept, ${response.added} new, ${response.dropped} dropped. Review and resubmit.`,
+      );
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const share = async () => {
     const renewing = handover.status === 'shared';
     setShareRenewal(renewing);
     setWorking('share');
     setShareError('');
     try {
-      const response = await api.post(`/api/handovers/${handoverId}/share`);
+      const response = await api.post(`/api/handovers/${handoverId}/share`, {
+        confirmRotation: renewing,
+      });
       const token = response.sharePath?.split('/').pop();
-      const link = token ? `${window.location.origin}/shared/${token}` : '';
+      if (!token) {
+        setShareError(
+          'The server did not return a share link. Reload the page and try again before sending anything.',
+        );
+        await reload({ quiet: true });
+        return;
+      }
+      const link = `${window.location.origin}/shared/${token}`;
       setShareLink(link);
       setShareExpiresAt(response.shareExpiresAt);
       setCachedShare(link);
       try {
-        if (link) localStorage.setItem(`threadline.share.${handoverId}`, link);
+        localStorage.setItem(`threadline.share.${handoverId}`, link);
       } catch {
         /* storage optional */
       }
@@ -472,7 +612,7 @@ export default function HandoverReviewPage() {
       toast.success(
         renewing
           ? 'Share link renewed. The previous link no longer works.'
-          : 'Handover shared. The recipient must sign in to open the link.',
+          : 'Handover shared. Copy the link and send it to the recipient.',
       );
     } catch (err) {
       setShareError(errorMessage(err));
@@ -487,6 +627,45 @@ export default function HandoverReviewPage() {
       toast.success('Share link copied');
     } catch {
       toast.error('Clipboard access was blocked');
+    }
+  };
+
+  const revokeShare = async () => {
+    setWorking('revoke');
+    setRevokeError('');
+    try {
+      const response = await api.post(`/api/handovers/${handoverId}/share/revoke`, {
+        reason: revokeReason.trim() || undefined,
+      });
+      update(response.handover);
+      setCachedShare('');
+      try {
+        localStorage.removeItem(`threadline.share.${handoverId}`);
+      } catch {
+        /* storage optional */
+      }
+      setRevokeOpen(false);
+      setRevokeReason('');
+      toast.success(
+        response.idempotent
+          ? 'No active share link remained.'
+          : 'Share link revoked. The old link no longer opens this handover.',
+      );
+    } catch (err) {
+      setRevokeError(errorMessage(err));
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const openDiff = async (version) => {
+    setDiffVersion(version);
+    setDiff({ loading: true, error: null, data: null });
+    try {
+      const response = await api.get(`/api/handovers/${handoverId}/versions/${version.number}`);
+      setDiff({ loading: false, error: null, data: response.diff });
+    } catch (err) {
+      setDiff({ loading: false, error: err, data: null });
     }
   };
 
@@ -664,6 +843,19 @@ export default function HandoverReviewPage() {
                 {handover.status === 'shared' ? 'Renew share link' : 'Share'}
               </Button>
             )}
+            {canShare && handover.status === 'shared' && (
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={Link2Off}
+                onClick={() => {
+                  setRevokeError('');
+                  setRevokeOpen(true);
+                }}
+              >
+                Revoke link
+              </Button>
+            )}
           </>
         }
       >
@@ -682,6 +874,11 @@ export default function HandoverReviewPage() {
           {handover.status === 'shared' && (
             <Badge tone="blue">
               Share expires {formatDate(handover.shareExpiresAt)}
+            </Badge>
+          )}
+          {handover.freshness?.status === 'outdated' && (
+            <Badge tone="orange" dot>
+              Outdated · source changed
             </Badge>
           )}
           {handover.redactions?.count > 0 && (
@@ -752,6 +949,87 @@ export default function HandoverReviewPage() {
         </div>
       )}
 
+      {handover.freshness?.status === 'outdated' && (
+        <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3.5 py-2.5 text-[12px] leading-5 text-orange-900">
+          <div className="flex items-start gap-2">
+            <GitCompareArrows className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">
+                This handover is outdated — a connected source changed
+              </p>
+              <p className="text-orange-800/90">
+                Detected {formatRelative(handover.freshness.checkedAt)}. The live project state no
+                longer matches what was reviewed. Regenerating rebuilds the draft from current
+                state and sends it back through review.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={RefreshCw}
+                  loading={working === 'regenerate'}
+                  onClick={regenerate}
+                >
+                  Regenerate from current state
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setFreshnessOpen((open) => !open)}
+                >
+                  {freshnessOpen ? 'Hide changes' : 'View changes'}
+                </Button>
+              </div>
+              {freshnessOpen && (
+                <ul className="mt-2 space-y-1.5">
+                  {(handover.freshness.changes || []).map((change) => (
+                    <li
+                      key={`${change.claimId}-${change.change}`}
+                      className="rounded-md border border-orange-200/70 bg-white/80 px-2.5 py-1.5 text-[11px] leading-4"
+                    >
+                      <Badge
+                        tone={
+                          change.change === 'removed'
+                            ? 'red'
+                            : change.change === 'added'
+                              ? 'green'
+                              : 'amber'
+                        }
+                      >
+                        {change.change}
+                      </Badge>
+                      <span className="ml-1.5 text-ink-soft">{change.statement}</span>
+                      {change.change === 'updated' && (
+                        <span className="mt-0.5 block font-mono text-[9.5px] text-ink-muted">
+                          {change.fields
+                            .map(
+                              (field) =>
+                                `${field.field}: ${field.from ?? 'none'} → ${field.to ?? 'none'}`,
+                            )
+                            .join(' · ')}
+                        </span>
+                      )}
+                      {change.change === 'removed' && change.reason && (
+                        <span className="mt-0.5 block font-mono text-[9.5px] text-ink-muted">
+                          {change.reason === 'source_removed'
+                            ? 'source removed by a lead'
+                            : 'no longer part of the current record'}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                  {(handover.freshness.changes || []).length === 0 && (
+                    <li className="text-[10.5px] text-ink-muted">
+                      No individual change details were stored for this check.
+                    </li>
+                  )}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-4 lg:grid-cols-12">
         <Card className="p-4 lg:col-span-8">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -777,6 +1055,25 @@ export default function HandoverReviewPage() {
           <div className="mt-3">
             <WorkflowStepper status={handover.status} />
           </div>
+          {canReviewItems && counts.pending > 0 && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-slate-50 px-2.5 py-1.5">
+              <span className="text-[10.5px] text-ink-muted">
+                {verifiedPending.length > 0
+                  ? `${pluralize(verifiedPending.length, 'pending item')} have every quote matched and can be accepted in one pass. Review the rest individually.`
+                  : 'No pending item is fully verified. Review each one individually.'}
+              </span>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={CheckCheck}
+                loading={working === 'accept-all'}
+                disabled={Boolean(working) || verifiedPending.length === 0}
+                onClick={() => setAcceptAllOpen(true)}
+              >
+                Accept all verified ({verifiedPending.length})
+              </Button>
+            </div>
+          )}
           {canSubmit && decided === 0 && (
             <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[10.5px] text-amber-900">
               Accept or edit at least one item before submitting. Pending items block approval later.
@@ -913,10 +1210,12 @@ export default function HandoverReviewPage() {
                 key={item.claimId}
                 item={item}
                 canReview={canReviewItems}
+                canShareAnswer={isLead}
                 busy={busyItem === item.claimId}
                 onDecision={decide}
                 onEdit={openEdit}
                 onEvidence={setEvidenceId}
+                onShare={shareAnswer}
               />
             ))}
             {filteredItems.length === 0 && (
@@ -947,12 +1246,13 @@ export default function HandoverReviewPage() {
               </div>
               <div className="px-4 py-3">
                 <p className="text-[10.5px] leading-4 text-ink-muted">
-                  Withheld content is never included in this payload. Reviewers see counts only —
-                  recipients never see this panel.
+                  Withheld content is never included in this payload. Counts cover only withheld
+                  items you are authorized to read — recipients never see this panel.
                 </p>
                 <dl className="mt-3 space-y-1.5 text-[10.5px]">
                   {[
                     ['Permissions', withheld.byReason?.permissions || 0],
+                    ['Author access', withheld.byReason?.author_permissions || 0],
                     ['Template exclusions', withheld.byReason?.template || 0],
                     ['Unverified evidence', withheld.byReason?.unverified || 0],
                   ].map(([label, value]) => (
@@ -975,6 +1275,19 @@ export default function HandoverReviewPage() {
                   Details are intentionally hidden to avoid leaking restricted context.
                 </p>
               </div>
+            </Card>
+          )}
+
+          {handover.viewerLimits?.someItemsHiddenByPermissions && withheld.total === 0 && (
+            <Card className="p-4">
+              <div className="flex items-center gap-1.5">
+                <LockKeyhole className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+                <p className="text-[11.5px] font-semibold">Some items are hidden</p>
+              </div>
+              <p className="mt-2 text-[10.5px] leading-4 text-ink-muted">
+                {handover.viewerLimits.note ||
+                  'Some items reference sources you are not authorized to read. They are excluded from this view.'}
+              </p>
             </Card>
           )}
 
@@ -1063,10 +1376,44 @@ export default function HandoverReviewPage() {
 
       <EvidenceDrawer
         projectId={projectId}
+        handoverId={handover.id}
         evidenceId={evidenceId}
         open={Boolean(evidenceId)}
         onClose={() => setEvidenceId(null)}
       />
+
+      <Modal
+        open={acceptAllOpen}
+        onClose={() => setAcceptAllOpen(false)}
+        title="Accept all verified items?"
+        description="Only items whose quotes all matched the source are accepted. Unverified or conflicting items stay pending for individual review."
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setAcceptAllOpen(false)}>
+              Cancel
+            </Button>
+            <Button icon={CheckCheck} loading={working === 'accept-all'} onClick={acceptAll}>
+              Accept {pluralize(verifiedPending.length, 'item')}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-2 text-[11.5px] leading-5 text-ink-muted">
+          <p>
+            This accepts <span className="font-semibold text-ink">{verifiedPending.length}</span>{' '}
+            verified item{verifiedPending.length === 1 ? '' : 's'} in one pass. Rejection is never
+            automatic, and every decision is written to the audit trail.
+          </p>
+          {counts.pending - verifiedPending.length > 0 && (
+            <p>
+              {counts.pending - verifiedPending.length} pending item
+              {counts.pending - verifiedPending.length === 1 ? '' : 's'} will remain for manual
+              review.
+            </p>
+          )}
+        </div>
+      </Modal>
 
       <Modal
         open={Boolean(editItem)}
@@ -1211,10 +1558,10 @@ export default function HandoverReviewPage() {
         }
         description={
           shareLink
-            ? 'Give this link to the recipient. They must be signed in as the intended recipient.'
+            ? 'Give this link to the recipient. It opens read-only, and the demo workspace link needs no sign-in.'
             : handover.status === 'shared'
               ? 'Renewing replaces the current link and resets the expiry. The previous link stops working.'
-              : 'Sharing creates a time-limited, recipient-bound link.'
+              : 'Sharing creates a time-limited, read-only link. The named recipient signs in first, except in the demo workspace.'
         }
         footer={
           shareLink ? (
@@ -1298,6 +1645,148 @@ export default function HandoverReviewPage() {
       </Modal>
 
       <Modal
+        open={revokeOpen}
+        onClose={() => {
+          setRevokeOpen(false);
+          setRevokeReason('');
+          setRevokeError('');
+        }}
+        title="Revoke the share link"
+        description="The recipient's current link stops working immediately. This is recorded in the audit trail."
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setRevokeOpen(false);
+                setRevokeReason('');
+                setRevokeError('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              icon={Link2Off}
+              loading={working === 'revoke'}
+              disabled={Boolean(working)}
+              onClick={revokeShare}
+            >
+              Revoke link
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11.5px] leading-5 text-amber-900">
+            Revoking does not change the handover's decisions or its approved content. It only
+            invalidates the link. You can share it again later, which issues a new link.
+          </p>
+          <Field
+            label="Reason (optional)"
+            htmlFor="revoke-reason"
+            hint="Recorded in the audit trail so the team knows why access was withdrawn."
+          >
+            <Textarea
+              id="revoke-reason"
+              value={revokeReason}
+              onChange={(event) => setRevokeReason(event.target.value)}
+              rows={3}
+              maxLength={400}
+              placeholder="e.g. recipient moved to a different project"
+            />
+          </Field>
+          {revokeError && (
+            <p
+              role="alert"
+              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11.5px] text-red-700"
+            >
+              {revokeError}
+            </p>
+          )}
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(diffVersion)}
+        onClose={() => {
+          setDiffVersion(null);
+          setDiff({ loading: false, error: null, data: null });
+        }}
+        title={
+          diff.data
+            ? `v${diff.data.version} compared with ${diff.data.previousVersion ? `v${diff.data.previousVersion}` : 'an empty draft'}`
+            : `Version ${diffVersion?.version ?? ''} changes`
+        }
+        description="A human-readable diff between this snapshot and the one before it."
+        size="lg"
+      >
+        {diff.loading ? (
+          <div className="flex items-center justify-center py-10">
+            <RefreshCw className="h-5 w-5 animate-spin text-brand-600" />
+          </div>
+        ) : diff.error ? (
+          <ErrorState
+            title="Could not load this version"
+            error={diff.error}
+            onRetry={() => diffVersion && openDiff(diffVersion)}
+          />
+        ) : diff.data ? (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="navy">v{diff.data.version}</Badge>
+              <span className="text-[11.5px] text-ink-muted">{diff.data.reason}</span>
+              <span className="ml-auto font-mono text-[9.5px] text-ink-faint">
+                {diff.data.actorName || 'System'} · {formatDateTime(diff.data.createdAt)}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <Badge tone="green">{diff.data.counts.added} added</Badge>
+              <Badge tone="amber">{diff.data.counts.updated} updated</Badge>
+              <Badge tone="red">{diff.data.counts.removed} removed</Badge>
+            </div>
+            {diff.data.changes.length === 0 ? (
+              <p className="rounded-md border border-line bg-slate-50 px-3 py-2 text-[11.5px] text-ink-muted">
+                No item-level changes were recorded between these snapshots.
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {diff.data.changes.map((change) => (
+                  <li
+                    key={`${change.claimId}-${change.change}`}
+                    className="rounded-md border border-line bg-white px-2.5 py-2 text-[11.5px] leading-4"
+                  >
+                    <Badge
+                      tone={
+                        change.change === 'removed'
+                          ? 'red'
+                          : change.change === 'added'
+                            ? 'green'
+                            : 'amber'
+                      }
+                    >
+                      {change.change}
+                    </Badge>
+                    <span className="ml-1.5 text-ink-soft">{change.statement}</span>
+                    {change.change === 'updated' && (
+                      <span className="mt-1 block font-mono text-[9.5px] text-ink-muted">
+                        {change.fields
+                          .map(
+                            (field) =>
+                              `${field.field}: ${field.from ?? 'none'} → ${field.to ?? 'none'}`,
+                          )
+                          .join(' · ')}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : null}
+      </Modal>
+
+      <Modal
         open={versionsOpen}
         onClose={() => setVersionsOpen(false)}
         title="Version history"
@@ -1327,6 +1816,14 @@ export default function HandoverReviewPage() {
                   </p>
                 </div>
                 {version.version === handover.version && <Badge tone="navy">current</Badge>}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={GitCompareArrows}
+                  onClick={() => openDiff(version)}
+                >
+                  Compare
+                </Button>
               </li>
             ))}
           </ol>

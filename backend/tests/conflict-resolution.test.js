@@ -2,9 +2,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { app, auth, idOf, request, seed, startDb, stopDb, tokenOf } from './helpers.js';
 
 const LEAD = 'subham@threadline.demo';
-const OUTGOING = 'soumyajit@threadline.demo';
-const OBSERVER = 'sabyasachi@threadline.demo';
-const INCOMING = 'partho@threadline.demo';
+const OUTGOING = 'rohan@threadline.demo';
+const OBSERVER = 'vikram@threadline.demo';
+const INCOMING = 'ananya@threadline.demo';
 
 describe('decision conflict resolution', () => {
   let seeded;

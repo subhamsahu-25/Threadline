@@ -8,10 +8,12 @@ import {
   Database,
   FileSignature,
   FolderKanban,
+  Info,
   LayoutDashboard,
   ListChecks,
   Loader2,
   LogOut,
+  MessageSquareText,
   MoreHorizontal,
   RefreshCw,
   ScrollText,
@@ -25,6 +27,7 @@ import { useWorkspace } from '../context/WorkspaceContext.jsx';
 import { api, errorMessage } from '../lib/api.js';
 import { daysUntil } from '../lib/format.js';
 import { DEMO_PASSWORD, DEMO_PERSONAS, ROLE_LABELS } from '../lib/constants.js';
+import NotificationBell from './NotificationBell.jsx';
 import { Avatar, Badge, Button, Modal } from './ui.jsx';
 
 export function BrandMark({ className = 'h-9 w-9' }) {
@@ -51,6 +54,7 @@ const PROJECT_NAV = [
   { to: '', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: 'sources', label: 'Sources', icon: Database },
   { to: 'claims', label: 'Claims', icon: ListChecks },
+  { to: 'questions', label: 'Questions', icon: MessageSquareText },
   { to: 'handovers', label: 'Handovers', icon: FileSignature },
   { to: 'audit', label: 'Audit log', icon: ScrollText, leadOnly: true },
   { to: 'people', label: 'People', icon: Users },
@@ -60,7 +64,7 @@ const MOBILE_NAV = PROJECT_NAV.filter((item) =>
   ['', 'sources', 'claims', 'handovers'].includes(item.to),
 );
 
-function NavItem({ item, projectId, onNavigate }) {
+function NavItem({ item, projectId, onNavigate, count = 0 }) {
   const target = item.to ? `/projects/${projectId}/${item.to}` : `/projects/${projectId}`;
   return (
     <NavLink
@@ -82,7 +86,16 @@ function NavItem({ item, projectId, onNavigate }) {
             aria-hidden="true"
           />
           <span className="flex-1">{item.label}</span>
-          {isActive && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" aria-hidden="true" />}
+          {count > 0 ? (
+            <span
+              className="rounded-full bg-amber-100 px-1.5 py-0.5 font-mono text-[9.5px] font-semibold text-amber-800"
+              aria-label={`${count} open questions for you`}
+            >
+              {count}
+            </span>
+          ) : (
+            isActive && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" aria-hidden="true" />
+          )}
         </>
       )}
     </NavLink>
@@ -124,6 +137,32 @@ function ProjectSwitcher({ project, projects, onChange }) {
 function Sidebar({ project, projects, user, logout, onNavigate }) {
   const navigate = useNavigate();
   const isLead = project?.role === 'lead';
+  const [openQuestions, setOpenQuestions] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    if (!project || !user?.id) {
+      setOpenQuestions(0);
+      return undefined;
+    }
+    api
+      .get('/api/clarifications?status=open')
+      .then((response) => {
+        if (!active) return;
+        const count = (response.clarifications || []).filter(
+          (entry) =>
+            String(entry.projectId) === String(project.id) &&
+            String(entry.askedOf) === String(user.id),
+        ).length;
+        setOpenQuestions(count);
+      })
+      .catch(() => {
+        if (active) setOpenQuestions(0);
+      });
+    return () => {
+      active = false;
+    };
+  }, [project?.id, user?.id]);
 
   return (
     <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-line bg-white/95 backdrop-blur lg:flex">
@@ -171,6 +210,7 @@ function Sidebar({ project, projects, user, logout, onNavigate }) {
                     item={item}
                     projectId={project.id}
                     onNavigate={onNavigate}
+                    count={item.to === 'questions' ? openQuestions : 0}
                   />
                 ))}
               </div>
@@ -281,6 +321,15 @@ function MobileMoreSheet({ open, onClose, project, logout, isLead }) {
               className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium text-ink-soft hover:bg-slate-50"
             >
               <ScrollText className="h-4 w-4 text-ink-muted" /> Audit log
+            </button>
+          )}
+          {project && (
+            <button
+              type="button"
+              onClick={() => go(`/projects/${project.id}/questions`)}
+              className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium text-ink-soft hover:bg-slate-50"
+            >
+              <MessageSquareText className="h-4 w-4 text-ink-muted" /> Questions
             </button>
           )}
           {project && (
@@ -410,7 +459,7 @@ function PersonaMenu({ open, onClose, user, switching, onSwitch, onReset, onLogo
 
 export default function AppShell() {
   const { user, logout, login } = useAuth();
-  const { projects, currentProject } = useWorkspace();
+  const { projects, currentProject, reloadProjects } = useWorkspace();
   const toast = useToast();
   const navigate = useNavigate();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -457,9 +506,9 @@ export default function AppShell() {
     setResetting(true);
     try {
       await api.post('/api/demo/seed?reset=true');
-      toast.success('Atlas demo data rebuilt.');
-      logout();
-      navigate('/login');
+      toast.success('Atlas demo sources rebuilt.');
+      await reloadProjects();
+      window.location.reload();
     } catch (err) {
       toast.error(errorMessage(err));
     } finally {
@@ -501,6 +550,7 @@ export default function AppShell() {
               T-{departure}d
             </Badge>
           )}
+          <NotificationBell />
           <div className="relative">
             <button
               type="button"
@@ -554,6 +604,7 @@ export default function AppShell() {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-3">
+          <NotificationBell />
           {departure !== null && (
             <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-mono text-[10.5px] font-medium text-amber-800">
               <CalendarClock className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -603,6 +654,14 @@ export default function AppShell() {
             inProject ? 'pb-28 lg:pb-14' : 'pb-12'
           }`}
         >
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50/80 px-3.5 py-2 text-[11px] leading-4 text-blue-900">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600" aria-hidden="true" />
+            <p>
+              <span className="font-semibold">Shared demo workspace:</span> other evaluators can see
+              and change what you upload. Reset restores only the seeded sources; nothing another
+              visitor uploaded is erased.
+            </p>
+          </div>
           <Outlet />
         </div>
       </main>
@@ -670,8 +729,8 @@ export default function AppShell() {
         onClose={() => {
           if (!resetting) setResetOpen(false);
         }}
-        title="Reset demo data?"
-        description="This rebuilds the Atlas demo workspace from scratch and signs everyone out."
+        title="Rebuild the seeded demo data?"
+        description="This re-creates the seeded Atlas sources and their derived findings. It does not touch anything another visitor uploaded."
         size="sm"
         footer={
           <>
@@ -679,15 +738,15 @@ export default function AppShell() {
               Cancel
             </Button>
             <Button variant="danger" size="sm" icon={RefreshCw} loading={resetting} onClick={resetDemo}>
-              Reset demo data
+              Rebuild seeded data
             </Button>
           </>
         }
       >
         <ul className="space-y-2 text-[12px] leading-5 text-ink-soft">
-          <li>· Every source, claim, handover, and audit entry returns to the seeded demo state.</li>
-          <li>· Any changes you made while exploring will be discarded.</li>
-          <li>· You will be signed out and returned to the profile picker.</li>
+          <li>· The six seeded sources are re-created and re-ingested, so their claims, evidence, and questions return to the seeded state.</li>
+          <li>· Sources you or another evaluator uploaded, plus every handover, stay exactly as they are.</li>
+          <li>· You stay signed in; the page reloads once the sources are queued.</li>
         </ul>
       </Modal>
     </div>

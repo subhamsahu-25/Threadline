@@ -13,6 +13,7 @@ import {
   Plus,
   RefreshCw,
   ShieldAlert,
+  Timer,
   Trash2,
   UploadCloud,
   X,
@@ -337,6 +338,11 @@ export default function SourcesPage() {
   const [deleting, setDeleting] = useState(false);
   const [documentsSource, setDocumentsSource] = useState(null);
   const [busyId, setBusyId] = useState(null);
+  const [syncingId, setSyncingId] = useState(null);
+  const [syncSource, setSyncSource] = useState(null);
+  const [syncForm, setSyncForm] = useState({ enabled: true, intervalMinutes: 5 });
+  const [syncSaving, setSyncSaving] = useState(false);
+  const [syncError, setSyncError] = useState('');
 
   const sources = data?.sources || [];
   const canContribute = project.role !== 'observer';
@@ -352,9 +358,10 @@ export default function SourcesPage() {
   }, [active, sources, reload]);
 
   const counts = useMemo(() => {
-    const result = { all: sources.length, ready: 0, processing: 0, failed: 0 };
+    const result = { all: sources.length, ready: 0, partial: 0, processing: 0, failed: 0 };
     for (const source of sources) {
       if (source.status === 'ready') result.ready += 1;
+      else if (source.status === 'partial') result.partial += 1;
       else if (source.status === 'failed') result.failed += 1;
       else result.processing += 1;
     }
@@ -478,6 +485,51 @@ export default function SourcesPage() {
     }
   };
 
+  const requestSync = async (source) => {
+    setSyncingId(source.id);
+    try {
+      await api.post(`/api/projects/${projectId}/sources/${source.id}/sync`);
+      toast.success('Refresh queued. The source is re-read and compared with the stored copy.');
+      await reload({ quiet: true });
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setSyncingId(null);
+    }
+  };
+
+  const openSync = (source) => {
+    setSyncSource(source);
+    setSyncForm({
+      enabled: source.sync?.enabled ?? true,
+      intervalMinutes: source.sync?.intervalMinutes || 5,
+    });
+    setSyncError('');
+  };
+
+  const saveSync = async () => {
+    if (!syncSource) return;
+    setSyncSaving(true);
+    setSyncError('');
+    try {
+      await api.patch(`/api/projects/${projectId}/sources/${syncSource.id}/sync`, {
+        enabled: syncForm.enabled,
+        intervalMinutes: Number(syncForm.intervalMinutes),
+      });
+      toast.success(
+        syncForm.enabled
+          ? `Automatic refresh on — checked every ${syncForm.intervalMinutes} minutes.`
+          : 'Automatic refresh off. This source only changes when you refresh it manually.',
+      );
+      setSyncSource(null);
+      await reload({ quiet: true });
+    } catch (err) {
+      setSyncError(errorMessage(err));
+    } finally {
+      setSyncSaving(false);
+    }
+  };
+
   const removeSource = async () => {
     if (!deleteSource) return;
     setDeleting(true);
@@ -521,7 +573,8 @@ export default function SourcesPage() {
         <p className="flex-1 text-[11.5px] leading-5 text-ink-muted">
           <span className="font-semibold text-ink-soft">Fail closed:</span> a claim is returned only
           if every citation behind it resolves to a source you may read. Restricted items are absent,
-          not greyed out.
+          not greyed out. Connected sources are re-checked every five minutes, and approved handovers
+          flip to outdated when their content changes.
         </p>
         {active && (
           <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-mono text-[10px] text-amber-800">
@@ -538,6 +591,7 @@ export default function SourcesPage() {
           options={[
             { value: 'all', label: 'All', count: counts.all },
             { value: 'ready', label: 'Ready', count: counts.ready },
+            { value: 'partial', label: 'Partial', count: counts.partial },
             { value: 'processing', label: 'Processing', count: counts.processing },
             { value: 'failed', label: 'Failed', count: counts.failed },
           ]}
@@ -620,6 +674,27 @@ export default function SourcesPage() {
                           : 'Not ingested yet'}
                       </span>
                     </p>
+                    {['github', 'drive'].includes(source.kind) && (
+                      <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-muted">
+                        <span className="inline-flex items-center gap-1">
+                          <Timer className="h-3 w-3 text-ink-faint" aria-hidden="true" />
+                          {source.sync?.enabled
+                            ? `Auto-refresh every ${source.sync.intervalMinutes || 5} min`
+                            : 'Auto-refresh off'}
+                        </span>
+                        {source.sync?.lastCheckedAt && (
+                          <span>Checked {formatRelative(source.sync.lastCheckedAt)}</span>
+                        )}
+                        {source.sync?.lastChangedAt && (
+                          <span className="text-amber-700">
+                            Changed {formatRelative(source.sync.lastChangedAt)}
+                          </span>
+                        )}
+                        {source.sync?.lastError && (
+                          <span className="text-red-600">Last refresh failed</span>
+                        )}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -632,6 +707,26 @@ export default function SourcesPage() {
                   >
                     Documents
                   </Button>
+                  {canContribute && ['github', 'drive'].includes(source.kind) && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={RefreshCw}
+                      loading={syncingId === source.id}
+                      disabled={
+                        syncingId === source.id ||
+                        ['queued', 'processing'].includes(source.status)
+                      }
+                      onClick={() => requestSync(source)}
+                    >
+                      Check for changes
+                    </Button>
+                  )}
+                  {canManage && ['github', 'drive'].includes(source.kind) && (
+                    <Button variant="secondary" size="sm" icon={Timer} onClick={() => openSync(source)}>
+                      Auto-refresh
+                    </Button>
+                  )}
                   {canContribute && (
                     <Button
                       variant="ghost"
@@ -667,10 +762,25 @@ export default function SourcesPage() {
                   className={`mt-3 rounded-md border px-2.5 py-1.5 text-[11px] leading-4 ${
                     source.status === 'failed'
                       ? 'border-red-200 bg-red-50 text-red-700'
-                      : 'border-line bg-slate-50 text-ink-muted'
+                      : source.status === 'partial'
+                        ? 'border-amber-200 bg-amber-50 text-amber-900'
+                        : 'border-line bg-slate-50 text-ink-muted'
                   }`}
                 >
                   {source.statusMessage}
+                </p>
+              )}
+
+              {source.parseWarnings?.length > 0 && (
+                <p className="mt-2 flex items-start gap-1.5 rounded-md border border-amber-200 bg-amber-50/70 px-2.5 py-1.5 text-[10.5px] leading-4 text-amber-900">
+                  <FileWarning className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span>
+                    {source.parseWarnings.length} parser warning
+                    {source.parseWarnings.length === 1 ? '' : 's'}: {source.parseWarnings[0]}
+                    {source.parseWarnings.length > 1
+                      ? ` (+${source.parseWarnings.length - 1} more in Documents)`
+                      : ''}
+                  </span>
                 </p>
               )}
 
@@ -699,6 +809,79 @@ export default function SourcesPage() {
           ))}
         </div>
       )}
+
+      <Modal
+        open={Boolean(syncSource)}
+        onClose={() => setSyncSource(null)}
+        title="Automatic refresh"
+        description="Only connected GitHub and Drive sources can be refreshed in place. Everything else is refreshed by re-ingesting."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setSyncSource(null)}>
+              Cancel
+            </Button>
+            <Button loading={syncSaving} onClick={saveSync}>
+              Save refresh settings
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-lg border border-line bg-slate-50 px-3 py-2.5">
+            <p className="text-[12px] font-semibold">{syncSource?.name}</p>
+            <p className="mt-0.5 font-mono text-[10px] text-ink-muted">
+              {SOURCE_KINDS[syncSource?.kind] || syncSource?.kind} · {syncSource?.externalRef}
+            </p>
+          </div>
+          <Field label="Automatic refresh" htmlFor="sync-enabled">
+            <Select
+              id="sync-enabled"
+              value={syncForm.enabled ? 'on' : 'off'}
+              onChange={(event) =>
+                setSyncForm((current) => ({ ...current, enabled: event.target.value === 'on' }))
+              }
+            >
+              <option value="on">On — keep this source current</option>
+              <option value="off">Off — refresh manually only</option>
+            </Select>
+          </Field>
+          <Field
+            label="Check every"
+            htmlFor="sync-interval"
+            hint="The scheduler runs once a minute; a source is only re-read when its own interval has elapsed."
+          >
+            <Select
+              id="sync-interval"
+              value={String(syncForm.intervalMinutes)}
+              onChange={(event) =>
+                setSyncForm((current) => ({
+                  ...current,
+                  intervalMinutes: Number(event.target.value),
+                }))
+              }
+            >
+              {[1, 5, 15, 30, 60, 240].map((minutes) => (
+                <option key={minutes} value={minutes}>
+                  {minutes === 1 ? '1 minute' : minutes === 60 ? '1 hour' : minutes === 240 ? '4 hours' : `${minutes} minutes`}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <p className="rounded-md border border-line bg-white px-3 py-2 text-[10.5px] leading-4 text-ink-muted">
+            When a check finds new content, the source is re-extracted and approved handovers built
+            from it are marked outdated with a visible diff. Unchanged checks cost nothing and
+            create no new evidence.
+          </p>
+          {syncError && (
+            <p
+              role="alert"
+              className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[11.5px] text-red-700"
+            >
+              {syncError}
+            </p>
+          )}
+        </div>
+      </Modal>
 
       <Modal
         open={addOpen}

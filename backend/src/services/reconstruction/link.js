@@ -1,7 +1,47 @@
 import { Claim } from '../../models/index.js';
 
 function timeOf(claim) {
-  return new Date(claim.occurredAt || claim.createdAt || 0).getTime();
+  // Never fall back to ingestion time: an undated claim is older than anything
+  // with a real source date, so it cannot masquerade as the newest statement.
+  if (claim.hasSourceDate === false || !claim.occurredAt) return 0;
+  return new Date(claim.occurredAt).getTime();
+}
+
+function topicTokens(topicKey) {
+  return new Set(String(topicKey || '').split(' ').filter(Boolean));
+}
+
+function tokensMatch(left, right) {
+  if (left === right) return true;
+  // Treat stems as the same word ("auth" / "authentication", "provider" /
+  // "providers") so topics separated only by word form still group.
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left];
+  return shorter.length >= 4 && longer.startsWith(shorter);
+}
+
+function topicSimilarity(a, b) {
+  const left = [...topicTokens(a)];
+  const right = [...topicTokens(b)];
+  if (left.length === 0 || right.length === 0) return 0;
+  const matchedRight = new Set();
+  let shared = 0;
+  for (const token of left) {
+    const index = right.findIndex(
+      (candidate, position) => !matchedRight.has(position) && tokensMatch(token, candidate),
+    );
+    if (index !== -1) {
+      matchedRight.add(index);
+      shared += 1;
+    }
+  }
+  return shared / (left.length + right.length - shared);
+}
+
+const FUZZY_TOPIC_THRESHOLD = 0.6;
+
+function sameTopicGroup(left, right) {
+  if (left.topicKey === right.topicKey) return true;
+  return topicSimilarity(left.topicKey, right.topicKey) >= FUZZY_TOPIC_THRESHOLD;
 }
 
 /**
@@ -30,9 +70,11 @@ export async function linkSupersessions(projectId) {
     for (const claim of sorted) {
       if (!(claim.flags || []).includes('explicit_supersession')) continue;
       const claimTime = timeOf(claim);
+      if (claimTime === 0) continue;
       for (const other of sorted) {
         if (String(other._id) === String(claim._id)) continue;
         if (other.status === 'superseded') continue;
+        if (other.hasSourceDate === false || !other.occurredAt) continue;
         if (timeOf(other) >= claimTime) continue;
         updates.push(
           Claim.updateOne(
@@ -51,19 +93,45 @@ export async function linkSupersessions(projectId) {
   return updates.length;
 }
 
+/**
+ * Groups active decisions into topics. Exact topic keys are merged first, then
+ * near-identical topics ("auth provider" / "authentication provider") are
+ * joined so reviewers see a possible conflict instead of silent disagreement.
+ */
 export function findSupersededPairs(claims) {
-  const pairs = [];
-  const byTopic = new Map();
-  for (const claim of claims) {
-    if (claim.type !== 'decision' || !claim.topicKey) continue;
-    if (!byTopic.has(claim.topicKey)) byTopic.set(claim.topicKey, []);
-    byTopic.get(claim.topicKey).push(claim);
+  const decisions = claims.filter(
+    (claim) => claim.type === 'decision' && claim.topicKey && claim.status !== 'superseded',
+  );
+
+  const exactGroups = new Map();
+  for (const claim of decisions) {
+    const key = claim.topicKey;
+    if (!exactGroups.has(key)) exactGroups.set(key, { topicKey: key, topic: claim.topic, claims: [] });
+    exactGroups.get(key).claims.push(claim);
   }
-  for (const group of byTopic.values()) {
-    const active = group.filter((claim) => claim.status !== 'superseded');
-    if (active.length > 1) {
-      pairs.push({ topicKey: group[0].topicKey, topic: group[0].topic, claims: active });
+
+  const groups = [...exactGroups.values()];
+  const merged = [];
+  for (const group of groups) {
+    const target = merged.find((entry) => sameTopicGroup(entry, group));
+    if (!target) {
+      merged.push({ ...group, topicKeys: new Set([group.topicKey]) });
+    } else {
+      target.claims.push(...group.claims);
+      target.topicKeys.add(group.topicKey);
     }
+  }
+
+  const pairs = [];
+  for (const group of merged) {
+    const distinctStatements = new Set(group.claims.map((claim) => claim.statementKey));
+    if (distinctStatements.size < 2) continue;
+    pairs.push({
+      topicKey: group.topicKey,
+      topic: group.topic,
+      claims: group.claims,
+      possible: group.topicKeys.size > 1,
+    });
   }
   return pairs;
 }

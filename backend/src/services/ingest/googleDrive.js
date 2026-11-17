@@ -10,6 +10,18 @@ const MAX_DOC_CHARS = 40_000;
 const GOOGLE_DOC_MIME = 'application/vnd.google-apps.document';
 const GOOGLE_SHEET_MIME = 'application/vnd.google-apps.spreadsheet';
 
+export function assertFolderAllowed(folderId) {
+  if (env.driveAllowedFolders.length === 0) return;
+  if (!env.driveAllowedFolders.includes(folderId)) {
+    throw new AppError(
+      403,
+      'drive_folder_not_allowlisted',
+      'This Drive folder is not on the DRIVE_ALLOWED_FOLDERS allowlist',
+      { allowed: env.driveAllowedFolders },
+    );
+  }
+}
+
 export function parseDriveRef(input) {
   const raw = String(input ?? '').trim();
   if (!raw) throw new AppError(400, 'invalid_drive_ref', 'A Google Drive folder ID or URL is required');
@@ -18,6 +30,7 @@ export function parseDriveRef(input) {
   if (!/^[A-Za-z0-9_-]{10,}$/.test(value)) {
     throw new AppError(400, 'invalid_drive_ref', 'Could not read a Drive folder ID from the reference');
   }
+  assertFolderAllowed(value);
   return value;
 }
 
@@ -109,8 +122,15 @@ export async function collectDriveDocuments(ref) {
     try {
       const parsed = await exportText(file);
       if (!parsed) continue;
-      const text = truncate(parsed.text, MAX_DOC_CHARS);
+      const fullText = String(parsed.text ?? '');
+      const text = truncate(fullText, MAX_DOC_CHARS);
       if (text.trim().length < 20) continue;
+      const parseWarnings = [...(parsed.warnings || [])];
+      if (fullText.length > MAX_DOC_CHARS) {
+        parseWarnings.push(
+          `Truncated from ${fullText.length.toLocaleString('en-US')} to ${MAX_DOC_CHARS.toLocaleString('en-US')} characters`,
+        );
+      }
       documents.push({
         kind: 'drive_file',
         title: file.name,
@@ -121,12 +141,19 @@ export async function collectDriveDocuments(ref) {
         occurredAt: file.modifiedTime ? new Date(file.modifiedTime) : null,
         locator: { url: file.webViewLink, externalId: file.id },
         rawText: text,
-        parseWarnings: parsed.warnings || [],
+        parseWarnings,
         meta: { folderId, folderName: name },
       });
     } catch (error) {
       if (error.status === 401) throw error;
     }
+  }
+
+  if (files.length >= MAX_FILES && documents.length > 0) {
+    documents[0].parseWarnings = [
+      ...(documents[0].parseWarnings || []),
+      `Only the ${MAX_FILES} most recently modified files were ingested`,
+    ];
   }
 
   return documents;

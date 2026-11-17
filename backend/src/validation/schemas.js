@@ -104,6 +104,15 @@ export const updateSourceSchema = z.object({
   sensitivity: sensitivityField.optional(),
 });
 
+export const syncSourceSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    intervalMinutes: z.number().int().min(1).max(1440).optional(),
+  })
+  .refine((value) => value.enabled !== undefined || value.intervalMinutes !== undefined, {
+    message: 'Provide enabled and/or intervalMinutes',
+  });
+
 export const createHandoverSchema = z.object({
   projectId: objectId,
   recipientId: objectId,
@@ -114,11 +123,33 @@ export const reviewItemSchema = z.object({
   decision: z.enum(['accepted', 'rejected', 'edited', 'pending']),
   editedStatement: z.string().trim().max(1200).optional(),
   note: z.string().trim().max(600).optional(),
+  shareWithProject: z.boolean().optional(),
 });
 
 export const resolveConflictSchema = z.object({
   topicKey: z.string().trim().min(1).max(200),
   keepClaimId: objectId,
+});
+
+export const askClarificationsSchema = z
+  .object({
+    claimIds: z.array(objectId).min(1).max(50).optional(),
+    askForAll: z.boolean().optional(),
+    prompt: z.string().trim().min(3).max(500).optional(),
+  })
+  .refine((value) => value.askForAll === true || (value.claimIds || []).length > 0, {
+    message: 'Pass askForAll or a list of claimIds to ask about',
+  })
+  .refine((value) => !(value.prompt && (value.claimIds || []).length > 1), {
+    message: 'A custom prompt can only be used when asking about a single item',
+  });
+
+export const answerClarificationSchema = z.object({
+  answer: z.string().trim().min(1).max(1200),
+});
+
+export const declineClarificationSchema = z.object({
+  note: z.string().trim().max(600).optional(),
 });
 
 export const resolveClaimSchema = z

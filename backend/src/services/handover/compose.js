@@ -18,14 +18,31 @@ export const TYPE_ORDER = [
   'next_action',
 ];
 
-const TEMPLATES = {
-  onboarding: { excludeTypes: [], excludeSensitivity: [] },
-  audit: { excludeTypes: [], excludeSensitivity: [] },
+export const TEMPLATES = {
+  onboarding: {
+    includeTypes: null,
+    excludeTypes: [],
+    excludeSensitivity: [],
+    focus: ['Every current decision, task, risk, dependency and open question'],
+  },
   executive: {
-    excludeTypes: ['task', 'responsibility', 'question'],
+    includeTypes: ['decision', 'milestone', 'risk'],
+    excludeTypes: ['task', 'responsibility', 'question', 'dependency', 'next_action'],
     excludeSensitivity: ['confidential'],
+    focus: ['Decisions', 'Risks', 'Milestones', 'Ownership gaps and readiness in the snapshot'],
+  },
+  audit: {
+    includeTypes: ['decision', 'risk'],
+    excludeTypes: ['milestone', 'task', 'responsibility', 'question', 'dependency', 'next_action'],
+    excludeSensitivity: [],
+    focus: ['Decision and risk evidence quality', 'Redaction summary', 'Withheld content counts'],
   },
 };
+
+export function templateIncludes(template, claim) {
+  if (template.includeTypes) return template.includeTypes.includes(claim.type);
+  return !template.excludeTypes.includes(claim.type);
+}
 
 function timeOf(claimOrItem) {
   return new Date(claimOrItem.occurredAt || claimOrItem.createdAt || 0).getTime();
@@ -51,7 +68,14 @@ function buildCitation(evidence, docById, sourceById) {
   };
 }
 
-function buildItem({ claim, evidence, docById, sourceById, redactions }) {
+function buildItem({
+  claim,
+  evidence,
+  docById,
+  sourceById,
+  redactions,
+  permittedForRecipient,
+}) {
   const statement = redactText(claim.statement);
   redactions.add(statement);
   let redactionCount = statement.count;
@@ -68,6 +92,8 @@ function buildItem({ claim, evidence, docById, sourceById, redactions }) {
     .sort((a, b) => new Date(a.occurredAt || 0) - new Date(b.occurredAt || 0));
 
   const hasVerifiedCitation = citations.some((citation) => citation.validation !== 'failed');
+  const resolutionNote = redactText(claim.resolution?.note || '');
+  redactions.add(resolutionNote);
 
   return {
     claimId: claim._id,
@@ -81,10 +107,15 @@ function buildItem({ claim, evidence, docById, sourceById, redactions }) {
     ownerName: claim.ownerName,
     dueAt: claim.dueAt,
     occurredAt: claim.occurredAt || claim.createdAt,
+    origin: claim.origin || 'document',
+    confirmedByName: claim.confirmedByName,
+    confirmedAt: claim.confirmedAt,
+    restrictedToRecipient: !permittedForRecipient,
+    hasSourceDate: claim.hasSourceDate !== false,
     flags: claim.flags || [],
     conflicting: false,
     redactionCount,
-    resolutionNote: claim.resolution?.note || null,
+    resolutionNote: resolutionNote.text || null,
     resolutionByName: claim.resolution?.byName || null,
     citations,
     decision: hasVerifiedCitation ? 'accepted' : 'pending',
@@ -104,17 +135,12 @@ function redactFields(entry, fields, redactions) {
 }
 
 /**
- * Builds a recipient-specific draft. Claims are included only when every
- * citation behind them resolves to a source the recipient may read; the
- * alternative would leak restricted context through partial evidence.
+ * Builds a recipient-specific handover payload from the current project state.
+ * Claims are included only when every citation behind them resolves to a source
+ * the recipient may read; the alternative would leak restricted context through
+ * partial evidence. Shared by the initial composition and by regeneration.
  */
-export async function composeHandover({
-  project,
-  recipient,
-  actor,
-  roleTemplate = 'onboarding',
-  req,
-}) {
+export async function buildComposition({ project, recipient, actor, roleTemplate = 'onboarding' }) {
   if (!TEMPLATES[roleTemplate]) {
     throw badRequest(`Unknown role template "${roleTemplate}"`);
   }
@@ -153,26 +179,45 @@ export async function composeHandover({
   const withheld = {
     total: 0,
     byType: {},
-    byReason: { permissions: 0, template: 0, unverified: 0 },
+    byReason: { permissions: 0, author_permissions: 0, template: 0, unverified: 0 },
+    entries: [],
   };
 
   const redactions = createRedactionTally();
   const visibleClaims = [];
   const items = [];
 
+  const withhold = (claim, reason) => {
+    withheld.total += 1;
+    withheld.byType[claim.type] = (withheld.byType[claim.type] || 0) + 1;
+    withheld.byReason[reason] += 1;
+    withheld.entries.push({ claimId: claim._id, claimType: claim.type, reason });
+  };
+
   for (const claim of claims) {
     const claimEvidence = evidenceByClaim.get(String(claim._id)) || [];
-    const permitted = claimVisibleTo({
+    const permittedForRecipient = claimVisibleTo({
       evidence: claimEvidence,
       sourceById,
       project,
       userId: recipient._id,
     });
 
-    if (!permitted) {
-      withheld.total += 1;
-      withheld.byType[claim.type] = (withheld.byType[claim.type] || 0) + 1;
-      withheld.byReason.permissions += 1;
+    if (!permittedForRecipient && claim.origin !== 'person_confirmed') {
+      withhold(claim, 'permissions');
+      continue;
+    }
+
+    // The author must be able to read everything they hand over. Otherwise the
+    // review screen would become a side channel into sources they cannot see.
+    const permittedForAuthor = claimVisibleTo({
+      evidence: claimEvidence,
+      sourceById,
+      project,
+      userId: actor._id,
+    });
+    if (!permittedForAuthor) {
+      withhold(claim, 'author_permissions');
       continue;
     }
 
@@ -183,16 +228,23 @@ export async function composeHandover({
     visibleClaims.push(claim);
 
     if (
-      template.excludeTypes.includes(claim.type) ||
+      !templateIncludes(template, claim) ||
       template.excludeSensitivity.includes(claim.sensitivity)
     ) {
-      withheld.total += 1;
-      withheld.byType[claim.type] = (withheld.byType[claim.type] || 0) + 1;
-      withheld.byReason.template += 1;
+      withhold(claim, 'template');
       continue;
     }
 
-    items.push(buildItem({ claim, evidence: claimEvidence, docById, sourceById, redactions }));
+    items.push(
+      buildItem({
+        claim,
+        evidence: claimEvidence,
+        docById,
+        sourceById,
+        redactions,
+        permittedForRecipient,
+      }),
+    );
   }
 
   items.sort((a, b) => {
@@ -244,11 +296,13 @@ export async function composeHandover({
       claimIds: state.unverified.map((claim) => claim._id),
     });
   }
-  if (withheld.byReason.permissions > 0) {
+  const hiddenByPermissions =
+    withheld.byReason.permissions + withheld.byReason.author_permissions;
+  if (hiddenByPermissions > 0) {
     alerts.push({
       code: 'restricted_items_excluded',
       severity: 'info',
-      message: `${withheld.byReason.permissions} item(s) were excluded because the recipient is not authorized to read their source. Details are intentionally not shown.`,
+      message: `${hiddenByPermissions} item(s) were excluded because the author or the recipient is not authorized to read their source. Details are intentionally not shown.`,
       audience: 'reviewer',
     });
   }
@@ -286,8 +340,32 @@ export async function composeHandover({
     outgoingName: project.transition?.outgoingName,
     plannedDepartureAt: project.transition?.plannedDepartureAt,
     transitionContext: transitionContext.text,
+    templateFocus: template.focus,
     generatedSummary: `Handover for ${recipient.name}: ${summarizeCounts(state)}.`,
   };
+
+  const handover = {
+    recipientRole,
+    roleTemplate,
+    items,
+    alerts: visibleAlerts,
+    recommendations: visibleRecommendations,
+    withheld,
+    redactions: redactions.toJSON(),
+    snapshot,
+    generation: {
+      method: llmEnabled ? 'llm+deterministic' : 'deterministic',
+      model: llmEnabled ? env.geminiModel : 'deterministic-heuristic',
+      generatedAt: new Date(),
+      durationMs: Date.now() - startedAt,
+    },
+  };
+
+  return handover;
+}
+
+export async function composeHandover({ project, recipient, actor, roleTemplate = 'onboarding', req }) {
+  const composition = await buildComposition({ project, recipient, actor, roleTemplate });
 
   const handover = await Handover.create({
     project: project._id,
@@ -295,25 +373,20 @@ export async function composeHandover({
     recipientSnapshot: {
       name: recipient.name,
       email: recipient.email,
-      role: recipientRole,
+      role: composition.recipientRole,
     },
     roleTemplate,
     status: 'draft',
     createdBy: actor._id,
     createdBySnapshot: { name: actor.name, email: actor.email },
-    items,
-    alerts: visibleAlerts,
-    recommendations: visibleRecommendations,
-    withheld,
-    redactions: redactions.toJSON(),
-    snapshot,
+    items: composition.items,
+    alerts: composition.alerts,
+    recommendations: composition.recommendations,
+    withheld: composition.withheld,
+    redactions: composition.redactions,
+    snapshot: composition.snapshot,
     version: 1,
-    generation: {
-      method: llmEnabled ? 'llm+deterministic' : 'deterministic',
-      model: llmEnabled ? env.geminiModel : 'deterministic-heuristic',
-      generatedAt: new Date(),
-      durationMs: Date.now() - startedAt,
-    },
+    generation: composition.generation,
   });
 
   await HandoverVersion.create({
@@ -336,10 +409,10 @@ export async function composeHandover({
     meta: {
       roleTemplate,
       recipient: String(recipient._id),
-      items: items.length,
-      withheld: withheld.total,
-      permissionsWithheld: withheld.byReason.permissions,
-      redactions: redactions.count,
+      items: composition.items.length,
+      withheld: composition.withheld.total,
+      permissionsWithheld: composition.withheld.byReason.permissions,
+      redactions: composition.redactions.count,
     },
     req,
   });

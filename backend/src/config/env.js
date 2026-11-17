@@ -38,12 +38,16 @@ export const env = {
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
   geminiFallbackModel: process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
   githubToken: process.env.GITHUB_TOKEN || '',
+  githubAllowedRepos: list('GITHUB_ALLOWED_REPOS').map((ref) => ref.toLowerCase()),
   googleDriveToken: process.env.GOOGLE_DRIVE_ACCESS_TOKEN || '',
+  driveAllowedFolders: list('DRIVE_ALLOWED_FOLDERS'),
   uploadDir: process.env.UPLOAD_DIR || path.join(rootDir, 'storage', 'uploads'),
   maxUploadMb: int('MAX_UPLOAD_MB', 15),
   maxFilesPerUpload: int('MAX_FILES_PER_UPLOAD', 20),
   staleDays: int('STALE_DAYS', 30),
   shareTtlDays: int('SHARE_TTL_DAYS', 7),
+  extractConcurrency: Math.max(1, int('EXTRACT_CONCURRENCY', 3)),
+  extractTimeBudgetMs: Math.max(5_000, int('EXTRACT_TIME_BUDGET_MS', 120_000)),
   allowDemoSeed: bool('ALLOW_DEMO_SEED', process.env.NODE_ENV !== 'production'),
   rootDir,
 };
@@ -53,6 +57,12 @@ export const isTest = env.nodeEnv === 'test';
 
 if (isProd && env.jwtSecret === DEV_JWT_SECRET) {
   throw new Error('JWT_SECRET must be set to a strong value in production');
+}
+
+if (isProd && env.corsOrigins.length === 0) {
+  throw new Error(
+    'CORS_ORIGINS must list the allowed frontend origin(s) in production; refusing to start with an open policy',
+  );
 }
 
 export const llmEnabled = Boolean(env.geminiApiKey);

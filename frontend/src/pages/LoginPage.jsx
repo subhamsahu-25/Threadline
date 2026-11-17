@@ -46,7 +46,7 @@ function shouldShowColdStart() {
 
 function BrandPanel() {
   return (
-    <div className="relative hidden overflow-hidden bg-brand-950 lg:flex lg:w-[54%] lg:flex-col lg:justify-between lg:p-12">
+    <aside className="relative hidden overflow-hidden bg-brand-950 lg:flex lg:w-[54%] lg:flex-col lg:justify-between lg:p-12">
       <div
         className="pointer-events-none absolute inset-0 opacity-[0.14]"
         style={{
@@ -90,9 +90,9 @@ function BrandPanel() {
           </div>
         </div>
 
-        <h1 className="mt-16 max-w-xl font-display text-[40px] font-semibold leading-[1.14] tracking-[-0.025em] text-white">
+        <p className="mt-16 max-w-xl font-display text-[40px] font-semibold leading-[1.14] tracking-[-0.025em] text-white">
           Knowledge that outlives the handover.
-        </h1>
+        </p>
         <p className="mt-4 max-w-lg text-[14.5px] leading-7 text-brand-100/80">
           Threadline turns scattered project activity into a permission-aware, evidence-linked
           handover. Every decision, risk and open question stays attached to the source it came
@@ -133,7 +133,7 @@ function BrandPanel() {
       <p className="relative mt-10 text-[10.5px] text-brand-200/45">
         Demo workspace uses synthetic data only. No enterprise systems are connected.
       </p>
-    </div>
+    </aside>
   );
 }
 
@@ -232,7 +232,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen bg-canvas">
       <BrandPanel />
 
-      <div className="flex min-h-screen w-full flex-col lg:w-[46%]">
+      <main className="flex min-h-screen w-full flex-col lg:w-[46%]">
         <div className="flex items-center justify-between border-b border-line bg-brand-950 px-5 py-4 text-white lg:hidden">
           <div className="flex items-center gap-2.5">
             <BrandMark className="h-8 w-8 bg-white/10 ring-1 ring-white/15" />
@@ -252,9 +252,9 @@ export default function LoginPage() {
           <div className="w-full max-w-[520px]">
             <div className="mb-5">
               <p className="eyebrow mb-1.5">Hackathon demo</p>
-              <h2 className="text-[27px] font-semibold leading-tight tracking-[-0.02em]">
+              <h1 className="text-[27px] font-semibold leading-tight tracking-[-0.02em]">
                 Choose a profile to enter
-              </h2>
+              </h1>
               <p className="mt-1.5 text-[13px] leading-5 text-ink-muted">
                 Four seeded profiles share one Atlas workspace. One click signs you in — the same
                 project looks different depending on who is reading it.
@@ -263,9 +263,9 @@ export default function LoginPage() {
 
             <section aria-labelledby="personas-heading">
               <div className="mb-2 flex items-center justify-between">
-                <h3 id="personas-heading" className="eyebrow">
+                <h2 id="personas-heading" className="eyebrow">
                   Demo profiles
-                </h3>
+                </h2>
                 {health?.demoProjectReady === false && (
                   <button
                     type="button"
@@ -383,7 +383,7 @@ export default function LoginPage() {
             </div>
           </div>
         </div>
-      </div>
+      </main>
 
       {coldStartOpen && (
         <ColdStartNotice

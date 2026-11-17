@@ -13,11 +13,12 @@ const TYPE_LABELS = {
 };
 
 function timeOf(claim) {
-  return new Date(claim.occurredAt || claim.createdAt || 0).getTime();
+  if (claim.hasSourceDate === false || !claim.occurredAt) return 0;
+  return new Date(claim.occurredAt).getTime();
 }
 
 function isOpen(claim) {
-  return ['open', 'active', 'planned', 'unknown'].includes(claim.status);
+  return ['open', 'active', 'planned', 'unknown', 'blocked'].includes(claim.status);
 }
 
 function ageInDays(date, now) {
@@ -34,10 +35,24 @@ function buildReadiness({ unverified, ownershipGaps, conflicts, oldQuestions }) 
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-function derivePhase({ claims, decisions, openTasks, openQuestions }) {
+function derivePhase({
+  claims,
+  decisions,
+  openTasks,
+  openQuestions,
+  openRisks,
+  ownershipGaps,
+  conflicts,
+}) {
   if (claims.length === 0) return 'No project knowledge ingested';
   if (decisions.length === 0 && openQuestions.length > 0) return 'Discovery';
-  if (openTasks.length === 0 && decisions.length > 0) return 'Ready for handover';
+  const clear =
+    openTasks.length === 0 &&
+    openQuestions.length === 0 &&
+    openRisks.length === 0 &&
+    ownershipGaps.length === 0 &&
+    conflicts.length === 0;
+  if (clear && decisions.length > 0) return 'Ready for handover';
   return 'Execution';
 }
 
@@ -67,7 +82,8 @@ export function reconstructState({ project, claims, staleDays = 30, now = new Da
     flags: claim.flags || [],
     ownerName: claim.ownerName,
     dueAt: claim.dueAt,
-    occurredAt: claim.occurredAt || claim.createdAt,
+    occurredAt: claim.hasSourceDate === false ? null : claim.occurredAt || null,
+    hasSourceDate: claim.hasSourceDate !== false && Boolean(claim.occurredAt),
     sourceId: claim.source,
     verifiedEvidenceCount: claim.verifiedEvidenceCount ?? 0,
     evidenceCount: claim.evidenceCount ?? 0,
@@ -75,17 +91,17 @@ export function reconstructState({ project, claims, staleDays = 30, now = new Da
 
   const conflicts = [];
   for (const pair of findSupersededPairs(claims)) {
-    const distinct = new Set(pair.claims.map((claim) => claim.statementKey));
-    if (distinct.size < 2) continue;
     conflicts.push({
       code: 'conflicting_decisions',
       topic: pair.topic,
       topicKey: pair.topicKey,
+      possible: Boolean(pair.possible),
       claimIds: pair.claims.map((claim) => claim._id),
       statements: pair.claims.map((claim) => ({
         claimId: claim._id,
         statement: claim.statement,
-        occurredAt: claim.occurredAt || claim.createdAt,
+        occurredAt:
+          claim.hasSourceDate === false ? null : claim.occurredAt || null,
         sourceId: claim.source,
       })),
     });
@@ -93,9 +109,13 @@ export function reconstructState({ project, claims, staleDays = 30, now = new Da
 
   const tasks = claims.filter((claim) => claim.type === 'task' && isOpen(claim));
   const openTasks = tasks;
+  const blockers = claims.filter((claim) => claim.status === 'blocked');
   const ownershipGaps = tasks.filter((claim) => !claim.ownerName);
   const unverified = claims.filter(
-    (claim) => (claim.verifiedEvidenceCount ?? 0) === 0 || (claim.flags || []).includes('unverified_citation'),
+    (claim) =>
+      claim.origin !== 'person_confirmed' &&
+      ((claim.verifiedEvidenceCount ?? 0) === 0 ||
+        (claim.flags || []).includes('unverified_citation')),
   );
   const openQuestions = claims.filter(
     (claim) => claim.type === 'question' && isOpen(claim),
@@ -108,24 +128,33 @@ export function reconstructState({ project, claims, staleDays = 30, now = new Da
   const activeDecisions = decisions.filter((claim) => claim.status !== 'superseded');
   const milestones = claims.filter((claim) => claim.type === 'milestone');
 
+  // Undated items cannot age: without a source date we do not know how old they
+  // are, so they are never reported as stale.
   const stale = claims.filter(
     (claim) =>
       ['task', 'risk', 'question', 'dependency'].includes(claim.type) &&
       isOpen(claim) &&
-      ageInDays(claim.occurredAt || claim.createdAt, now) > staleDays,
+      claim.hasSourceDate !== false &&
+      claim.occurredAt &&
+      ageInDays(claim.occurredAt, now) > staleDays,
   );
 
   const oldQuestions = openQuestions.filter(
-    (claim) => ageInDays(claim.occurredAt || claim.createdAt, now) > 14,
+    (claim) =>
+      claim.hasSourceDate !== false &&
+      claim.occurredAt &&
+      ageInDays(claim.occurredAt, now) > 14,
   );
 
-  const dates = claims
-    .map((claim) => new Date(claim.occurredAt || claim.createdAt || 0))
-    .filter((date) => date.getTime() > 0);
+  const datedClaims = claims.filter(
+    (claim) => claim.hasSourceDate !== false && claim.occurredAt,
+  );
+  const dates = datedClaims.map((claim) => new Date(claim.occurredAt));
   const startDate = dates.length > 0 ? new Date(Math.min(...dates.map((date) => date.getTime()))) : null;
   const endDate = dates.length > 0 ? new Date(Math.max(...dates.map((date) => date.getTime()))) : null;
 
-  const readinessScore = buildReadiness({ unverified, ownershipGaps, conflicts, oldQuestions });
+  const readinessScore =
+    claims.length === 0 ? null : buildReadiness({ unverified, ownershipGaps, conflicts, oldQuestions });
 
   return {
     counts: {
@@ -134,17 +163,27 @@ export function reconstructState({ project, claims, staleDays = 30, now = new Da
       byState,
       openTasks: openTasks.length,
       doneTasks: claims.filter((claim) => claim.type === 'task' && claim.status === 'done').length,
+      blocked: blockers.length,
       activeDecisions: activeDecisions.length,
       milestones: milestones.length,
       openRisks: openRisks.length,
       openQuestions: openQuestions.length,
     },
-    phase: derivePhase({ claims, decisions, openTasks, openQuestions }),
+    phase: derivePhase({
+      claims,
+      decisions,
+      openTasks,
+      openQuestions,
+      openRisks,
+      ownershipGaps,
+      conflicts,
+    }),
     readinessScore,
-    lastActivityAt: endDate || project?.updatedAt || null,
+    lastActivityAt: endDate || null,
     activityWindow: { start: startDate, end: endDate },
     timeline,
     conflicts,
+    blockers,
     ownershipGaps,
     unverified,
     openQuestions,

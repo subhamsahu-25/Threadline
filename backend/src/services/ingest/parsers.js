@@ -46,6 +46,7 @@ function parseCsvRows(input, maxRows = 501) {
   let row = [];
   let field = '';
   let quoted = false;
+  let truncated = false;
 
   for (let index = 0; index < input.length; index += 1) {
     const char = input[index];
@@ -70,7 +71,10 @@ function parseCsvRows(input, maxRows = 501) {
       rows.push(row);
       row = [];
       field = '';
-      if (rows.length >= maxRows) break;
+      if (rows.length >= maxRows) {
+        truncated = input.slice(index + 1).trim().length > 0;
+        break;
+      }
     } else if (char !== '\r') {
       field += char;
     }
@@ -79,7 +83,7 @@ function parseCsvRows(input, maxRows = 501) {
     row.push(field);
     rows.push(row);
   }
-  return rows;
+  return { rows, truncated };
 }
 
 const KNOWN_ROW_TYPES = new Set([
@@ -97,7 +101,7 @@ const KNOWN_ROW_TYPES = new Set([
  * extractor sees the same explicit structure it gets from meeting notes.
  */
 function normalizeCsv(text) {
-  const rows = parseCsvRows(text);
+  const { rows, truncated } = parseCsvRows(text);
   if (rows.length < 2) return { text, warnings: ['CSV has no data rows'] };
 
   const headers = rows[0].map((header) => header.trim());
@@ -132,8 +136,11 @@ function normalizeCsv(text) {
     }
   }
 
-  if (lines.length <= 2) return { text, warnings: ['CSV had no usable rows'] };
-  return { text: lines.join('\n'), warnings: [] };
+  const warnings = truncated
+    ? [`Only the first ${rows.length - 1} data rows were ingested`]
+    : [];
+  if (lines.length <= 2) return { text, warnings: [...warnings, 'CSV had no usable rows'] };
+  return { text: lines.join('\n'), warnings };
 }
 
 async function parsePlain(buffer, extension) {

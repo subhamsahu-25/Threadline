@@ -9,6 +9,7 @@ import {
   FileWarning,
   GitCompareArrows,
   ListChecks,
+  MessageSquareText,
   RefreshCw,
   Scale,
   ShieldCheck,
@@ -19,6 +20,7 @@ import {
 import { api, errorMessage } from '../lib/api.js';
 import { useAsync } from '../hooks/useAsync.js';
 import { useToast } from '../context/ToastContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import { useProject } from './ProjectLayout.jsx';
 import { formatDate, formatRelative, pluralize, truncate } from '../lib/format.js';
 import { TypeIcon } from '../components/badges.jsx';
@@ -51,6 +53,7 @@ const ACTION_MODES = {
 };
 
 function readinessCopy(score) {
+  if (typeof score !== 'number') return 'No state to score yet';
   if (score >= 85) return 'Ready for reviewer sign-off';
   if (score >= 65) return 'Mostly ready — close the remaining gaps';
   if (score >= 40) return 'Material gaps remain before handover';
@@ -62,6 +65,7 @@ export default function OverviewPage() {
   const { project, stats } = useProject();
   const navigate = useNavigate();
   const toast = useToast();
+  const { user } = useAuth();
   const [evidenceId, setEvidenceId] = useState(null);
   const [resolving, setResolving] = useState(null);
   const [conflictTarget, setConflictTarget] = useState(null);
@@ -72,16 +76,29 @@ export default function OverviewPage() {
     () => api.get(`/api/projects/${projectId}/state`),
     [projectId],
   );
+  const { data: clarifications } = useAsync(
+    () => api.get('/api/clarifications?status=open'),
+    [projectId],
+  );
+  const myQuestions = (clarifications?.clarifications || []).filter(
+    (entry) =>
+      String(entry.projectId) === String(projectId) && String(entry.askedOf) === String(user.id),
+  );
 
   const derived = useMemo(() => {
     if (!data) return null;
     const counts = data.summary?.counts || {};
     const claimById = new Map((data.timeline || []).map((claim) => [claim.id, claim]));
-    const evidenceTotal = (data.timeline || []).reduce(
+    // Person-confirmed answers carry no document quote, so they are excluded
+    // from the quote-accuracy rate rather than counted as a miss.
+    const extracted = (data.timeline || []).filter(
+      (claim) => claim.origin !== 'person_confirmed',
+    );
+    const evidenceTotal = extracted.reduce(
       (sum, claim) => sum + (claim.evidenceCount || 0),
       0,
     );
-    const verifiedTotal = (data.timeline || []).reduce(
+    const verifiedTotal = extracted.reduce(
       (sum, claim) => sum + (claim.verifiedEvidenceCount || 0),
       0,
     );
@@ -201,6 +218,34 @@ export default function OverviewPage() {
   const canResolve = project.role === 'lead';
   const canAct = ['lead', 'contributor'].includes(project.role);
 
+  const checklist = [
+    {
+      key: 'source',
+      label: 'Connect a source',
+      hint: 'Upload notes or connect GitHub/Drive.',
+      done: (stats?.sources ?? 0) > 0,
+      onClick: () => navigate(`/projects/${projectId}/sources`),
+    },
+    {
+      key: 'handover',
+      label: 'Create a handover',
+      hint: 'Compose a recipient-specific dossier.',
+      done: (stats?.handovers ?? 0) > 0,
+      onClick: () =>
+        canPrepare
+          ? navigate(`/projects/${projectId}/handovers`, { state: { create: true } })
+          : navigate(`/projects/${projectId}/handovers`),
+    },
+    {
+      key: 'share',
+      label: 'Review and share',
+      hint: 'Approve as a lead, then issue a recipient link.',
+      done: (stats?.sharedHandovers ?? 0) > 0,
+      onClick: () => navigate(`/projects/${projectId}/handovers`),
+    },
+  ];
+  const checklistDone = checklist.filter((step) => step.done).length;
+
   return (
     <div>
       <PageHeader
@@ -233,6 +278,82 @@ export default function OverviewPage() {
           </>
         }
       />
+
+      {checklistDone < checklist.length && (
+        <Card className="mb-4 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="eyebrow">Getting started</p>
+              <p className="mt-1 text-[13px] font-semibold">
+                {checklistDone} of {checklist.length} steps complete
+              </p>
+            </div>
+            <Badge tone={checklistDone === 0 ? 'slate' : 'amber'}>
+              {checklist[checklistDone]?.label || 'Finish setup'}
+            </Badge>
+          </div>
+          <ol className="mt-3 grid gap-2 sm:grid-cols-3">
+            {checklist.map((step, index) => (
+              <li key={step.key}>
+                <button
+                  type="button"
+                  onClick={step.onClick}
+                  className={`flex h-full w-full items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition ${
+                    step.done
+                      ? 'border-emerald-200 bg-emerald-50/60 hover:border-emerald-300'
+                      : 'border-line bg-white hover:border-brand-200 hover:bg-brand-50/40'
+                  }`}
+                >
+                  <span
+                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold ${
+                      step.done
+                        ? 'border-emerald-600 bg-emerald-600 text-white'
+                        : 'border-line bg-slate-50 text-ink-muted'
+                    }`}
+                  >
+                    {step.done ? <CheckCircle2 className="h-3 w-3" /> : index + 1}
+                  </span>
+                  <span className="min-w-0">
+                    <span
+                      className={`block text-[11.5px] font-semibold ${
+                        step.done ? 'text-emerald-900' : 'text-ink'
+                      }`}
+                    >
+                      {step.label}
+                    </span>
+                    <span className="mt-0.5 block text-[10.5px] leading-4 text-ink-muted">
+                      {step.done ? 'Done' : step.hint}
+                    </span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </Card>
+      )}
+
+      {myQuestions.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50/80 px-3.5 py-2.5 text-[12px] text-violet-900">
+          <MessageSquareText className="h-3.5 w-3.5 shrink-0 text-violet-600" aria-hidden="true" />
+          <p className="flex-1">
+            <span className="font-semibold">
+              Questions for you ({myQuestions.length})
+            </span>
+            <span className="text-violet-800/80">
+              {' '}
+              — the team is asking about details the sources never recorded. Your answers become
+              person-confirmed evidence.
+            </span>
+          </p>
+          <button
+            type="button"
+            onClick={() => navigate(`/projects/${projectId}/questions`)}
+            className="inline-flex items-center gap-1 rounded-md border border-violet-300 bg-white px-2 py-1 text-[11px] font-semibold text-violet-800 hover:bg-violet-100"
+          >
+            Answer now <ArrowRight className="h-3 w-3" aria-hidden="true" />
+          </button>
+        </div>
+      )}
 
       {attentionCount > 0 && (
         <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3.5 py-2.5 text-[12px] text-amber-900">

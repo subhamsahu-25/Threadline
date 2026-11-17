@@ -5,8 +5,8 @@ import { DEMO_PROJECT_KEY } from '../src/demo/seed.js';
 import { Project } from '../src/models/index.js';
 
 const LEAD = 'subham@threadline.demo';
-const CONTRIBUTOR = 'partho@threadline.demo';
-const OBSERVER = 'sabyasachi@threadline.demo';
+const CONTRIBUTOR = 'ananya@threadline.demo';
+const OBSERVER = 'vikram@threadline.demo';
 
 function rebuild(token) {
   const call = request(app).post('/api/demo/seed?reset=true');

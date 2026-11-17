@@ -5,7 +5,7 @@ import { Claim, Document, Evidence, Project, Source, User } from '../src/models/
 import { composeHandover } from '../src/services/handover/compose.js';
 
 const LEAD = 'subham@threadline.demo';
-const RECIPIENT = 'partho@threadline.demo';
+const RECIPIENT = 'ananya@threadline.demo';
 
 describe('handover redaction', () => {
   let project;

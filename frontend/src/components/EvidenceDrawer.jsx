@@ -9,6 +9,7 @@ const VALIDATION = {
   exact: { label: 'Exact quote match', tone: 'green' },
   normalized: { label: 'Normalized match', tone: 'blue' },
   failed: { label: 'Quote not matched', tone: 'red' },
+  person_confirmed: { label: 'Person-confirmed', tone: 'violet' },
   unchecked: { label: 'Not checked', tone: 'slate' },
 };
 
@@ -25,11 +26,15 @@ function Highlighted({ text, start, end }) {
   );
 }
 
-export default function EvidenceDrawer({ projectId, evidenceId, open, onClose }) {
+export default function EvidenceDrawer({ projectId, handoverId, evidenceId, open, onClose }) {
   const toast = useToast();
   const [state, setState] = useState({ loading: false, error: null, data: null });
   const [documentState, setDocumentState] = useState({ loading: false, error: null, data: null });
   const [showDocument, setShowDocument] = useState(false);
+
+  const evidenceUrl = `/api/projects/${projectId}/evidence/${evidenceId}${
+    handoverId ? `?handover=${handoverId}` : ''
+  }`;
 
   useEffect(() => {
     if (!open || !evidenceId) return undefined;
@@ -38,7 +43,7 @@ export default function EvidenceDrawer({ projectId, evidenceId, open, onClose })
     setDocumentState({ loading: false, error: null, data: null });
     setShowDocument(false);
     api
-      .get(`/api/projects/${projectId}/evidence/${evidenceId}`)
+      .get(evidenceUrl)
       .then((data) => {
         if (active) setState({ loading: false, error: null, data });
       })
@@ -48,7 +53,7 @@ export default function EvidenceDrawer({ projectId, evidenceId, open, onClose })
     return () => {
       active = false;
     };
-  }, [projectId, evidenceId, open]);
+  }, [projectId, evidenceId, open, handoverId]);
 
   const loadDocument = async () => {
     if (!state.data?.document?.id || documentState.data) {
@@ -79,6 +84,7 @@ export default function EvidenceDrawer({ projectId, evidenceId, open, onClose })
   const validation = state.data
     ? VALIDATION[state.data.evidence.validation] || VALIDATION.unchecked
     : null;
+  const confirmation = state.data?.confirmation || null;
 
   return (
     <Drawer
@@ -92,20 +98,24 @@ export default function EvidenceDrawer({ projectId, evidenceId, open, onClose })
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="inline-flex items-center gap-1.5 text-[10.5px] text-ink-muted">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" aria-hidden="true" />
-              Access checked again when this evidence was opened
+              {state.data.redacted
+                ? 'Redacted for sharing — access rechecked when opened'
+                : 'Access checked again when this evidence was opened'}
             </span>
             <div className="flex gap-2">
               <Button variant="secondary" size="sm" icon={Copy} onClick={copyQuote}>
                 Copy quote
               </Button>
-              <Button
-                size="sm"
-                variant={showDocument ? 'soft' : 'primary'}
-                icon={FileText}
-                onClick={() => (showDocument ? setShowDocument(false) : loadDocument())}
-              >
-                {showDocument ? 'Show context' : 'View full document'}
-              </Button>
+              {!state.data.redacted && !confirmation && (
+                <Button
+                  size="sm"
+                  variant={showDocument ? 'soft' : 'primary'}
+                  icon={FileText}
+                  onClick={() => (showDocument ? setShowDocument(false) : loadDocument())}
+                >
+                  {showDocument ? 'Show context' : 'View full document'}
+                </Button>
+              )}
             </div>
           </div>
         ) : null
@@ -123,7 +133,7 @@ export default function EvidenceDrawer({ projectId, evidenceId, open, onClose })
           onRetry={() => {
             setState({ loading: true, error: null, data: null });
             api
-              .get(`/api/projects/${projectId}/evidence/${evidenceId}`)
+              .get(evidenceUrl)
               .then((data) => setState({ loading: false, error: null, data }))
               .catch((error) => setState({ loading: false, error, data: null }));
           }}
@@ -144,7 +154,47 @@ export default function EvidenceDrawer({ projectId, evidenceId, open, onClose })
             </span>
           </div>
 
-          {!showDocument ? (
+          {state.data.redacted && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-900">
+              <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden="true" />
+              <p>
+                This passage is redacted because it was opened from a shared handover. Emails,
+                phone numbers, credentials and 12-digit IDs are replaced with a typed marker
+                {state.data.redactions?.count
+                  ? `; ${state.data.redactions.count} value(s) were replaced here`
+                  : ''}
+                .
+              </p>
+            </div>
+          )}
+
+          {confirmation ? (
+            <section className="space-y-3">
+              <div className="rounded-lg border border-violet-200 bg-violet-50/70 px-4 py-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-700">
+                  Person-confirmed answer
+                </p>
+                <blockquote className="mt-2 whitespace-pre-wrap text-[13px] leading-6 text-ink">
+                  {state.data.evidence.quote}
+                </blockquote>
+                <p className="mt-2 text-[10.5px] text-violet-900/80">
+                  {confirmation.by ? `Confirmed by ${confirmation.by}` : 'Confirmed by a teammate'}
+                  {confirmation.at ? ` · ${formatDateTime(confirmation.at)}` : ''}
+                </p>
+              </div>
+              {confirmation.prompt && (
+                <div className="rounded-lg border border-line bg-white px-4 py-3">
+                  <p className="eyebrow mb-1">Question asked</p>
+                  <p className="text-[12px] leading-5 text-ink-soft">{confirmation.prompt}</p>
+                </div>
+              )}
+              <p className="rounded-lg border border-line bg-slate-50/70 px-3.5 py-2.5 text-[10.5px] leading-4 text-ink-muted">
+                This answer was given by a named teammate rather than extracted from a document
+                quote. It is labelled person-confirmed everywhere it appears and is excluded from
+                the automated quote-accuracy rate.
+              </p>
+            </section>
+          ) : !showDocument ? (
             <>
               <section>
                 <h3 className="eyebrow mb-2">Verbatim quote</h3>

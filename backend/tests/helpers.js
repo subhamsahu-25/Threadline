@@ -17,7 +17,8 @@ export async function stopDb() {
   await disconnectDB();
 }
 
-export function seed() {
+export async function seed() {
+  await mongoose.connection.dropDatabase();
   return seedDemo({ reset: true });
 }
 

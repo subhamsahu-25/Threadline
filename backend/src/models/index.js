@@ -30,11 +30,14 @@ export const CLAIM_STATUSES = [
   'open',
   'active',
   'planned',
+  'blocked',
   'done',
   'resolved',
   'superseded',
   'unknown',
 ];
+
+export const CLAIM_ORIGINS = ['document', 'person_confirmed'];
 
 export const CLAIM_STATES = ['confirmed', 'inferred', 'needs_review'];
 
@@ -55,6 +58,7 @@ const userSchema = new Schema(
     name: { type: String, required: true, trim: true },
     passwordHash: { type: String, required: true, select: false },
     platformRole: { type: String, enum: ['admin', 'user'], default: 'user' },
+    tokenVersion: { type: Number, default: 0 },
     lastLoginAt: Date,
   },
   { timestamps: true, toJSON: jsonOptions },
@@ -84,6 +88,9 @@ const projectSchema = new Schema(
       outgoingName: String,
       plannedDepartureAt: Date,
       context: String,
+    },
+    settings: {
+      requireSeparateApprover: { type: Boolean, default: false },
     },
     startedAt: Date,
     targetDate: Date,
@@ -115,14 +122,14 @@ const sourceVisibilitySchema = new Schema(
 const sourceSchema = new Schema(
   {
     project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
-    kind: { type: String, enum: ['upload', 'github', 'drive'], required: true },
+    kind: { type: String, enum: ['upload', 'github', 'drive', 'confirmation'], required: true },
     name: { type: String, required: true, trim: true },
     externalRef: { type: String, default: '' },
     visibility: { type: sourceVisibilitySchema, default: () => ({}) },
     sensitivity: { type: String, enum: SENSITIVITIES, default: 'internal' },
     status: {
       type: String,
-      enum: ['queued', 'processing', 'ready', 'failed'],
+      enum: ['queued', 'processing', 'ready', 'partial', 'failed'],
       default: 'queued',
     },
     statusMessage: String,
@@ -141,10 +148,23 @@ const sourceSchema = new Schema(
     },
     lastIngestedAt: Date,
     deletedAt: Date,
+    sync: {
+      enabled: { type: Boolean, default: false },
+      intervalMinutes: { type: Number, default: 5 },
+      lastCheckedAt: Date,
+      lastChangedAt: Date,
+      lastError: String,
+      cursor: { type: Schema.Types.Mixed, default: {} },
+    },
+    parseWarnings: { type: [String], default: [] },
     stats: {
       documents: { type: Number, default: 0 },
       claims: { type: Number, default: 0 },
       unverifiedClaims: { type: Number, default: 0 },
+      llmChunks: { type: Number, default: 0 },
+      heuristicChunks: { type: Number, default: 0 },
+      chunksProcessed: { type: Number, default: 0 },
+      chunksTotal: { type: Number, default: 0 },
     },
   },
   { timestamps: true, toJSON: jsonOptions },
@@ -213,6 +233,11 @@ const claimSchema = new Schema(
     ownerUser: { type: Schema.Types.ObjectId, ref: 'User' },
     dueAt: Date,
     occurredAt: Date,
+    hasSourceDate: { type: Boolean, default: true },
+    origin: { type: String, enum: CLAIM_ORIGINS, default: 'document' },
+    confirmedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    confirmedByName: String,
+    confirmedAt: Date,
     flags: { type: [String], default: [] },
     evidenceCount: { type: Number, default: 0 },
     verifiedEvidenceCount: { type: Number, default: 0 },
@@ -255,10 +280,14 @@ const evidenceSchema = new Schema(
     },
     validation: {
       type: String,
-      enum: ['exact', 'normalized', 'failed', 'unchecked'],
+      enum: ['exact', 'normalized', 'failed', 'unchecked', 'person_confirmed'],
       default: 'unchecked',
     },
     validationNote: String,
+    confirmedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    confirmedByName: String,
+    confirmedAt: Date,
+    answerRef: { type: Schema.Types.ObjectId, ref: 'Clarification' },
   },
   { timestamps: true, toJSON: jsonOptions },
 );
@@ -298,6 +327,10 @@ const handoverItemSchema = new Schema(
     ownerName: String,
     dueAt: Date,
     occurredAt: Date,
+    origin: { type: String, enum: CLAIM_ORIGINS, default: 'document' },
+    confirmedByName: String,
+    confirmedAt: Date,
+    hasSourceDate: { type: Boolean, default: true },
     flags: { type: [String], default: [] },
     conflicting: { type: Boolean, default: false },
     redactionCount: { type: Number, default: 0 },
@@ -307,6 +340,7 @@ const handoverItemSchema = new Schema(
       enum: ['pending', 'accepted', 'rejected', 'edited'],
       default: 'pending',
     },
+    restrictedToRecipient: { type: Boolean, default: false },
     editedStatement: String,
     reviewerNote: String,
     resolutionNote: String,
@@ -373,7 +407,23 @@ const handoverSchema = new Schema(
     sharedAt: Date,
     acknowledgedAt: Date,
     shareToken: { type: String, index: true, sparse: true },
+    shareTokenHash: { type: String, index: true, sparse: true },
     shareExpiresAt: Date,
+    revokedAt: Date,
+    revokedReason: String,
+    acknowledgement: {
+      at: Date,
+      version: Number,
+      shownItemIds: { type: [Schema.Types.ObjectId], default: [] },
+      revokedItems: { type: [Schema.Types.Mixed], default: [] },
+      statementHashes: { type: Schema.Types.Mixed, default: {} },
+    },
+    freshness: {
+      status: { type: String, enum: ['current', 'outdated', 'unknown'], default: 'current' },
+      checkedAt: Date,
+      outdatedAt: Date,
+      changes: { type: [Schema.Types.Mixed], default: [] },
+    },
     version: { type: Number, default: 1 },
     items: { type: [handoverItemSchema], default: [] },
     alerts: { type: [alertSchema], default: [] },
@@ -383,8 +433,20 @@ const handoverSchema = new Schema(
       byType: { type: Schema.Types.Mixed, default: {} },
       byReason: {
         permissions: { type: Number, default: 0 },
+        author_permissions: { type: Number, default: 0 },
         template: { type: Number, default: 0 },
         unverified: { type: Number, default: 0 },
+      },
+      entries: {
+        type: [
+          {
+            _id: false,
+            claimId: { type: Schema.Types.ObjectId, ref: 'Claim' },
+            claimType: String,
+            reason: String,
+          },
+        ],
+        default: [],
       },
     },
     redactions: {
@@ -403,6 +465,7 @@ const handoverSchema = new Schema(
       outgoingName: String,
       plannedDepartureAt: Date,
       transitionContext: String,
+      templateFocus: { type: [String], default: [] },
       generatedSummary: String,
     },
     generation: {
@@ -457,3 +520,78 @@ const auditEventSchema = new Schema(
 auditEventSchema.index({ project: 1, createdAt: -1 });
 
 export const AuditEvent = mongoose.model('AuditEvent', auditEventSchema);
+
+export const CLARIFICATION_STATUSES = ['open', 'answered', 'declined', 'closed'];
+export const CLARIFICATION_KINDS = ['missing_owner', 'open_question', 'conflict'];
+
+const clarificationSchema = new Schema(
+  {
+    project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
+    claim: { type: Schema.Types.ObjectId, ref: 'Claim' },
+    kind: { type: String, enum: CLARIFICATION_KINDS, required: true },
+    prompt: { type: String, required: true, trim: true },
+    status: {
+      type: String,
+      enum: CLARIFICATION_STATUSES,
+      default: 'open',
+      index: true,
+    },
+    askedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    askedByName: String,
+    askedOf: { type: Schema.Types.ObjectId, ref: 'User' },
+    askedOfName: String,
+    answerOptions: { type: [String], default: [] },
+    answer: { type: String, maxlength: 1200 },
+    answerRef: { type: Schema.Types.ObjectId, ref: 'Clarification' },
+    resultClaim: { type: Schema.Types.ObjectId, ref: 'Claim' },
+    answeredAt: Date,
+    declinedAt: Date,
+    declineNote: String,
+    closedAt: Date,
+  },
+  { timestamps: true, toJSON: jsonOptions },
+);
+
+clarificationSchema.index({ project: 1, status: 1, createdAt: -1 });
+clarificationSchema.index({ project: 1, askedOf: 1, status: 1 });
+
+export const Clarification = mongoose.model('Clarification', clarificationSchema);
+
+export const NOTIFICATION_TYPES = [
+  'handover.submitted',
+  'handover.approved',
+  'handover.rejected',
+  'handover.shared',
+  'handover.revoked',
+  'handover.outdated',
+  'clarification.asked',
+  'clarification.answered',
+  'clarification.declined',
+  'member.added',
+  'member.role_changed',
+];
+
+/**
+ * A notification is a pointer, never a copy. It stores which person, which
+ * project and which record changed — never a source name, a quote or a count.
+ * The title and detail are rebuilt on every read through the same visibility
+ * rules as the underlying record, so losing access removes the notice instead
+ * of leaving a stale hint behind.
+ */
+const notificationSchema = new Schema(
+  {
+    project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
+    recipient: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    type: { type: String, enum: NOTIFICATION_TYPES, required: true },
+    entityType: { type: String, enum: ['handover', 'clarification', 'user'], required: true },
+    entityId: { type: Schema.Types.ObjectId },
+    dedupeKey: { type: String, required: true },
+    readAt: Date,
+  },
+  { timestamps: true, toJSON: jsonOptions },
+);
+
+notificationSchema.index({ recipient: 1, createdAt: -1 });
+notificationSchema.index({ recipient: 1, dedupeKey: 1 }, { unique: true });
+
+export const Notification = mongoose.model('Notification', notificationSchema);

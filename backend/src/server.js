@@ -3,6 +3,7 @@ import { env } from './config/env.js';
 import { connectDB, disconnectDB, redactUri } from './db/connect.js';
 import { logger } from './lib/logger.js';
 import { processSourceJob, recoverInterruptedSources } from './services/ingest/index.js';
+import { startSyncScheduler } from './services/ingest/sync.js';
 import { configureQueue, setJobHandler } from './services/queue.js';
 
 setJobHandler(processSourceJob);
@@ -12,6 +13,8 @@ await connectDB();
 
 const recovered = await recoverInterruptedSources();
 if (recovered > 0) logger.info({ recovered }, 'Re-queued interrupted ingestion jobs');
+
+const stopSync = startSyncScheduler();
 
 const server = app.listen(env.port, () => {
   logger.info(
@@ -30,6 +33,7 @@ async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   logger.info({ signal }, 'Shutting down');
+  stopSync();
   server.close(async () => {
     await disconnectDB();
     process.exit(0);

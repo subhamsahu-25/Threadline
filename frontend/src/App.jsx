@@ -15,6 +15,7 @@ import HandoversPage from './pages/HandoversPage.jsx';
 import HandoverReviewPage from './pages/HandoverReviewPage.jsx';
 import AuditPage from './pages/AuditPage.jsx';
 import PeoplePage from './pages/PeoplePage.jsx';
+import QuestionsPage from './pages/QuestionsPage.jsx';
 import SharedHandoverPage from './pages/SharedHandoverPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
@@ -67,14 +68,7 @@ export default function App() {
       <IdleWakeNotice />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/shared/:token"
-          element={
-            <RequireAuth>
-              <SharedHandoverPage />
-            </RequireAuth>
-          }
-        />
+        <Route path="/shared/:token" element={<SharedHandoverPage />} />
         <Route
           element={
             <RequireAuth>
@@ -91,6 +85,7 @@ export default function App() {
             <Route path="claims" element={<ClaimsPage />} />
             <Route path="handovers" element={<HandoversPage />} />
             <Route path="handovers/:handoverId" element={<HandoverReviewPage />} />
+            <Route path="questions" element={<QuestionsPage />} />
             <Route path="audit" element={<AuditPage />} />
             <Route path="people" element={<PeoplePage />} />
             <Route path="settings" element={<Navigate to="../people" replace />} />

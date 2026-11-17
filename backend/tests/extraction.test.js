@@ -6,7 +6,7 @@ import { parseFile } from '../src/services/ingest/parsers.js';
 const NOTES = `# Database choice
 
 Decision: Use PostgreSQL for the ledger. (date: 2026-09-02, status: active)
-Task: Write the backfill script (owner: Soumyajit, due: 2026-11-20, status: open)
+Task: Write the backfill script (owner: Rohan, due: 2026-11-20, status: open)
 Risk: Dual writes will cause reconciliation drift. (date: 2026-10-18, status: open)
 - [x] Update the runbook
 Open question: Do we migrate invoices older than 24 months?
@@ -55,10 +55,10 @@ describe('deterministic heuristic extractor', () => {
   it('captures owner, due date and status on tasks', () => {
     const task = items.find((item) => item.statement === 'Write the backfill script');
     expect(task).toBeTruthy();
-    expect(task.owner).toBe('Soumyajit');
+    expect(task.owner).toBe('Rohan');
     expect(task.dueDate).toBe('2026-11-20');
     expect(task.status).toBe('open');
-    expect(task.quote).toContain('owner: Soumyajit');
+    expect(task.quote).toContain('owner: Rohan');
   });
 
   it('maps checkboxes to completed tasks', () => {
@@ -79,20 +79,20 @@ describe('deterministic heuristic extractor', () => {
 describe('CSV normalization', () => {
   it('turns spreadsheet rows into labelled records', async () => {
     const csv =
-      'type,title,owner,due,status\ntask,Write smoke tests,Partho,2026-11-12,open\nquestion,Who owns alerting?,,,open\n';
+      'type,title,owner,due,status\ntask,Write smoke tests,Ananya,2026-11-12,open\nquestion,Who owns alerting?,,,open\n';
     const parsed = await parseFile({
       buffer: Buffer.from(csv, 'utf8'),
       filename: 'board.csv',
     });
     expect(parsed.text).toContain(
-      'Task: Write smoke tests (owner: Partho, due: 2026-11-12, status: open)',
+      'Task: Write smoke tests (owner: Ananya, due: 2026-11-12, status: open)',
     );
     expect(parsed.text).toContain('Question: Who owns alerting? (status: open)');
 
     const extracted = heuristicExtract({ text: parsed.text });
     const task = extracted.find((item) => item.type === 'task');
     expect(task.statement).toBe('Write smoke tests');
-    expect(task.owner).toBe('Partho');
+    expect(task.owner).toBe('Ananya');
     expect(task.dueDate).toBe('2026-11-12');
   });
 });

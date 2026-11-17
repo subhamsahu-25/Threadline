@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  BadgeCheck,
   CalendarClock,
   CheckCircle2,
   CircleDot,
@@ -13,6 +14,9 @@ import { Badge, Card } from './ui.jsx';
 function ValidationIcon({ validation }) {
   if (validation === 'exact') {
     return <CheckCircle2 className="h-3 w-3 text-emerald-600" aria-label="Exact quote match" />;
+  }
+  if (validation === 'person_confirmed') {
+    return <BadgeCheck className="h-3 w-3 text-violet-600" aria-label="Person-confirmed answer" />;
   }
   if (validation === 'failed') {
     return <AlertTriangle className="h-3 w-3 text-red-500" aria-label="Quote not matched" />;
@@ -62,6 +66,7 @@ export default function ClaimCard({
   const overdue = claim.dueAt && new Date(claim.dueAt).getTime() < Date.now();
   const superseded = claim.status === 'superseded';
   const unverified = (claim.flags || []).includes('unverified_citation');
+  const personConfirmed = claim.origin === 'person_confirmed';
   const certainty = evidenceStatus(claim);
 
   return (
@@ -73,6 +78,15 @@ export default function ClaimCard({
           {certainty.label}
         </Badge>
         {claim.sensitivity === 'confidential' && <SensitivityBadge sensitivity="confidential" />}
+        {personConfirmed && (
+          <Badge tone="violet" title="Answered by a named teammate instead of a document quote.">
+            <BadgeCheck className="mr-0.5 inline h-3 w-3" aria-hidden="true" />
+            Person-confirmed
+          </Badge>
+        )}
+        {(claim.flags || []).includes('answered_by_clarification') && (
+          <Badge tone="violet">Answered by departing member</Badge>
+        )}
         {superseded && <Badge tone="slate">Superseded</Badge>}
         {claim.topic && (
           <span className="max-w-[180px] truncate font-mono text-[10px] text-ink-faint" title={claim.topic}>
@@ -91,6 +105,20 @@ export default function ClaimCard({
       >
         {claim.statement}
       </p>
+
+      {personConfirmed && (
+        <p className="mt-1.5 flex items-center gap-1 text-[10.5px] text-violet-800">
+          <BadgeCheck className="h-3 w-3" aria-hidden="true" />
+          Confirmed by {claim.confirmedByName || 'a teammate'}
+          {claim.confirmedAt ? ` · ${formatDate(claim.confirmedAt)}` : ''}
+        </p>
+      )}
+      {claim.resolution?.note && (
+        <p className="mt-2 rounded-md border border-emerald-200 bg-emerald-50/70 px-2.5 py-1.5 text-[10.5px] leading-4 text-emerald-900">
+          {claim.resolution.note}
+          {claim.resolution.byName ? ` — ${claim.resolution.byName}` : ''}
+        </p>
+      )}
 
       {(expectsOwner(claim) || claim.dueAt || claim.occurredAt) && (
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10.5px] text-ink-muted">

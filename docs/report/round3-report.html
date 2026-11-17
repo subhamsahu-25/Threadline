@@ -1,0 +1,1259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Threadline — Round 3 Final Report</title>
+<meta name="author" content="Subham Sahu, Team ZeusConquers">
+<style>
+  @page { size: 297mm 230mm; margin: 0; }
+  @page cover { size: 297mm 301mm; margin: 0; }
+
+  :root {
+    --ink: #253746;
+    --navy: #17324d;
+    --teal: #147d78;
+    --mint: #8fe0d4;
+    --blue: #4f81bd;
+    --slate: #647687;
+    --line: #d7e1e8;
+    --wash: #f4f7fa;
+    --mintwash: #eef8f5;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Source Sans 3", Arial, sans-serif;
+    color: var(--ink);
+    font-size: 10.5pt;
+    line-height: 1.45;
+    counter-reset: page;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .page {
+    width: 297mm;
+    height: 230mm;
+    background: #ffffff;
+    position: relative;
+    overflow: hidden;
+    padding: 21.5mm 21mm 15mm;
+    counter-increment: page;
+    break-after: page;
+    page-break-after: always;
+  }
+  .page.cover { page: cover; height: 301mm; padding-top: 21.5mm; }
+  .page:last-child { break-after: auto; page-break-after: auto; }
+
+  .runhead {
+    position: absolute;
+    top: 10.5mm;
+    right: 21mm;
+    font-size: 8pt;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--slate);
+  }
+  .runfoot {
+    position: absolute;
+    left: 21mm;
+    right: 21mm;
+    bottom: 8mm;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 8pt;
+    letter-spacing: .06em;
+    color: var(--slate);
+  }
+  .pageno::after { content: counter(page); font-size: 9pt; color: var(--ink); }
+
+  .eyebrow {
+    font-size: 9pt;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: #4f6480;
+    margin: 0 0 3.5mm;
+    font-weight: 600;
+  }
+  h1 {
+    font-size: 22pt;
+    line-height: 1.12;
+    color: var(--teal);
+    font-weight: 700;
+    margin: 0 0 4.5mm;
+    letter-spacing: -.01em;
+  }
+  h2 {
+    font-size: 15pt;
+    line-height: 1.2;
+    color: var(--teal);
+    font-weight: 700;
+    margin: 5.2mm 0 2mm;
+  }
+  h3 {
+    font-size: 11.5pt;
+    line-height: 1.25;
+    color: var(--ink);
+    font-weight: 700;
+    margin: 4mm 0 1.5mm;
+  }
+  p { margin: 0 0 2.4mm; }
+  .lead { font-size: 11pt; line-height: 1.5; }
+  .small { font-size: 9pt; color: var(--slate); }
+  .tiny { font-size: 8pt; color: var(--slate); }
+  strong { font-weight: 700; }
+  em { font-style: italic; }
+  a { color: var(--teal); text-decoration: none; border-bottom: .5pt solid var(--mint); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.8pt;
+    line-height: 1.37;
+    margin: 1.6mm 0 2.8mm;
+    table-layout: fixed;
+  }
+  thead th {
+    background: var(--ink);
+    color: #ffffff;
+    text-align: left;
+    padding: 1.7mm 2.2mm;
+    font-weight: 600;
+    font-size: 8.4pt;
+    letter-spacing: .02em;
+  }
+  tbody td {
+    padding: 1.45mm 2.2mm;
+    border-bottom: .5pt solid var(--line);
+    vertical-align: top;
+    word-wrap: break-word;
+  }
+  tbody tr:nth-child(even) td { background: var(--wash); }
+  tbody tr.phase td {
+    background: #dff0ec;
+    color: var(--navy);
+    font-size: 8.6pt;
+    padding-top: 2mm;
+    padding-bottom: 2mm;
+    border-bottom: .5pt solid #b9d9d3;
+  }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .nowrap { white-space: nowrap; }
+  table.tight { font-size: 8.2pt; line-height: 1.3; }
+  table.tight tbody td { padding: 1.05mm 2.1mm; }
+  table.tight tbody tr.phase td { padding-top: 1.4mm; padding-bottom: 1.4mm; }
+  .mono { font-family: "Cascadia Mono", Consolas, monospace; font-size: 7.6pt; }
+
+  .badge {
+    display: inline-block;
+    padding: .35mm 1.5mm;
+    border-radius: 1.6mm;
+    font-size: 7pt;
+    font-weight: 700;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .badge.ok { background: #dff5ef; color: #0f5f5a; }
+  .badge.partial { background: #fff2d9; color: #8a5a00; }
+  .badge.no { background: #fde8e8; color: #a12a2a; }
+
+  .callout {
+    background: var(--mintwash);
+    border-left: 3pt solid var(--teal);
+    padding: 2.6mm 3.6mm;
+    margin: 2.5mm 0 3mm;
+    font-size: 9.2pt;
+    line-height: 1.42;
+    break-inside: avoid;
+  }
+  .callout .label {
+    display: block;
+    font-size: 7.4pt;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--teal);
+    font-weight: 700;
+    margin-bottom: .9mm;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.dark { background: var(--ink); color: #ffffff; border-left-color: var(--mint); }
+  .callout.dark .label { color: var(--mint); }
+  .callout.dark a { color: var(--mint); border-bottom-color: var(--teal); }
+
+  .grid4 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2.6mm;
+    margin: 2.6mm 0 3mm;
+  }
+  .step {
+    border: .5pt solid var(--line);
+    border-top: 2pt solid var(--teal);
+    border-radius: 1.2mm;
+    background: #fbfcfd;
+    padding: 2.4mm 3mm;
+  }
+  .step .k {
+    display: block;
+    font-size: 7.2pt;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--teal);
+    font-weight: 700;
+    margin-bottom: .8mm;
+  }
+  .step p { font-size: 8.7pt; line-height: 1.4; margin: 0; }
+  .step ul { margin: 0; padding-left: 3.6mm; }
+  .step li { font-size: 8.7pt; line-height: 1.4; margin-bottom: .5mm; }
+
+  .split { display: flex; gap: 6mm; align-items: flex-start; }
+  .split .main { flex: 1; min-width: 0; }
+  .side { width: 76mm; flex: none; }
+  .shot {
+    display: block;
+    width: 100%;
+    border: .5pt solid var(--line);
+    border-radius: 1mm;
+  }
+  .cap { font-size: 7.6pt; line-height: 1.35; color: var(--slate); margin-top: 1.4mm; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 1.6mm; margin: 1.5mm 0 3mm; }
+  .chip {
+    border: .5pt solid var(--line);
+    background: var(--wash);
+    border-radius: 3mm;
+    padding: .8mm 2.4mm;
+    font-size: 8pt;
+    font-weight: 600;
+  }
+
+  .layers { display: flex; align-items: stretch; gap: 0; margin: 2.4mm 0 1.6mm; }
+  .layer {
+    flex: 1;
+    border: .6pt solid #c9d8e2;
+    border-radius: 1.5mm;
+    background: #f7fafc;
+    padding: 2.6mm 3mm;
+  }
+  .layer .ll {
+    font-size: 7.2pt;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--blue);
+    font-weight: 700;
+  }
+  .layer .lt { font-size: 11pt; font-weight: 700; color: var(--ink); margin: .7mm 0 1.4mm; }
+  .layer .chips { margin: 0; gap: 1.2mm; }
+  .layer .chip { background: #ffffff; font-size: 7.4pt; padding: .6mm 1.8mm; }
+  .larrow {
+    width: 18mm;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--teal);
+    font-size: 12pt;
+    font-weight: 700;
+  }
+  .larrow small { font-size: 6.6pt; color: var(--slate); letter-spacing: .03em; text-align: center; line-height: 1.2; }
+
+  .flow { display: flex; align-items: stretch; gap: 0; margin: 2.5mm 0 3mm; }
+  .flow-step {
+    flex: 1;
+    border: .5pt solid var(--line);
+    border-top: 2.5pt solid var(--teal);
+    border-radius: 1.2mm;
+    background: #fbfcfd;
+    padding: 2.2mm 2.4mm;
+  }
+  .flow-step .n { font-size: 8pt; font-weight: 700; color: var(--teal); letter-spacing: .1em; }
+  .flow-step .t { font-size: 10pt; font-weight: 700; margin: .4mm 0 1mm; }
+  .flow-step .d { font-size: 7.8pt; line-height: 1.35; color: #3d4f61; }
+  .farrow { width: 7mm; flex: none; display: flex; align-items: center; justify-content: center; color: var(--teal); font-size: 11pt; }
+
+  .chain { display: flex; flex-wrap: wrap; align-items: center; gap: 1.4mm; font-size: 8pt; margin: 2mm 0 3mm; }
+  .chain .node { background: var(--wash); border: .5pt solid var(--line); border-radius: 1mm; padding: .9mm 2.2mm; font-weight: 600; }
+  .chain .ar { color: var(--teal); font-weight: 700; }
+
+  .code {
+    background: #f4f7fa;
+    border-left: 2.5pt solid var(--teal);
+    padding: 3mm 3.6mm;
+    font-family: "Cascadia Mono", Consolas, monospace;
+    font-size: 8.4pt;
+    line-height: 1.55;
+    margin: 2.2mm 0 3.2mm;
+    white-space: pre-wrap;
+  }
+  .code .c { color: #647687; }
+
+  .cert {
+    background: var(--ink);
+    color: #ffffff;
+    border-radius: 1.5mm;
+    padding: 4mm 5mm;
+    margin: 2.5mm 0 4mm;
+    border-left: 3.5pt solid var(--mint);
+  }
+  .cert .line { font-size: 10pt; line-height: 1.55; margin: 0 0 2.2mm; }
+  .cert .line:last-child { margin-bottom: 0; }
+  .cert b { color: var(--mint); font-weight: 700; letter-spacing: .02em; }
+
+  .quote {
+    font-size: 14pt;
+    line-height: 1.4;
+    color: var(--teal);
+    font-weight: 600;
+    margin: 3mm 0 2mm;
+    max-width: 235mm;
+  }
+
+  .twocol { column-count: 2; column-gap: 7mm; }
+  .twocol ol, .twocol ul { margin: 0; padding-left: 4.2mm; }
+  .twocol li { font-size: 8.6pt; line-height: 1.38; margin-bottom: 1.3mm; break-inside: avoid; }
+
+  .list { margin: 0 0 3mm; padding-left: 4.2mm; }
+  .list li { margin-bottom: 1.4mm; line-height: 1.42; }
+
+  .kpi-row { display: flex; gap: 2.5mm; margin: 2.5mm 0 3mm; }
+  .kpi { flex: 1; border: .5pt solid var(--line); border-radius: 1.2mm; padding: 2.4mm 3mm; background: #fbfcfd; }
+  .kpi .v { font-size: 17pt; font-weight: 700; color: var(--teal); line-height: 1.05; }
+  .kpi .l { font-size: 7.6pt; color: var(--slate); text-transform: uppercase; letter-spacing: .08em; margin-top: .8mm; }
+
+  /* cover */
+  .cover .ct-eyebrow { font-size: 9.5pt; letter-spacing: .16em; text-transform: uppercase; color: #4f6480; font-weight: 600; }
+  .cover .title {
+    font-size: 37pt;
+    line-height: 1;
+    text-align: center;
+    font-weight: 700;
+    letter-spacing: .03em;
+    color: var(--ink);
+    margin: 5mm 0 4mm;
+  }
+  .cover .tagline {
+    font-size: 19pt;
+    line-height: 1.28;
+    color: var(--teal);
+    font-weight: 600;
+    margin: 0 0 4mm;
+    max-width: 225mm;
+  }
+  .cover .res-label, .cover .sub-label {
+    font-size: 10pt;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--ink);
+    margin: 0 0 1.5mm;
+  }
+  .cover .res-text { font-size: 11.5pt; line-height: 1.45; margin: 0 0 3.5mm; }
+  .cover table { font-size: 9pt; margin: 1mm 0 3mm; }
+  .cover tbody td { padding: 1.15mm 2.2mm; }
+  .cover thead th { padding: 1.4mm 2.2mm; }
+  .cover h2 { margin-top: 3.6mm; }
+  .cover .bullets { margin: 0; padding-left: 4.4mm; }
+  .cover .bullets li { font-size: 10pt; line-height: 1.42; margin-bottom: 1.2mm; }
+
+  @media print { .page { break-after: page; } .page:last-child { break-after: auto; } }
+  @media screen {
+    body { background: #e8edf1; }
+    .page { margin: 0 auto 6mm; }
+  }
+  body.preview { background: #ffffff; }
+  body.preview .page { display: none; margin: 0; }
+  body.preview .page.active { display: block; }
+  #audit { position: fixed; top: 0; left: 0; background: #fff; color: #000; font-size: 10pt; z-index: 9999; padding: 8px; }
+</style>
+</head>
+<body>
+
+<!-- ============================== COVER ============================== -->
+<section class="page cover">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+
+  <div class="ct-eyebrow">ROUND 3 &nbsp;|&nbsp; FINAL REPORT</div>
+  <div class="title">THREADLINE</div>
+  <div class="tagline">From a working handover to one you can prove.</div>
+
+  <div class="res-label">ROUND 3 RESULT</div>
+  <p class="res-text">
+    All three improvements named in the Round 2 report are implemented in this submission tree: an
+    access-rule canary matrix, connected-source freshness with outdated-handover diffs, and
+    person-confirmed clarifications. The local suite is <strong>103 tests across 16 suites, zero failures</strong>;
+    <strong>29/29</strong> rules-extracted and <strong>35/35</strong> Gemini-extracted quotes matched their source verbatim.
+    The hosted demo and public repository still reflect the last push (15 November 2026); the Round 3 tree is not yet pushed.
+  </p>
+
+  <div class="sub-label">SUBMISSION DETAILS</div>
+  <table>
+    <colgroup><col style="width:26%"><col style="width:74%"></colgroup>
+    <thead><tr><th>Field</th><th>Details</th></tr></thead>
+    <tbody>
+      <tr><td>Competition</td><td>CodePuneThinkers Hackathon &ndash; Hack With Pune</td></tr>
+      <tr><td>Round</td><td>Round 3 &ndash; final submission</td></tr>
+      <tr><td>Team name</td><td>ZeusConquers</td></tr>
+      <tr><td>Institution</td><td>National Institute of Technology, Rourkela</td></tr>
+      <tr><td>Team size</td><td>1 member</td></tr>
+      <tr><td>Submitting participant</td><td>Subham Sahu (Team Lead)</td></tr>
+      <tr><td>Submission date</td><td>17 November 2026</td></tr>
+      <tr><td>Register / archive</td><td>CodePuneThinkers</td></tr>
+    </tbody>
+  </table>
+
+  <h2>The round in one minute</h2>
+  <p class="lead">
+    Round 1 set the rule: important information must link to its source, restricted information must stay hidden,
+    and a person must approve a handover before it is shared. Round 2 built that loop. Round 3 had to prove it:
+    test the access boundary against every viewer, keep the facts current when sources change, and capture what
+    was never written down. This report shows each promise, the code behind it, the evidence it produces, and
+    the result &mdash; including the parts that remain unproven.
+  </p>
+
+  <h3>What the demo proves</h3>
+  <ul class="bullets">
+    <li><strong>Source proof:</strong> every extracted item can be checked against a verbatim quote at recorded character offsets.</li>
+    <li><strong>Permission proof:</strong> five planted canaries never cross a boundary across seven viewer contexts, before or after access changes.</li>
+    <li><strong>Human control:</strong> no handover reaches a recipient until a project lead approves it and a recipient-bound link is used.</li>
+  </ul>
+
+  <h2>Where it stands today</h2>
+  <table>
+    <colgroup><col style="width:24%"><col style="width:76%"></colgroup>
+    <thead><tr><th>Entry point</th><th>Current submission</th></tr></thead>
+    <tbody>
+      <tr><td>Live product</td><td><a href="https://threadline-snowy.vercel.app">threadline-snowy.vercel.app</a> &mdash; hosted build (Round 2 behaviour until Round 3 is pushed)</td></tr>
+      <tr><td>Source repository</td><td><a href="https://github.com/subhamsahu-25/Threadline">github.com/subhamsahu-25/Threadline</a> &mdash; public repository; Round 3 tree is local in this submission</td></tr>
+      <tr><td>Final product PDF</td><td>This document &mdash; <span class="mono">Threadline-Round-3-Final-Report.pdf</span></td></tr>
+      <tr><td>Runtime</td><td>React on Vercel; Express on Render free tier (cold starts are surfaced); MongoDB Atlas</td></tr>
+      <tr><td>Demo workspace</td><td>ATLAS &mdash; 4 people, 6 sources, 28 claims, 1 superseded decision, 1 conflict set, 2 ownership gaps</td></tr>
+    </tbody>
+  </table>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 01 SUMMARY ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">01 / THE THREE COMMITMENTS</div>
+  <h1>What Round 3 had to prove</h1>
+  <p class="lead">
+    Round 2 named three improvements and five success measures. This round had to deliver them in code, prove
+    them with tests, and keep the rest of the product working. The tables below show each promise and its result.
+  </p>
+
+  <table>
+    <colgroup><col style="width:36%"><col style="width:39%"><col style="width:25%"></colgroup>
+    <thead><tr><th>Named in the Round 2 report</th><th>Delivered in this tree</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>1. Test access rules for every user type</strong> across project details, warnings, suggested actions and handovers; any leak fails the build; report how often quotes match.</td>
+        <td>Five canary strings across seven viewer contexts and every API surface, including handovers as author, lead and recipient. CI workflow. Quote-accuracy report.</td>
+        <td><span class="badge ok">Pass, locally</span> 3 matrix tests green; 29/29 and 35/35 quotes exact. No red CI run captured (branch unpushed).</td>
+      </tr>
+      <tr>
+        <td><strong>2. Keep connected sources current.</strong> Check GitHub and Drive, process only new or changed files, mark approved handovers outdated and show the changes.</td>
+        <td>Per-source refresh (default 5 minutes), checksum skip, outdated-handover detection with a field-level diff for author and recipient, mocked Drive path.</td>
+        <td><span class="badge ok">Pass, in tests</span> 7 sync tests green. No live five-minute observation; token limitations stated.</td>
+      </tr>
+      <tr>
+        <td><strong>3. Ask departing members about missing details.</strong> At least one ATLAS answer, person-confirmed, approved through the existing review path.</td>
+        <td>Clarification candidates for gaps, conflicts and open questions; addressee-only answer or decline; person-confirmed evidence labelled with name and date.</td>
+        <td><span class="badge ok">Pass, end to end</span> One ATLAS ownership gap answered, shared with the project, accepted and approved.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>The five success measures</h2>
+  <table>
+    <colgroup><col style="width:20%"><col style="width:37%"><col style="width:43%"></colgroup>
+    <thead><tr><th>Measure</th><th>Target set in Round 2</th><th>Observed in this submission</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Access leaks</strong></td><td>Zero restricted items, quotes, counts or labels shown to the wrong person.</td><td>Zero canary crossings in three matrix scenarios. Counts and labels are asserted too.</td></tr>
+      <tr><td><strong>Source accuracy</strong></td><td>At least 90% of claims verified against a source quote.</td><td>100% exact: 29/29 with the rules extractor, 35/35 with Gemini; 0 normalized, 0 failed.</td></tr>
+      <tr><td><strong>Update speed</strong></td><td>A change updates the overview within one refresh cycle; five-minute target.</td><td>Interval, checksum and outdated-handover behaviour proven by tests. No live connector run is claimed.</td></tr>
+      <tr><td><strong>Knowledge capture</strong></td><td>At least one missing detail answered and approved.</td><td>One ownership gap closed by a person-confirmed answer; recipient sees the label, person and date.</td></tr>
+      <tr><td><strong>Reliability</strong></td><td>Zero test failures, existing and new.</td><td>103/103 pass across 16 suites on 17 Nov 2026; frontend build and 6-check smoke pass.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout" style="margin-bottom:0">
+    <span class="label">Read this like a judge</span>
+    Every result above names the test or document that produced it. Nothing is projected: all Round 3 evidence is
+    from the local stack because the tree has not been pushed. Sections 05 and 06 open the evidence.
+  </div>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 02 FEATURES 1 ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">02 / THE COMPLETE PRODUCT &middot; 1 OF 2</div>
+  <h1>Sources, extraction and reconstruction</h1>
+  <p class="lead">
+    This is the full inventory of the submission tree, grouped by stage. <strong>Working</strong> means exercised by a
+    test or a browser journey; <strong>Partial</strong> means present with a stated limit.
+  </p>
+
+  <table class="tight">
+    <colgroup><col style="width:12.5%"><col style="width:52%"><col style="width:10%"><col style="width:25.5%"></colgroup>
+    <thead><tr><th>Area</th><th>Feature</th><th>Status</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Sources</td><td>Upload PDF, DOCX, Markdown, TXT, CSV and JSON; 15 MB per file, 20 files per batch</td><td><span class="badge ok">Working</span></td><td class="mono">ingest/parsers</td></tr>
+      <tr><td>Sources</td><td>Checksum de-duplication, revision history and offset-preserving chunks</td><td><span class="badge ok">Working</span></td><td class="mono">ingest/index.js</td></tr>
+      <tr><td>Sources</td><td>Re-ingest keeps claim IDs, owners, statuses and resolutions; failures keep prior content; concurrent re-ingest returns 409</td><td><span class="badge ok">Working</span></td><td class="mono">ingest-hardening.test.js</td></tr>
+      <tr><td>Connectors</td><td>GitHub: README, issues, pull requests and commits, with a repository allow-list</td><td><span class="badge ok">Working*</span></td><td class="mono">ingest/github.js</td></tr>
+      <tr><td>Connectors</td><td>Google Drive folder listing</td><td><span class="badge partial">Partial</span></td><td>Token paste, no OAuth</td></tr>
+      <tr><td>Connectors</td><td>Per-source refresh interval (1&ndash;1440 min, default 5) with checksum skip</td><td><span class="badge ok">Working*</span></td><td class="mono">ingest/sync.js</td></tr>
+      <tr><td>Connectors</td><td>Approved handovers flip to outdated with added, updated and removed lines</td><td><span class="badge ok">Working</span></td><td class="mono">handover/workflow.js</td></tr>
+      <tr><td>Extraction</td><td>Gemini structured extraction with automatic fallback on 404, 429 and 503</td><td><span class="badge ok">Working*</span></td><td class="mono">ai/gemini.js</td></tr>
+      <tr><td>Extraction</td><td>Deterministic labelled-line extractor when no model is configured</td><td><span class="badge ok">Working</span></td><td class="mono">ai/heuristic.js</td></tr>
+      <tr><td>Extraction</td><td>Verbatim quote validation (exact, normalized, failed) with character offsets</td><td><span class="badge ok">Working</span></td><td class="mono">ai/validate.js</td></tr>
+      <tr><td>Extraction</td><td>Eight claim types: decision, task, risk, dependency, question, milestone, responsibility, next action</td><td><span class="badge ok">Working</span></td><td class="mono">ai/schema.js</td></tr>
+      <tr><td>Extraction</td><td>Confidence labels plus low-confidence, injection-like and truncation flags</td><td><span class="badge ok">Working</span></td><td class="mono">ingest-hardening</td></tr>
+      <tr><td>Privacy</td><td>Pattern redaction of emails, phones, keys and tokens, credentials, private keys and 12-digit IDs before review or sharing</td><td><span class="badge ok">Working</span></td><td class="mono">redaction.test.js</td></tr>
+      <tr><td>Evidence</td><td>Person-confirmed answers stored as their own evidence type, separate from document quotes</td><td><span class="badge ok">Working</span></td><td class="mono">clarifications.test.js</td></tr>
+      <tr><td>Reconstruct</td><td>Overview with project stage, readiness score, item counts and disagreements</td><td><span class="badge ok">Working</span></td><td class="mono">reconstruction/*</td></tr>
+      <tr><td>Reconstruct</td><td>Gap detection: missing owners, unverified evidence, stale items, unanswered questions</td><td><span class="badge ok">Working</span></td><td class="mono">reconstruction/state.js</td></tr>
+      <tr><td>Reconstruct</td><td>Supersession by topic key and explicit replacement phrases</td><td><span class="badge ok">Working</span></td><td class="mono">reconstruction.test.js</td></tr>
+      <tr><td>Reconstruct</td><td>In-place conflict resolution; superseded statements are excluded from every future draft</td><td><span class="badge ok">Working</span></td><td class="mono">conflict-resolution</td></tr>
+      <tr><td>Reconstruct</td><td>Actionable next actions: assign an owner, answer a question, record a mitigation, close a task</td><td><span class="badge ok">Working</span></td><td class="mono">claim-actions.test.js</td></tr>
+    </tbody>
+  </table>
+
+  <p class="tiny">* The code path and tests exist; GitHub and Gemini require the corresponding server-side credential. No live connector or model run is claimed unless stated.</p>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 02 FEATURES 2 ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">02 / THE COMPLETE PRODUCT &middot; 2 OF 2</div>
+  <h1>Review, sharing, identity and quality</h1>
+  <p class="lead">
+    Once evidence exists, the product has to turn it into a handover a lead is willing to sign, then hand it to one
+    named person &mdash; and tell four different people what their job is.
+  </p>
+
+  <table class="tight">
+    <colgroup><col style="width:12.5%"><col style="width:52%"><col style="width:10%"><col style="width:25.5%"></colgroup>
+    <thead><tr><th>Area</th><th>Feature</th><th>Status</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Handover</td><td>Recipient-specific draft; an item is included only when every citation is readable</td><td><span class="badge ok">Working</span></td><td class="mono">handover/compose.js</td></tr>
+      <tr><td>Handover</td><td>Withheld content reported as counts by reason only: permissions, template or unverified</td><td><span class="badge ok">Working</span></td><td class="mono">handover/compose.js</td></tr>
+      <tr><td>Handover</td><td>Three templates: onboarding, executive and audit</td><td><span class="badge ok">Working</span></td><td class="mono">handover/templates.js</td></tr>
+      <tr><td>Review</td><td>Accept, edit or reject each item with a note; pending-item guard before submit</td><td><span class="badge ok">Working</span></td><td class="mono">handover-workflow</td></tr>
+      <tr><td>Review</td><td>Lead-only approval, with an optional second-approver rule (maker-checker)</td><td><span class="badge ok">Working</span></td><td class="mono">round3-hardening</td></tr>
+      <tr><td>Versions</td><td>Workflow transitions each snapshot an immutable version with a readable field-level diff</td><td><span class="badge ok">Working</span></td><td class="mono">handover/workflow.js</td></tr>
+      <tr><td>Sharing</td><td>Recipient-bound link; SHA-256 hash; 7-day expiry; revocation; rotation needs confirmation</td><td><span class="badge ok">Working</span></td><td class="mono">handover/share.js</td></tr>
+      <tr><td>Sharing</td><td>Read-time re-check; revoked items disappear; the notice never discloses a withheld number</td><td><span class="badge ok">Working</span></td><td class="mono">permission-recheck.js</td></tr>
+      <tr><td>Clarify</td><td>Ask one or all gaps with de-duplication; only the addressee can answer or decline; answers are redacted</td><td><span class="badge ok">Working</span></td><td class="mono">clarifications.test.js</td></tr>
+      <tr><td>Recipient</td><td>First-week view: what you own, what is blocked, what to do first</td><td><span class="badge ok">Working</span></td><td class="mono">RecipientHandover.jsx</td></tr>
+      <tr><td>Recipient</td><td>Acknowledgement snapshot taken when the recipient confirms receipt</td><td><span class="badge ok">Working</span></td><td class="mono">round3-hardening</td></tr>
+      <tr><td>Identity</td><td>JWT authentication (12-hour expiry), bcrypt hashes, logout token revocation</td><td><span class="badge ok">Working</span></td><td class="mono">middleware/auth.js</td></tr>
+      <tr><td>Identity</td><td>Roles: lead, contributor and observer, with membership administration</td><td><span class="badge ok">Working</span></td><td class="mono">membership.test.js</td></tr>
+      <tr><td>Access</td><td>Source scopes: project, roles or users; fail-closed for unknown scopes and soft-deleted sources</td><td><span class="badge ok">Working</span></td><td class="mono">access/policy.js</td></tr>
+      <tr><td>Audit</td><td>Actor, action, target, IP and user agent; unreadable targets redacted; leads only</td><td><span class="badge ok">Working</span></td><td class="mono">permission-matrix</td></tr>
+      <tr><td>Demo</td><td>One-click profiles, in-app persona switcher, shared-workspace notice and scoped rebuild</td><td><span class="badge ok">Working</span></td><td class="mono">demo-seed.test.js</td></tr>
+      <tr><td>Interface</td><td>Cold-start notice on load and again after inactivity</td><td><span class="badge ok">Working</span></td><td class="mono">AppShell.jsx</td></tr>
+      <tr><td>Interface</td><td>Responsive at 1440&times;900 and 390&times;844; landmarks, one h1, skip link, labelled controls</td><td><span class="badge ok">Working</span></td><td class="mono">TESTING_NOTES &sect;3&ndash;4</td></tr>
+      <tr><td>Quality</td><td>16 test suites / 103 tests, CI workflow and quote-accuracy evaluation</td><td><span class="badge ok">Working</span></td><td class="mono">ci.yml</td></tr>
+    </tbody>
+  </table>
+
+  <p class="tiny">* The code path and tests exist; GitHub and Gemini require a server-side credential. No live connector or model run is claimed unless stated.</p>
+
+  <div class="callout dark" style="margin-bottom:0">
+    <span class="label">Not built, and not claimed</span>
+    SSO/SCIM &middot; hard erasure and retention policy &middot; PII classifier for names and addresses &middot;
+    semantic / vector retrieval &middot; semantic conflict detection &middot; outbound notifications &middot; per-user OAuth and
+    webhooks &middot; durable queue and object storage &middot; component, end-to-end and load tests.
+    Each is costed in section 08. None is described anywhere as present.
+  </div>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 03 ARCHITECTURE ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">03 / ARCHITECTURE AND INFORMATION FLOW</div>
+  <h1>Three parts, one permission boundary</h1>
+  <p class="lead">
+    The browser is static; the API owns every decision; MongoDB stores the record. No database credential,
+    connector token or other person's session ever reaches the browser.
+  </p>
+
+  <div class="layers">
+    <div class="layer">
+      <div class="ll">Browser</div>
+      <div class="lt">React 18 SPA</div>
+      <div class="chips"><span class="chip">Vercel static</span><span class="chip">No permission logic</span><span class="chip">Renders API output</span></div>
+    </div>
+    <div class="larrow">&rarr;<small>HTTPS<br>Bearer JWT</small></div>
+    <div class="layer">
+      <div class="ll">API</div>
+      <div class="lt">Express 4 &middot; Node 20+</div>
+      <div class="chips"><span class="chip">Role guard</span><span class="chip">Access policy</span><span class="chip">Ingest queue</span><span class="chip">Compose</span></div>
+    </div>
+    <div class="larrow">&rarr;<small>TLS<br>Mongoose</small></div>
+    <div class="layer">
+      <div class="ll">Data</div>
+      <div class="lt">MongoDB Atlas</div>
+      <div class="chips"><span class="chip">Sources</span><span class="chip">Evidence</span><span class="chip">Handovers</span><span class="chip">Audit</span></div>
+    </div>
+  </div>
+
+  <div class="flow">
+    <div class="flow-step"><div class="n">01</div><div class="t">Ingest</div><div class="d">Parse, checksum, keep a revision, chunk with absolute offsets.</div></div>
+    <div class="farrow">&rarr;</div>
+    <div class="flow-step"><div class="n">02</div><div class="t">Extract</div><div class="d">Gemini or rules; every item must quote the source.</div></div>
+    <div class="farrow">&rarr;</div>
+    <div class="flow-step"><div class="n">03</div><div class="t">Reconstruct</div><div class="d">Supersession, conflicts, gaps, readiness, next actions.</div></div>
+    <div class="farrow">&rarr;</div>
+    <div class="flow-step"><div class="n">04</div><div class="t">Compose</div><div class="d">Recipient-specific draft; readable citations; withheld counts only.</div></div>
+    <div class="farrow">&rarr;</div>
+    <div class="flow-step"><div class="n">05</div><div class="t">Review &amp; share</div><div class="d">Accept, edit or reject; lead approval; hashed link; acknowledgement.</div></div>
+  </div>
+
+  <p class="tiny">Untrusted edges: browser input, uploads, and connector or model responses &mdash; each validated or quote-checked before it can influence a claim.</p>
+
+  <table class="tight">
+    <colgroup><col style="width:15%"><col style="width:42%"><col style="width:43%"></colgroup>
+    <thead><tr><th>Area</th><th>Technology</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>Frontend</td><td>React 18.3, React Router 6.28, Vite 6.4, Tailwind 3.4, lucide-react</td><td>Screens for projects, sources, overview, claims, review, questions, people, audit and shared links</td></tr>
+      <tr><td>API</td><td>Node 20+, Express 4.21, Zod, Mongoose 8</td><td>Authentication, uploads, pipeline orchestration, composition, workflow and audit</td></tr>
+      <tr><td>Database</td><td>MongoDB Atlas; in-memory MongoDB for tests and local demos</td><td>Projects, sources, documents, claims, evidence, clarifications, handovers, versions and audit events</td></tr>
+      <tr><td>Sign-in</td><td>JWT with 12-hour expiry, bcryptjs, project role guard</td><td>Identity, role checks and logout revocation</td></tr>
+      <tr><td>Extraction &amp; parsing</td><td>Gemini 3.8 Flash with 3.5 Flash-Lite fallback; rules fallback; unpdf, mammoth, custom TXT / MD / CSV / JSON</td><td>Structured claims with quotes validated against the source; text with absolute offsets and truncation flags</td></tr>
+      <tr><td>Connectors &amp; queue</td><td>GitHub REST; Drive REST with a pasted token; in-process workers, <span class="mono">INGEST_CONCURRENCY=2</span>, one retry; one-minute scheduler</td><td>Read-only import with allow-lists; ingestion jobs, startup recovery and five-minute default refresh</td></tr>
+      <tr><td>Hosting / CI</td><td>Vercel, Render free tier, GitHub Actions</td><td>SPA rewrites, API hosting, 16 suites plus frontend build and smoke on each push</td></tr>
+    </tbody>
+  </table>
+
+  <p class="tiny">Deliberate trade-offs: full-corpus extraction keeps exact offsets; composition-time filtering makes revocation immediate; an in-process queue favours demo simplicity over crash durability; pattern redaction is explainable but narrower than a PII classifier.</p>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 03 PERMISSIONS ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">04 / PERMISSIONS</div>
+  <h1>No evidence without permission</h1>
+  <p class="lead">
+    Visibility is evaluated on <strong>sources</strong>, and claims inherit the strictest constraint. The default is
+    denial: an unknown scope hides the source rather than exposing it.
+  </p>
+
+  <h2>Six rules, evaluated in order</h2>
+  <ol class="list">
+    <li>No source, a soft-deleted source, or a non-member &rarr; <strong>hidden</strong>.</li>
+    <li>A person-confirmed source &rarr; visible to the answering member and project leads only.</li>
+    <li><span class="mono">scope: project</span> &rarr; any project member.</li>
+    <li><span class="mono">scope: roles</span> &rarr; only the listed roles (lead, contributor, observer).</li>
+    <li><span class="mono">scope: users</span> &rarr; only the listed people.</li>
+    <li>Unknown or missing scope &rarr; <strong>hidden</strong>. Fail closed.</li>
+  </ol>
+
+  <h2>Surfaces that must agree</h2>
+  <table>
+    <colgroup><col style="width:30%"><col style="width:70%"></colgroup>
+    <thead><tr><th>Surface</th><th>Filter</th></tr></thead>
+    <tbody>
+      <tr><td>Project stats</td><td>Counts only readable sources and claims; total equals visible total.</td></tr>
+      <tr><td>State, claims, sources, documents</td><td>Visible rows only; list totals equal the number of readable rows.</td></tr>
+      <tr><td>Source, document, evidence detail</td><td>403 or 404 when the item is not visible; the response carries no title or quote.</td></tr>
+      <tr><td>Handover composition</td><td>An item is included only when <em>every</em> citation resolves to a readable source.</td></tr>
+      <tr><td>Handover list and detail</td><td>Recipient-only viewers see no counts of any kind; author and lead views are filtered too.</td></tr>
+      <tr><td>Shared link</td><td>Recipient-bound session plus a read-time re-check; no reviewer notes, alerts or first-week leakage.</td></tr>
+      <tr><td>Audit log</td><td>Events targeting unreadable sources are redacted to <em>Restricted item</em> with no id or metadata.</td></tr>
+      <tr><td>Clarifications</td><td>Candidates only for claims the departing member can read; only the addressee can answer or decline.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout dark" style="margin-bottom:0">
+    <span class="label">Read-time re-check</span>
+    A share link does not freeze the item list. Every recipient open recomputes visibility; removed items are dropped
+    and the event is audited. The payload says that content changed &mdash; never how many items or which sources,
+    because a count can itself leak.
+  </div>
+
+  <p class="small" style="margin-bottom:0">The canary matrix in section 05 attacks every row above for seven viewer contexts.</p>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 05 IMPROVEMENT 1 ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">05 / WHAT CHANGED AFTER ROUND 2 &middot; 1 OF 3</div>
+  <h1>Access rules, tested against every viewer</h1>
+  <p class="lead">
+    Round 2 promised automated proof that each user type can reach only what they are allowed to see &mdash; across
+    project details, warnings, suggested actions and handovers &mdash; with a single leak failing the build. This is
+    that promise, and how it was kept.
+  </p>
+
+  <div class="grid4">
+    <div class="step">
+      <span class="k">Promise</span>
+      <p>Test every user type across project details, warnings, suggested actions and complete handovers. Any leak
+      fails the build. The final report shows how often source quotes match.</p>
+    </div>
+    <div class="step">
+      <span class="k">Implementation</span>
+      <p>Five unique canaries planted in source names, document titles, statements and quotes. Seven viewer contexts.
+      Every content, handover, shared-link and audit surface. Three states: baseline, role revoked, conflict resolved.</p>
+    </div>
+    <div class="step">
+      <span class="k">Proof</span>
+      <p><span class="mono">permission-matrix.test.js</span> (3 tests) &middot; <span class="mono">ci.yml</span> on push and pull request &middot;
+      <span class="mono">eval:quotes</span> &middot; <span class="mono">QUOTE_ACCURACY.md</span> &middot; observer screenshot.</p>
+    </div>
+    <div class="step">
+      <span class="k">Result</span>
+      <p>3/3 green locally; no canary crossed a boundary. Quote accuracy 29/29 and 35/35 exact, 0 failed.
+      No red CI run was captured, because the branch was not pushed during this build.</p>
+    </div>
+  </div>
+
+  <h2>Five canaries, five ways to leak</h2>
+  <table>
+    <colgroup><col style="width:21%"><col style="width:43%"><col style="width:36%"></colgroup>
+    <thead><tr><th>String planted</th><th>Restriction type</th><th>Must stay invisible to</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">LEADONLY-7731</td><td>Source scoped to the lead role</td><td>Everyone except the lead</td></tr>
+      <tr><td class="mono">RECIPIENT-4472</td><td>Source scoped to the recipient's user allow-list</td><td>Everyone except that recipient</td></tr>
+      <tr><td class="mono">ROLE-EXCLUDED-3350</td><td>Source scoped to lead and contributor roles</td><td>Observer</td></tr>
+      <tr><td class="mono">DELETED-6621</td><td>Soft-deleted project source</td><td>Everyone</td></tr>
+      <tr><td class="mono">CONFIDENTIAL-9184</td><td>Confidential source, lead-only by sensitivity</td><td>Every non-lead</td></tr>
+    </tbody>
+  </table>
+
+  <div class="chips">
+    <span class="chip">lead</span><span class="chip">second lead</span><span class="chip">contributor</span>
+    <span class="chip">observer</span><span class="chip">recipient</span><span class="chip">outgoing member</span>
+    <span class="chip">non-member</span>
+  </div>
+
+  <p class="small">
+    <strong>Quote accuracy, the other half of commitment 1:</strong> 29/29 rules-extracted and 35/35 Gemini-extracted
+    claims matched their source verbatim; 0 normalized, 0 failed. The full table is in section 06.
+  </p>
+
+  <div class="callout">
+    <span class="label">What counts as a leak</span>
+    Content, a quote, a title, a source name, a count or a label. A viewer only sees counts of rows they can already
+    read. When a recipient's items disappear after a permission change, the notice says content changed and does not
+    disclose how many items were withheld.
+  </div>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 05 IMPROVEMENT 2 ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">05 / WHAT CHANGED AFTER ROUND 2 &middot; 2 OF 3</div>
+  <h1>Handovers that notice when the project moves</h1>
+
+  <div class="split">
+    <div class="main">
+      <p class="lead">
+        A handover is a snapshot. The promise was that Threadline would check connected sources, process only what
+        changed, and mark an approved handover outdated &mdash; with the changes shown, not just a warning.
+      </p>
+
+      <div class="grid4">
+        <div class="step">
+          <span class="k">Promise</span>
+          <p>Automatically check GitHub and Drive. Process only new or changed files. Mark approved handovers outdated
+          and show users what changed.</p>
+        </div>
+        <div class="step">
+          <span class="k">Implementation</span>
+          <p>A <span class="mono">sync</span> record per connector source: enabled, 1&ndash;1440 minute interval, last
+          checked, last changed, last error and checksum. A one-minute scheduler enqueues due sources.</p>
+        </div>
+        <div class="step">
+          <span class="k">Proof</span>
+          <p><span class="mono">source-sync.test.js</span> (7 tests): interval and forced checks, checksum skip,
+          outdated diff for author and recipient, mocked Drive path, failure retention, settings validation,
+          order-independent fingerprints.</p>
+        </div>
+        <div class="step">
+          <span class="k">Result</span>
+          <p>7/7 green. Claim IDs, owners and statuses survive re-ingestion. A changed source flips an approved
+          handover to <em>outdated</em> with added, updated and removed lines. No live connector observation is claimed.</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <span class="label">What the recipient sees</span>
+        An Outdated banner, a permitted diff built only from sources they may read, and an offer to regenerate.
+        Regenerating creates a new draft and invalidates the old share link; it does not silently rewrite the old one.
+      </div>
+    </div>
+
+    <div class="side">
+      <img class="shot" src="../../docs/screens/round3-sources-sync-scope.png" alt="Sources screen with the fail-closed banner and no sync controls for upload sources">
+      <div class="cap">Sources screen: the fail-closed rule is stated in the interface. The seeded workspace is
+      upload-only, so no sync control is rendered &mdash; uploads are manual, connectors are polled.
+      <span class="mono">docs/screens/round3-sources-sync-scope.png</span></div>
+
+      <div class="callout dark">
+        <span class="label">What is not claimed</span>
+        No live five-minute refresh was observed. The environment has no outbound GitHub or Drive access and no
+        tokens, and the seed is upload-only. Drive uses a pasted token, not OAuth. Webhooks are not built.
+      </div>
+    </div>
+  </div>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 05 IMPROVEMENT 3 ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">05 / WHAT CHANGED AFTER ROUND 2 &middot; 3 OF 3</div>
+  <h1>Knowledge that was never written down</h1>
+
+  <div class="split">
+    <div class="main">
+      <p class="lead">
+        Some of the most important project knowledge lives in a person, not a document. The promise was to ask the
+        departing member about missing owners, conflicting decisions and open questions &mdash; and to keep their answer
+        clearly labelled as a human confirmation.
+      </p>
+
+      <div class="grid4">
+        <div class="step">
+          <span class="k">Promise</span>
+          <p>Ask the departing member about gaps, conflicts and open questions. Save the answer with their name and
+          date, marked as person-confirmed rather than document-extracted.</p>
+        </div>
+        <div class="step">
+          <span class="k">Implementation</span>
+          <p>Candidate gating by what that member can read. Ask one or all gaps with de-duplication. Only the addressee
+          can answer or decline. An answer creates a confirmation source, a document, evidence and a claim.</p>
+        </div>
+        <div class="step">
+          <span class="k">Proof</span>
+          <p><span class="mono">clarifications.test.js</span> (7 tests) covers candidate gating, ask-all, addressee-only
+          access, refusal for unreadable items, the person-confirmed claim, the recipient label and redaction.</p>
+        </div>
+        <div class="step">
+          <span class="k">Result</span>
+          <p>One ATLAS ownership gap closed end to end: asked, answered, shared with the project, accepted and approved.
+          The recipient sees <em>PERSON-CONFIRMED</em>, the person and the date.</p>
+        </div>
+      </div>
+
+      <h3>The recorded ATLAS path</h3>
+      <ol class="list">
+        <li>As Subham, ask Rohan: <em>&ldquo;Who owns Migrate invoice PDF templates after Rohan Mehta leaves?&rdquo;</em></li>
+        <li>As Rohan, answer <em>&ldquo;Ananya Rao&rdquo;</em>; only Rohan can submit or decline this answer.</li>
+        <li>As Subham, choose <em>Share with project</em>, then accept the item in a handover and approve it.</li>
+        <li>As Ananya, open the share link: the item is labelled <em>PERSON-CONFIRMED</em> with Rohan's name and 17 Nov 2026.</li>
+        <li>The ownership gap disappears from the overview and the underlying claim is a confirmation source, not a quote.</li>
+      </ol>
+    </div>
+
+    <div class="side">
+      <img class="shot" src="../../docs/screens/round3-recipient-person-confirmed.png" alt="Recipient view showing a responsibility item labelled PERSON-CONFIRMED with the confirming person and date">
+      <div class="cap">Recipient view: the responsibility is labelled PERSON-CONFIRMED, attributed to Rohan Mehta on
+      17 Nov 2026, and cites the confirmed answer.
+      <span class="mono">docs/screens/round3-recipient-person-confirmed.png</span></div>
+
+      <div class="callout">
+        <span class="label">Why it is not a model answer</span>
+        Person-confirmed evidence is typed separately from a document quote. It is excluded from the quote-accuracy
+        rate by design, length-capped, treated as text, redacted before sharing, and visible only to the answering
+        member and project leads.
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <span class="label">Ten further fixes, not counted as one of the three</span>
+    Redaction and certainty labels; the cold-start notice; in-place conflict resolution; actionable next actions;
+    permission-filtered author and lead views; re-ingestion safety; reconstruction corrections; share and approval
+    hardening; the first-week view; and the accessibility pass. Each is mapped to its files and commits in
+    <span class="mono">docs/IMPROVEMENTS.md</span>; none is counted towards the three commitments.
+  </div>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 06 TESTING 1 ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">06 / TESTING &middot; 1 OF 2</div>
+  <h1>103 tests, sixteen suites, zero failures</h1>
+  <p class="lead">
+    Each suite boots its own in-memory MongoDB, so no external service is needed and no test depends on the shared
+    demo workspace. Full run on 17 November 2026: <strong>16 suites, 103 tests, 0 failures, 87.57 seconds</strong>.
+  </p>
+
+  <table class="tight">
+    <colgroup><col style="width:23%"><col style="width:7%"><col style="width:70%"></colgroup>
+    <thead><tr><th>Suite</th><th class="num">Tests</th><th>What it proves</th></tr></thead>
+    <tbody>
+      <tr><td class="mono">permission-matrix</td><td class="num">3</td><td>Seven viewer contexts across every content, handover, share and audit surface; five canaries before and after revocation and conflict resolution.</td></tr>
+      <tr><td class="mono">round3-hardening</td><td class="num">11</td><td>Recipient status refresh, purge, freshness, hashed tokens, revocation, maker-checker, acceptance notes, acknowledgement, logout, scoped views, diffs.</td></tr>
+      <tr><td class="mono">source-sync</td><td class="num">7</td><td>Interval scheduling, forced checks, checksum skip, outdated diffs, mocked Drive path, failure retention, settings validation.</td></tr>
+      <tr><td class="mono">clarifications</td><td class="num">7</td><td>Askable gaps, ask-all de-duplication, addressee-only answers, refusal for unreadable items, person-confirmed label, redaction.</td></tr>
+      <tr><td class="mono">claim-actions</td><td class="num">8</td><td>Owner assignment, done tasks, question answers, mitigations, closure notes, observer rejection, validation and 404 guards.</td></tr>
+      <tr><td class="mono">conflict-resolution</td><td class="num">6</td><td>Lead confirms the current decision, the rest are superseded, the conflict clears, drafts exclude superseded, audit, role rejection.</td></tr>
+      <tr><td class="mono">handover-permissions</td><td class="num">10</td><td>Recipient withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review limits.</td></tr>
+      <tr><td class="mono">handover-workflow</td><td class="num">5</td><td>Edit, submit, approve, share and acknowledge; version history and audit; pending-item and transition guards; share rotation.</td></tr>
+      <tr><td class="mono">ingest-hardening</td><td class="num">10</td><td>Confidence and injection flags, truncation, re-ingest preservation, extraction counts, 409, allow-lists, failed-ingest retention.</td></tr>
+      <tr><td class="mono">reconstruction</td><td class="num">11</td><td>Blocked status, undated items, null readiness, phase, blockers, fuzzy conflicts, identical restatements, critical actions.</td></tr>
+      <tr><td class="mono">extraction</td><td class="num">8</td><td>Verbatim quote location (exact, normalized, failed), heuristic extraction, CSV normalization.</td></tr>
+      <tr><td class="mono">redaction</td><td class="num">4</td><td>Emails, phones, credentials and 12-digit IDs; no double redaction; ordinary text untouched; compose-time redaction.</td></tr>
+      <tr><td class="mono">api-ingestion</td><td class="num">3</td><td>Auth, upload &rarr; ingestion &rarr; claims &rarr; evidence preview, role isolation, unsupported files, audit trail.</td></tr>
+      <tr><td class="mono">demo-seed</td><td class="num">5</td><td>Public seed only when the workspace is missing; scoped reset requires the lead; retired accounts.</td></tr>
+      <tr><td class="mono">membership</td><td class="num">2</td><td>Role changes and access boundaries.</td></tr>
+      <tr><td class="mono">llm-fallback</td><td class="num">3</td><td>Gemini retry on a retired model (404), 429 and 503.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <span class="label">CI, stated precisely</span>
+    <span class="mono">.github/workflows/ci.yml</span> runs backend <span class="mono">npm ci &amp;&amp; npm test</span> and frontend
+    <span class="mono">npm ci &amp;&amp; npm run build &amp;&amp; npm run smoke</span> on every push and pull request, on Node 20.
+    The workflow exists in this tree; it has not been triggered for Round 3 because the branch has not been pushed.
+  </div>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 06 TESTING 2 ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">06 / TESTING &middot; 2 OF 2</div>
+  <h1>The oracles, the gate and failure behaviour</h1>
+  <p class="lead">
+    Quote accuracy is measured; the gate and eleven browser journeys are real; failure paths were exercised.
+  </p>
+
+  <h2>Quote accuracy</h2>
+  <table class="tight">
+    <colgroup><col style="width:40%"><col style="width:13%"><col style="width:15%"><col style="width:16%"><col style="width:16%"></colgroup>
+    <thead><tr><th>Extraction</th><th class="num">Claims</th><th class="num">Exact</th><th class="num">Normalized</th><th class="num">Failed</th></tr></thead>
+    <tbody>
+      <tr><td>Deterministic rules (ATLAS + messy fixture)</td><td class="num">29</td><td class="num">29</td><td class="num">0</td><td class="num">0</td></tr>
+      <tr><td>Gemini (gemini-3.8-flash)</td><td class="num">35</td><td class="num">35</td><td class="num">0</td><td class="num">0</td></tr>
+    </tbody>
+  </table>
+  <div class="split">
+    <div class="main">
+      <h2>Frontend gate</h2>
+      <table class="tight">
+        <colgroup><col style="width:46%"><col style="width:54%"></colgroup>
+        <thead><tr><th>Check</th><th>Observed</th></tr></thead>
+        <tbody>
+          <tr><td>Production build</td><td>4.27 s &middot; 1,609 modules</td></tr>
+          <tr><td>JavaScript bundle</td><td>476.41 kB &middot; 128.11 kB gzip</td></tr>
+          <tr><td>CSS bundle</td><td>49.13 kB &middot; 9.09 kB gzip</td></tr>
+          <tr><td>Smoke check</td><td>6 of 6 pass: mount, title, CSS, JS and every referenced asset</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="side">
+      <div class="callout dark">
+        <span class="label">What this does not prove</span>
+        No component-test suite, no end-to-end automation in CI, no load or concurrency run beyond demo scale, no
+        live GitHub or Drive refresh, and no automated accessibility score. Each is costed in section 08.
+      </div>
+    </div>
+  </div>
+
+  <h2>When something fails</h2>
+  <table class="tight" style="margin-bottom:0">
+    <colgroup><col style="width:36%"><col style="width:64%"></colgroup>
+    <thead><tr><th>Failure</th><th>Observed result</th></tr></thead>
+    <tbody>
+      <tr><td>Unsupported or oversized upload</td><td>Rejected with a specific error code; nothing ingested.</td></tr>
+      <tr><td>Model unavailable (404, 429, 503) or no key</td><td>Fallback model retried; without a key the rules extractor runs and labels its output.</td></tr>
+      <tr><td>Repository missing, not allow-listed, or Drive unconfigured</td><td>Typed 404, 403 or 501 in the interface; no partial import.</td></tr>
+      <tr><td>Connector sync fails</td><td>Previous knowledge kept, <span class="mono">sync.lastError</span> recorded, source stays ready.</td></tr>
+      <tr><td>Re-ingest while processing</td><td>409; no duplicate claims. A failed re-ingest keeps previous content.</td></tr>
+      <tr><td>Share link opened by the wrong person or after expiry</td><td>Access denied; links are recipient-bound and expire after <span class="mono">SHARE_TTL_DAYS</span>.</td></tr>
+      <tr><td>Restricted citation on an otherwise visible claim</td><td>The whole claim is withheld &mdash; partial visibility counts as no visibility.</td></tr>
+      <tr><td>Quote cannot be matched in the source</td><td>Marked unverified and excluded from handovers until a reviewer resolves it.</td></tr>
+      <tr><td>Clarification addressed to anyone else</td><td>Refused with 400 or 403; only the addressee can answer or decline.</td></tr>
+      <tr><td>Backend cold start on Render free tier</td><td>Slow first request (about 60 s) succeeds; the UI warns and repeats after inactivity.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 08 USABILITY ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">07 / USABILITY</div>
+  <h1>A product four different people can use</h1>
+  <p class="lead">
+    The demo is built around four roles because the permission model is the product. Each person has a job on screen,
+    not a settings page, and switching between them re-evaluates every view live.
+  </p>
+
+  <table class="tight">
+    <colgroup><col style="width:24%"><col style="width:16%"><col style="width:60%"></colgroup>
+    <thead><tr><th>Person</th><th>Role</th><th>What they do on screen</th></tr></thead>
+    <tbody>
+      <tr><td>Subham Sahu</td><td>Lead</td><td>Create and approve handovers, restrict sources, resolve conflicts, read the audit log.</td></tr>
+      <tr><td>Rohan Mehta</td><td>Contributor</td><td>The departing member: answers clarifications about gaps, conflicts and open questions.</td></tr>
+      <tr><td>Ananya Rao</td><td>Contributor</td><td>The incoming recipient: opens a share link, reads evidence, sees a first week, acknowledges.</td></tr>
+      <tr><td>Vikram Nair</td><td>Observer</td><td>Read-only; confirms that restricted sources, claims and counts stay hidden.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="split">
+    <div class="main">
+      <h2>Accessibility, measured</h2>
+      <table class="tight">
+        <colgroup><col style="width:62%"><col style="width:38%"></colgroup>
+        <thead><tr><th>Check</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>Interactive elements audited across four screens</td><td>134 (login 4, overview 49, review 46, recipient 35)</td></tr>
+          <tr><td>Controls without an accessible name</td><td>0</td></tr>
+          <tr><td>Form fields without a label / images without alt</td><td>0 / 0</td></tr>
+          <tr><td>Positive tabindex values / focusable in aria-hidden</td><td>0 / 0</td></tr>
+          <tr><td>Landmarks and page heading</td><td><span class="mono">main</span> = 1 and a visible <span class="mono">h1</span> on every screen</td></tr>
+          <tr><td>Text contrast</td><td>ink.muted 5.52:1; ink.faint 4.93:1 on white</td></tr>
+        </tbody>
+      </table>
+      <p class="tiny">Method: an in-page DOM audit plus a WCAG contrast calculation. axe and Lighthouse could not be installed, so no automated accessibility score is claimed.</p>
+    </div>
+
+    <div class="side">
+      <img class="shot" src="../../docs/screens/round3-recipient-first-week.png" alt="Recipient first-week panel showing owned work, blocked items and what to do first">
+      <div class="cap">Recipient first week: what you own, what is blocked and what to do first, above the approved
+      content and the acknowledgement control.
+      <span class="mono">docs/screens/round3-recipient-first-week.png</span></div>
+    </div>
+  </div>
+
+  <div class="callout dark">
+    <span class="label">The unassisted gap, stated plainly</span>
+    No unassisted usability session has been run. The evidence is eleven scripted journeys, a DOM accessibility audit
+    and screenshots &mdash; all produced by the builder. The shared demo workspace is a second constraint: another evaluator
+    can change the seeded data. The next step is five unassisted sessions with the 90-second walkthrough, recording
+    time to first handover, points of hesitation and any error that requires help.
+  </div>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 09 LIMITS AND ROADMAP ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">08 / LIMITS AND ROADMAP</div>
+  <h1>What it does not do, and what comes next</h1>
+  <p class="lead">
+    The limits are known and costed; the roadmap is ordered by the risk each phase removes. Nothing is claimed as built.
+  </p>
+
+  <div class="callout dark">
+    <span class="label">Status at the time of writing</span>
+    The Round 3 tree is on branch <span class="mono">main</span> and has not been pushed. The live URL and the public
+    repository still serve the Round 2 build; every Round 3 test, screenshot and metric here is from the local stack.
+  </div>
+
+  <h2>Current limits</h2>
+  <table class="tight">
+    <colgroup><col style="width:30%"><col style="width:52%"><col style="width:18%"></colgroup>
+    <thead><tr><th>Limit</th><th>What it means</th><th>Documented in</th></tr></thead>
+    <tbody>
+      <tr><td>Redaction is pattern-based</td><td>Catches emails, phones, keys, credentials and 12-digit IDs; not reliable for names, addresses or salaries.</td><td class="mono">README</td></tr>
+      <tr><td>The demo workspace is shared</td><td>Another evaluator can change the seeded Atlas data; rebuild restores only seeded sources.</td><td class="mono">README</td></tr>
+      <tr><td>The queue is in-process</td><td>Jobs are lost on a hard restart; startup recovery only re-queues sources stuck over 10 minutes.</td><td class="mono">ARCHITECTURE</td></tr>
+      <tr><td>Rules-only mode reads labelled lines</td><td>Without Gemini, free-form prose yields nothing; explicit prefixes, CSV rows and checkboxes are required.</td><td class="mono">README</td></tr>
+      <tr><td>Connectors use a server-wide credential</td><td>No per-user OAuth consent; GitHub and Drive tokens are shared by every project.</td><td class="mono">README</td></tr>
+      <tr><td>Tests stop at build, smoke and journeys</td><td>No component suite, no end-to-end automation in CI, no load or concurrency run, no live connector run.</td><td class="mono">TESTING_NOTES</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Roadmap, in risk order</h2>
+  <table class="tight">
+    <colgroup><col style="width:24%"><col style="width:50%"><col style="width:13%"><col style="width:13%"></colgroup>
+    <thead><tr><th>Phase</th><th>Scope</th><th>Effort</th><th>Risk</th></tr></thead>
+    <tbody>
+      <tr><td><strong>1. Survive a restart</strong></td><td>Durable queue (BullMQ + Redis or a Mongo worker), object storage for uploads, startup self-check in <span class="mono">/api/health</span>.</td><td>2&ndash;3 days</td><td>Medium</td></tr>
+      <tr><td><strong>2. First-class connectors</strong></td><td>Drive OAuth consent, GitHub and Drive webhooks, per-user credentials, connector health and allow-list state.</td><td>5&ndash;7 days</td><td>High</td></tr>
+      <tr><td><strong>3. Privacy and identity</strong></td><td>SSO and SCIM, retention and hard erasure, PII classifier with a review queue, signed audit export.</td><td>6&ndash;8 days</td><td>High</td></tr>
+      <tr><td><strong>4. Recall and reasoning</strong></td><td>Vector retrieval, semantic conflict detection, notification delivery, reviewer assignment and SLA reminders.</td><td>6&ndash;10 days</td><td>High</td></tr>
+      <tr><td><strong>5. Evaluation depth</strong></td><td>Component and accessibility tests, load and concurrency testing, a labelled extraction-quality benchmark.</td><td>Ongoing</td><td>Medium</td></tr>
+    </tbody>
+  </table>
+  <p class="tiny">19&ndash;28 working days for Phases 1&ndash;4, single developer, including tests and documentation. Phase 5 runs alongside. Each phase removes a named limit above.</p>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 09 REPRODUCE ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">09 / REPRODUCING THIS RESULT</div>
+  <h1>Run it, test it, check it</h1>
+  <p class="lead">
+    The backend starts with an ephemeral in-memory MongoDB and no external services, so the full loop is reproduced
+    from a clean clone. The final links are on the cover: live product, public repository and this PDF.
+  </p>
+
+  <div class="split">
+    <div class="main">
+      <h2>Quick start</h2>
+      <div class="code" style="font-size:7.8pt;"><span class="c"># Terminal 1 &mdash; API on :4000, in-memory MongoDB</span>
+cd backend &amp;&amp; npm install &amp;&amp; npm run dev
+
+<span class="c"># Terminal 2 &mdash; UI on :5173</span>
+cd frontend &amp;&amp; npm install &amp;&amp; npm run dev
+
+<span class="c"># Seed the ATLAS workspace (only when missing)</span>
+curl -X POST "http://localhost:4000/api/demo/seed"</div>
+    </div>
+    <div class="side">
+      <h2>Verification</h2>
+      <div class="code" style="font-size:7.8pt;"><span class="c"># 16 suites, 103 tests</span>
+cd backend &amp;&amp; npm test
+
+<span class="c"># 29/29 rules + 35/35 Gemini</span>
+npm run eval:quotes
+
+<span class="c"># Build + 6-check smoke</span>
+cd ../frontend
+npm run build &amp;&amp; npm run smoke</div>
+    </div>
+  </div>
+
+  <p class="tiny">Demo profiles: Subham Sahu (lead), Rohan Mehta (contributor, departing), Ananya Rao (recipient), Vikram Nair (observer). One click signs in a seeded profile; <span class="mono">Threadline#2026</span> is for local demo accounts only.</p>
+
+  <h2>The 90-second walkthrough</h2>
+  <ol class="list">
+    <li>Pick <strong>Subham Sahu</strong>, open <strong>Project Atlas &rarr; Handovers</strong>, and create a handover for Ananya with the onboarding template.</li>
+    <li>Accept, edit or reject a few items, submit it, approve it as Subham and share it.</li>
+    <li>Switch to <strong>Ananya</strong>, open the share link, read an evidence preview, see the first week and acknowledge.</li>
+    <li>Switch back to Subham, restrict <span class="mono">handover-notes.txt</span> to the lead role, reload Ananya's view: the items disappear and the change is audited.</li>
+  </ol>
+
+  <div class="callout">
+    <span class="label">Configuration and deployment</span>
+    <span class="mono">MONGODB_URI</span> (empty starts in-memory; production uses Atlas), <span class="mono">JWT_SECRET</span>
+    (required in production), <span class="mono">GEMINI_API_KEY</span> (otherwise rules extraction), <span class="mono">CORS_ORIGINS</span>
+    (required in production) and optional connector tokens. Frontend on Vercel with SPA rewrites; API on Render free
+    tier, where the first request after inactivity can take about a minute and the UI says so. <span class="mono">backend/.env</span>
+    is gitignored; <span class="mono">.env.example</span> holds placeholders only.
+  </div>
+
+  <p class="tiny">Evidence index: README, TESTING_NOTES, QUOTE_ACCURACY, SYNC_EVIDENCE, CLARIFICATION_FLOW, ARCHITECTURE, IMPROVEMENTS, ROADMAP, AI_DISCLOSURE, <span class="mono">permission-matrix.test.js</span> and <span class="mono">ci.yml</span>. After submission: push this tree, redeploy, capture the first green CI run, run five unassisted usability sessions, then start Phase 1.</p>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<!-- ============================== 10 SCORING AND ROLE ============================== -->
+<section class="page">
+  <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
+  <div class="eyebrow">10 / SCORING AND ROLE</div>
+  <h1>Eighty-five out of one hundred, self-assessed</h1>
+
+  <table class="tight">
+    <colgroup><col style="width:21%"><col style="width:67%"><col style="width:12%"></colgroup>
+    <thead><tr><th>Category</th><th>Evidence a judge can open</th><th class="num">Self</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Completeness</strong><br><span class="small">25 points</span></td><td>38 features across ingestion, extraction, reconstruction, handover, identity and audit; the full loop runs in the browser. Partial: Drive OAuth, notifications, pattern redaction.</td><td class="num"><strong>21</strong></td></tr>
+      <tr><td><strong>Three improvements</strong><br><span class="small">20 points</span></td><td>Canary matrix, quote report and CI workflow; sync with outdated diffs; clarifications end to end. Missing: a live connector run and a red CI run.</td><td class="num"><strong>18</strong></td></tr>
+      <tr><td><strong>Reliability</strong><br><span class="small">20 points</span></td><td>103 tests across 16 suites; failure retention; 409 guards; fail-closed policy; quote validation. Residual: in-process queue, no load test.</td><td class="num"><strong>17</strong></td></tr>
+      <tr><td><strong>Usability</strong><br><span class="small">20 points</span></td><td>Four personas, one-click entry, first-week view, cold-start notice, accessibility audit. Missing: an unassisted usability session.</td><td class="num"><strong>15</strong></td></tr>
+      <tr><td><strong>Documentation / roadmap</strong><br><span class="small">15 points</span></td><td>README, architecture, testing notes, quote report, sync and clarification evidence, improvements map, AI disclosure and a five-phase roadmap.</td><td class="num"><strong>14</strong></td></tr>
+      <tr><td colspan="2"><strong>Total self-assessment</strong> &mdash; 100 points; the judges' number is their own.</td><td class="num"><strong>85</strong></td></tr>
+    </tbody>
+  </table>
+
+  <h2>What I built, in my own words</h2>
+  <div class="cert">
+    <div class="line"><b>Role:</b> Backend, frontend and permissions &mdash; solo developer, with Qoder (Claude) as the AI pair-programming tool.</div>
+    <div class="line"><b>Built:</b> the fail-closed access policy and five-canary permission matrix; ingestion and extraction with verbatim quote validation; connected-source sync with outdated handovers; person-confirmed clarifications; the React review, recipient and shared-link flows; and 103 tests across 16 suites.</div>
+  </div>
+
+  <p>
+    I wrote Threadline end to end. The permission boundary is the part I was most careful about: the browser never
+    decides what a person may see, and the API never returns a row, count or label the viewer could not already read.
+    Round 3 also had to keep the record honest &mdash; quotes checked against invented text, freshness against silent
+    staleness, clarifications labelled as a person's answer. The limits that remain are in section 08.
+  </p>
+
+  <div class="callout">
+    <span class="label">AI use, stated plainly</span>
+    Qoder (Claude) was the pair-programming tool; Gemini and ChatGPT helped draft documentation; Google Stitch was an
+    early visual reference. All code was reviewed, run and tested. Runtime Gemini is extraction-only, quote-checked.
+    Full disclosure: <span class="mono">docs/AI_DISCLOSURE.md</span>.
+  </div>
+
+  <div class="quote">
+    Nothing should reach the recipient unless it can be traced to an original source that the recipient may read
+    &mdash; and a project lead has approved the handover.
+  </div>
+  <p class="small" style="margin-top:3mm; margin-bottom:0;">
+    Subham Sahu &middot; Team ZeusConquers &middot; CodePuneThinkers Hackathon &ndash; Hack With Pune &middot; 17 November 2026
+  </p>
+
+  <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
+</section>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  if (params.has('page')) {
+    document.body.classList.add('preview');
+    const n = Number(params.get('page'));
+    document.querySelectorAll('.page').forEach((el, i) => {
+      if (i + 1 === n) el.classList.add('active');
+    });
+  }
+  if (params.has('audit2')) {
+    const rows = [...document.querySelectorAll('.page')].map((el, i) => {
+      const kids = [...el.children].filter(
+        (c) => !c.classList.contains('runhead') && !c.classList.contains('runfoot'),
+      );
+      const last = kids[kids.length - 1];
+      const r = last.getBoundingClientRect();
+      const pr = el.getBoundingClientRect();
+      return {
+        page: i + 1,
+        bottom: Math.round(r.bottom - pr.top),
+        over: el.scrollHeight - el.clientHeight,
+        last: last.className || last.tagName,
+      };
+    });
+    const pre = document.createElement('pre');
+    pre.id = 'audit2';
+    pre.textContent = JSON.stringify(rows);
+    document.body.appendChild(pre);
+  }
+  if (params.has('audit')) {
+    const rows = [...document.querySelectorAll('.page')].map((el, i) => ({
+      page: i + 1,
+      scroll: el.scrollHeight,
+      client: el.clientHeight,
+      over: el.scrollHeight - el.clientHeight,
+    }));
+    const pre = document.createElement('pre');
+    pre.id = 'audit';
+    pre.textContent = JSON.stringify(rows);
+    document.body.appendChild(pre);
+  }
+</script>
+</body>
+</html>

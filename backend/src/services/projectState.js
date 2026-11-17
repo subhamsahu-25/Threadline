@@ -41,6 +41,8 @@ export function serializeSource(source) {
     status: data.status,
     statusMessage: data.statusMessage,
     stats: data.stats,
+    parseWarnings: data.parseWarnings || [],
+    sync: data.sync,
     lastIngestedAt: data.lastIngestedAt,
     createdAt: data.createdAt,
     files: (data.files || []).map((file) => ({
@@ -143,6 +145,9 @@ export function decorateClaim(claim, citationsByClaim) {
     ownerName: claim.ownerName,
     dueAt: claim.dueAt,
     occurredAt: claim.occurredAt || claim.createdAt,
+    origin: claim.origin || 'document',
+    confirmedByName: claim.confirmedByName,
+    confirmedAt: claim.confirmedAt,
     flags: claim.flags || [],
     evidenceCount: claim.evidenceCount,
     verifiedEvidenceCount: claim.verifiedEvidenceCount,

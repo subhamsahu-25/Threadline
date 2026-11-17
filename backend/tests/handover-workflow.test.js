@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { Project } from '../src/models/index.js';
 import {
   auth,
   idOf,
@@ -11,8 +12,8 @@ import {
 } from './helpers.js';
 
 const LEAD = 'subham@threadline.demo';
-const INCOMING = 'partho@threadline.demo';
-const OUTGOING = 'soumyajit@threadline.demo';
+const INCOMING = 'ananya@threadline.demo';
+const OUTGOING = 'rohan@threadline.demo';
 
 describe('review and handover workflow', () => {
   let seeded;
@@ -103,7 +104,8 @@ describe('review and handover workflow', () => {
     const repeat = await request(app)
       .post(`/api/handovers/${handoverId}/acknowledge`)
       .set(auth(incomingToken));
-    expect(repeat.status).toBe(400);
+    expect(repeat.status).toBe(200);
+    expect(repeat.body.handover.acknowledgement.version).toBe(5);
 
     const versions = await request(app)
       .get(`/api/handovers/${handoverId}/versions`)
@@ -111,9 +113,9 @@ describe('review and handover workflow', () => {
       .expect(200);
     const reasons = versions.body.versions.map((entry) => entry.reason);
     expect(reasons).toContain('created');
-    expect(reasons).toContain('approved');
-    expect(reasons).toContain('shared');
-    expect(reasons).toContain('acknowledged by recipient');
+    expect(reasons.some((reason) => reason.startsWith('approved by'))).toBe(true);
+    expect(reasons).toContain('shared with recipient');
+    expect(reasons.some((reason) => reason.startsWith('acknowledged by'))).toBe(true);
     expect(versions.body.versions[0].version).toBe(6);
 
     const audit = await request(app)
@@ -251,7 +253,8 @@ describe('review and handover workflow', () => {
     const duplicate = await request(app)
       .post(`/api/handovers/${handoverId}/reopen`)
       .set(auth(leadToken));
-    expect(duplicate.status).toBe(400);
+    expect(duplicate.status).toBe(200);
+    expect(duplicate.body.handover.status).toBe('draft');
 
     await request(app)
       .post(`/api/handovers/${handoverId}/submit`)
@@ -262,7 +265,9 @@ describe('review and handover workflow', () => {
       .get(`/api/handovers/${handoverId}/versions`)
       .set(auth(leadToken))
       .expect(200);
-    expect(versions.body.versions.map((entry) => entry.reason)).toContain('reopened');
+    expect(versions.body.versions.map((entry) => entry.reason)).toContain(
+      'reopened for further review',
+    );
 
     const audit = await request(app)
       .get(`/api/projects/${projectId}/audit`)
@@ -297,9 +302,15 @@ describe('review and handover workflow', () => {
       .expect(200);
     const firstToken = first.body.sharePath.split('/').pop();
 
+    const unconfirmed = await request(app)
+      .post(`/api/handovers/${handoverId}/share`)
+      .set(auth(leadToken));
+    expect(unconfirmed.status).toBe(409);
+
     const renewed = await request(app)
       .post(`/api/handovers/${handoverId}/share`)
       .set(auth(leadToken))
+      .send({ confirmRotation: true })
       .expect(200);
     const secondToken = renewed.body.sharePath.split('/').pop();
     expect(renewed.body.status).toBe('shared');
@@ -319,13 +330,16 @@ describe('review and handover workflow', () => {
       .get(`/api/handovers/${handoverId}`)
       .set(auth(leadToken))
       .expect(200);
-    expect(detail.body.handover.sharePath).toBe(`/api/handovers/shared/${secondToken}`);
+    expect(detail.body.handover.sharePath).toBeNull();
+    expect(detail.body.handover.shareActive).toBe(true);
 
     const versions = await request(app)
       .get(`/api/handovers/${handoverId}/versions`)
       .set(auth(leadToken))
       .expect(200);
-    expect(versions.body.versions.map((entry) => entry.reason)).toContain('share link renewed');
+    expect(versions.body.versions.map((entry) => entry.reason)).toContain(
+      'share link rotated; the previous link was invalidated',
+    );
 
     const audit = await request(app)
       .get(`/api/projects/${projectId}/audit`)
@@ -333,6 +347,75 @@ describe('review and handover workflow', () => {
       .expect(200);
     const actions = audit.body.events.map((event) => event.action);
     expect(actions.filter((action) => action === 'handover.shared')).toHaveLength(1);
-    expect(actions.filter((action) => action === 'handover.share_renewed')).toHaveLength(1);
+    expect(actions.filter((action) => action === 'handover.share_rotated')).toHaveLength(1);
+  });
+
+  async function createShared() {
+    const handover = await createDraft();
+    await request(app)
+      .post(`/api/handovers/${handover.id}/submit`)
+      .set(auth(leadToken))
+      .expect(200);
+    await request(app)
+      .post(`/api/handovers/${handover.id}/approve`)
+      .set(auth(leadToken))
+      .send({})
+      .expect(200);
+    const shared = await request(app)
+      .post(`/api/handovers/${handover.id}/share`)
+      .set(auth(leadToken))
+      .expect(200);
+    return { handover, shareToken: shared.body.sharePath.split('/').pop() };
+  }
+
+  it('opens a demo share link without sign-in and records the channel', async () => {
+    const { shareToken } = await createShared();
+
+    const anonymous = await request(app)
+      .get(`/api/handovers/shared/${shareToken}`)
+      .expect(200);
+    expect(anonymous.body.publicPreview).toBe(true);
+    expect(anonymous.body.recipientName).toBe('Ananya Rao');
+    expect(anonymous.body.handover.items.length).toBeGreaterThan(0);
+
+    const acknowledged = await request(app)
+      .post(`/api/handovers/shared/${shareToken}/acknowledge`)
+      .expect(200);
+    expect(acknowledged.body.publicPreview).toBe(true);
+    expect(acknowledged.body.handover.status).toBe('acknowledged');
+
+    const audit = await request(app)
+      .get(`/api/projects/${projectId}/audit`)
+      .set(auth(leadToken))
+      .expect(200);
+    const event = audit.body.events.find(
+      (entry) => entry.action === 'handover.acknowledged',
+    );
+    expect(event.meta.channel).toBe('public_share_link');
+    expect(event.meta.shownItems).toBeGreaterThan(0);
+  });
+
+  it('keeps share links private outside the demo workspace', async () => {
+    const { shareToken } = await createShared();
+    await Project.updateOne({ _id: projectId }, { $set: { key: 'PRIVATE' } });
+
+    const anonymous = await request(app)
+      .get(`/api/handovers/shared/${shareToken}`);
+    expect(anonymous.status).toBe(403);
+    expect(anonymous.body.error.message).toContain('named recipient');
+
+    const anonymousAck = await request(app)
+      .post(`/api/handovers/shared/${shareToken}/acknowledge`);
+    expect(anonymousAck.status).toBe(403);
+
+    await request(app)
+      .get(`/api/handovers/shared/${shareToken}`)
+      .set(auth(incomingToken))
+      .expect(200);
+
+    const otherMember = await request(app)
+      .get(`/api/handovers/shared/${shareToken}`)
+      .set(auth(tokenOf(seeded, OUTGOING)));
+    expect(otherMember.status).toBe(403);
   });
 });

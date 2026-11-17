@@ -5,4 +5,3 @@ storage/
 coverage/
 *.log
 .DS_Store
-.env.example

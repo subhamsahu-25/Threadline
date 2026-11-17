@@ -36,6 +36,10 @@ export function sourceVisibleTo(source, project, userId) {
   if (!source || source.deletedAt) return false;
   if (!isMember(project, userId)) return false;
 
+  // Person-confirmed answers are owned by the project leads: whoever holds the
+  // lead role can review them, including leads who joined after the answer.
+  if (source.kind === 'confirmation' && roleOf(project, userId) === 'lead') return true;
+
   const scope = source.visibility?.scope ?? 'project';
   if (scope === 'project') return true;
   if (scope === 'roles') {

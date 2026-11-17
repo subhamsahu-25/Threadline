@@ -75,7 +75,8 @@ function defaultStatus(type, explicit) {
     if (/resolved/.test(explicit)) return 'resolved';
     if (/superseded/.test(explicit)) return 'superseded';
     if (/planned/.test(explicit)) return 'planned';
-    if (/open|blocked/.test(explicit)) return 'open';
+    if (/blocked/.test(explicit)) return 'blocked';
+    if (/open/.test(explicit)) return 'open';
     return 'active';
   }
   if (type === 'decision' || type === 'responsibility') return 'active';

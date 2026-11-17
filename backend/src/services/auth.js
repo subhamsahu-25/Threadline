@@ -11,9 +11,15 @@ export async function verifyPassword(password, hash) {
 }
 
 export function signToken(user) {
-  return jwt.sign({ sub: String(user._id), email: user.email }, env.jwtSecret, {
-    expiresIn: env.jwtExpiresIn,
-  });
+  return jwt.sign(
+    {
+      sub: String(user._id),
+      email: user.email,
+      tv: user.tokenVersion || 0,
+    },
+    env.jwtSecret,
+    { expiresIn: env.jwtExpiresIn },
+  );
 }
 
 export function publicUser(user) {

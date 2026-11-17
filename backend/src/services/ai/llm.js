@@ -14,11 +14,14 @@ export function llmStatus() {
 async function requestModel(model, body) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model,
-  )}:generateContent?key=${env.geminiApiKey}`;
+  )}:generateContent`;
 
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'x-goog-api-key': env.geminiApiKey,
+    },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(45_000),
   });

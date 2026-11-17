@@ -1,116 +1,184 @@
-# Testing Notes — Round 3
+# Testing Notes
 
-How Threadline was tested across the main journeys, failure cases, permission
-boundaries and reliability fixes. All results below were observed directly;
-no metric is projected or estimated.
+Living document — last updated 17 Nov 2026. Supersedes the Round 2 notes.
+All results below were observed directly; no metric is projected or estimated.
+The hosted build lags behind this working tree because Round 3 changes have not
+been pushed; every Round 3 result below is from the local dev stack.
 
 ---
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **7 suites, 37 tests**, green on every run during
-the build window. Each suite boots its own ephemeral
-(`mongodb-memory-server`) database, so no external services are required.
+`cd backend && npm test` — **17 suites, 115 tests**, green on the last full run
+(17 Nov 2026). Each suite boots its own ephemeral MongoDB
+(`mongodb-memory-server`), so no external services are required.
 
-| Suite | What it proves |
+| Suite | Tests | What it proves |
+| --- | ---: | --- |
+| `permission-matrix.test.js` | 3 | Seven viewer contexts × every content, handover, shared-link and audit surface; five canaries only reach the roles allowed to read them, before and after role revocation and after a conflict is resolved |
+| `round3-hardening.test.js` | 11 | Live status/owner refresh for recipients, source purge with `source_removed`, freshness compare + regenerate, hashed share tokens and revocation, maker-checker approval, accept-without-evidence note, acknowledgement snapshots, logout token revocation, distinct executive/audit scopes, first-week view, readable version diffs |
+| `source-sync.test.js` | 7 | Interval scheduling, forced checks, checksum skip, outdated handovers with a diff (author and recipient), mocked Drive path, failure retention, sync settings rejected for uploads, collection-order-independent fingerprints |
+| `clarifications.test.js` | 7 | Askable gaps and answer options, ask-all dedupe, addressee-only answer/decline, refusal for unreadable items, person-confirmed claim clears the gap, recipient label after sharing, redaction of answers |
+| `claim-actions.test.js` | 8 | Owner assignment closes the gap, done tasks leave open work, question answers and mitigations, closure notes in the next draft, observer rejection, validation and 404 guards |
+| `conflict-resolution.test.js` | 6 | Lead confirms the current decision, the rest are superseded, conflict clears, drafts exclude superseded statements, audit event, contributor/observer rejection |
+| `handover-permissions.test.js` | 10 | Recipient-specific withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review boundaries, non-member rejection |
+| `handover-workflow.test.js` | 7 | Edit/submit/approve/share/acknowledge, version history and audit, pending-item guard, transition guards, share rotation, and the public demo link: anonymous read and acknowledgement, audited with `channel: public_share_link`, refused for non-demo projects |
+| `ingest-hardening.test.js` | 10 | Low-confidence and injection-like flags, truncation warnings, re-ingest preserves IDs/owners/statuses/resolutions, extraction method counts, 409 while processing, connector allow-list, confidential uploads lead-only, large-upload reporting, failed re-ingest keeps content |
+| `reconstruction.test.js` | 11 | Blocked status, no ingestion-time dates, no stale undated items, null readiness when empty, execution phase while anything is open, blockers list, fuzzy topic conflicts, identical restatements, critical unblock actions |
+| `extraction.test.js` | 8 | Verbatim quote location (`exact` / `normalized` / `failed`), heuristic extraction, CSV normalization |
+| `redaction.test.js` | 4 | Emails, phones, credentials and 12-digit IDs; no double-redaction; ordinary text untouched; compose-time redaction of statements and quotes |
+| `api-ingestion.test.js` | 3 | Auth, upload → ingestion → claims → evidence preview, role-restricted isolation, unsupported files, audit trail |
+| `demo-seed.test.js` | 5 | Public seed only when the workspace is missing, scoped reset requires the lead, retired accounts |
+| `membership.test.js` | 2 | Role changes and access boundaries |
+| `llm-fallback.test.js` | 3 | Gemini retry on 404 (retired model), 429 and 503 |
+| `notifications.test.js` | 10 | Notices routed by role and event, one per recipient and event, removed when access ends, read state isolated per user, payload limited to a title, detail, project key and link |
+
+Frontend validation: `npm run build` (clean Vite production build) and
+`npm run smoke`, which checks the built `index.html` — root mount, title,
+bundled CSS/JS and that every referenced asset exists. The UI's main gate
+remains the in-browser journeys below; there is no component-test suite.
+
+CI (`.github/workflows/ci.yml`) runs backend `npm ci && npm test` and frontend
+`npm ci && npm run build && npm run smoke` on every push and pull request.
+
+---
+
+## 2. Quote accuracy
+
+`npm run eval:quotes` (see [`QUOTE_ACCURACY.md`](QUOTE_ACCURACY.md)):
+
+| Extraction | Claims | Exact | Normalized | Failed |
+| --- | ---: | ---: | ---: | ---: |
+| Rules-only — ATLAS corpus + one messy unlabelled fixture | 29 | 29 | 0 | 0 |
+| Gemini | 35 | 35 | 0 | 0 |
+
+Person-confirmed answers are excluded from the verified rate by design; they
+carry `validation: person_confirmed`, not `exact`.
+
+---
+
+## 3. Main journeys — tested in a real browser
+
+Exercised on the local dev stack at desktop 1440×900 and mobile 390×844. The
+hosted build was exercised in earlier rounds; it does not include the
+uncommitted Round 3 changes.
+
+1. **Onboarding a recipient.** Lead creates a handover for the incoming member →
+   accepts / edits / rejects items → submits → approves → shares → the recipient
+   opens the share link, reads evidence previews and acknowledges.
+2. **One-click demo sign-in and persona switching.** All four profiles sign in
+   without credentials; switching profiles re-evaluates every view live and lands
+   on the project root.
+3. **Permission revocation mid-flight.** Restricting a source the recipient could
+   read removes the affected items on reload, shows *"Some items changed since
+   this handover was approved"* without a withheld count, and writes an audit
+   event.
+4. **Observer restrictions.** As Vikram, Sources shows five readable sources, a
+   `READ-ONLY ROLE` badge and no add, access, re-ingest or remove controls
+   (`docs/screens/round3-observer-restricted-sources.png`).
+5. **Person-confirmed answer.** As Subham, ask Rohan about an ownership gap; as
+   Rohan, answer with an owner; as Subham, share with the project, accept and
+   approve. The recipient sees the confirmed label, name and date, and the gap
+   closes (`docs/screens/round3-recipient-person-confirmed.png`).
+6. **First-week view.** The recipient sees what they own, what is blocked and
+   what to do first (`docs/screens/round3-recipient-first-week.png`).
+7. **Upload re-ingest does not stale a handover.** Uploads are manual, not
+   polled; re-ingesting one leaves an approved handover `current`. Connector
+   changes are the path that marks it outdated (proved by `source-sync`).
+8. **Sync controls are connector-only.** With upload-only seeded sources the
+   Sources page renders no sync buttons while still stating the five-minute
+   re-check (`docs/screens/round3-sources-sync-scope.png`).
+9. **Conflict resolution.** The lead clicks *Keep as current*, confirms; the
+   other statement becomes superseded, the conflict card disappears, and the
+   audit log records `claim.conflict_resolved`.
+10. **Deck actions.** Assign owner → the ownership gap count drops and readiness
+    rises; answer question → the item leaves the deck. Both write an audit event.
+11. **Deep links.** `/login`, `/projects/...` and `/shared/:token` resolve on the
+    hosted SPA via `frontend/vercel.json` rewrites.
+12. **Judge journey without an account.** With local storage cleared, the demo
+    share link opens read-only in a fresh tab: "Prepared for Ananya Rao", the
+    full approved content and the evidence previews appear, and *Acknowledge
+    receipt* records the acknowledgement (audit `channel: public_share_link`).
+
+---
+
+## 4. Accessibility
+
+Method: an in-page DOM audit on four screens (login, overview, review, recipient
+view) plus a WCAG contrast calculation for the text tokens. **axe and Lighthouse
+could not be installed** — this environment has no outbound access to npm or the
+CDN — so no automated accessibility score is claimed.
+
+| Check | Result |
 | --- | --- |
-| `extraction.test.js` (8) | Verbatim quote location, `exact` / `normalized` / `failed` match states, heuristic extraction, CSV normalization |
-| `api-ingestion.test.js` | Auth, project creation, upload → ingestion → claims → evidence preview, role-restricted source isolation, unsupported-file rejection, audit trail |
-| `handover-permissions.test.js` | Recipient-specific withholding, hidden-until-shared, **live permission re-check after a visibility change**, executive template exclusions, review boundaries, non-member rejection |
-| `handover-workflow.test.js` | Edit / submit / approve / share / acknowledge, version history + audit events, pending-item approval guard, transition guards, **no restricted text in recipient payloads** |
-| `conflict-resolution.test.js` (6) | Lead confirms the current decision → other statements superseded, conflict clears, fresh drafts exclude the superseded version, audit event, contributor/observer rejection |
-| `claim-actions.test.js` (8) | Assigning an owner clears the ownership gap, marking tasks done removes them from open work, answering questions and recording mitigations, closure notes carried into the next draft, observer rejection, validation and 404 guards |
-| `llm-fallback.test.js` (3) | Gemini model fallback retries on 404 (retired model), 429 and 503 instead of failing extraction |
+| Interactive elements audited | 134 (login 4, overview 49, review 46, recipient 35) |
+| Controls without an accessible name | 0 |
+| Form fields without a label | 0 |
+| Images without `alt` | 0 |
+| Positive `tabindex` values | 0 |
+| Focusable elements inside `aria-hidden` | 0 |
+| Landmarks and page heading | `main` = 1 and a visible `h1` on every audited screen; login now uses `main`/`aside` and a single `h1` |
+| Text contrast | `ink.muted` `#5b6a7e` = 5.52:1 on white, 5.19:1 on canvas; `ink.faint` `#63718a` = 4.93:1 on white, 4.64:1 on canvas (both ≥ 4.5:1) |
 
-The frontend is validated with `npm run build` (clean Vite production
-build) and by the in-browser journeys below.
-
----
-
-## 2. Main journeys — tested in a real browser
-
-Exercised against both the local dev servers and the deployed production
-stack (Vercel frontend + Render backend + hosted MongoDB), at desktop
-1440×900 and mobile 390×844 viewports:
-
-1. **Onboarding a recipient (core workflow)**
-   Lead creates a handover for the incoming member → reviews items
-   (accept / edit / reject) → submits → approves → shares → recipient opens
-   the link, reads evidence previews, acknowledges. Run end-to-end on the
-   hosted deployment with a 25-item handover; final state `acknowledged`,
-   share link valid with expiry set.
-2. **One-click demo sign-in** — all four seeded profiles sign in without
-   credentials; auto-seed fallback on first 401 works on the hosted build.
-3. **Persona switching** — switching profiles mid-session re-evaluates every
-   view live; the observer loses the audit nav and upload actions, the lead
-   regains them; routes land safely on the project root.
-4. **Permission revocation mid-flight** — restricting a source the recipient
-   could previously read removes the affected items on their next reload,
-   shows a withheld count (never text), and writes an audit event.
-5. **Deep links** — `/login`, `/projects/...` and `/shared/:token` resolve on
-   the hosted SPA (fixed via `frontend/vercel.json` rewrites after a real
-   404 was observed in production).
-6. **Version history** — every workflow transition snapshots a version;
-   the review screen's version drawer lists them with actor and reason.
-7. **Conflict resolution** — the lead opens the overview, clicks *Keep as
-   current* on the correct statement, confirms; the other statement becomes
-   superseded, the conflict card disappears, a success toast appears and the
-   audit log records `claim.conflict_resolved`. Verified in-browser: two
-   seeded conflicts → one after a single confirmation.
-8. **Deck actions** — every row of *Suggested next actions* carries a button.
-   Assign owner → member picker → save: the ownership gap count drops (2 → 1)
-   and the readiness score rises (56 → 64), with a toast. Answer question →
-   note → save: the item leaves the deck and the next-action list recomputes.
-   Verified in-browser at 1440×900.
+Known gap: automated tooling was unavailable, so these numbers come from a
+targeted DOM audit, not axe/Lighthouse. The recipient view after the contrast
+and landmark fixes is captured in
+`docs/screens/round3-recipient-accessible.png`.
 
 ---
 
-## 3. Failure cases — verified behaviour
+## 5. Failure cases — verified behaviour
 
 | Failure | Observed result |
 | --- | --- |
 | Unsupported / oversized upload | Rejected with a specific error code; nothing ingested |
-| `GEMINI_API_KEY` missing | Deterministic heuristic extractor runs; it only labels explicit `Decision:` / `Task:` / `Risk:` style lines and never invents facts |
+| `GEMINI_API_KEY` missing | Deterministic heuristic extractor runs; it only reads explicit `Decision:` / `Task:` / `Risk:` lines, CSV rows and checkboxes |
 | Primary Gemini model unavailable (404 / 429 / 503) | Automatic retry on the fallback model, logged as a warning |
 | GitHub repo not found / unreachable | Typed 404 / 502 errors surfaced in the UI |
-| Google Drive not configured | Explicit 501 explaining the required token — no silent failure |
+| GitHub/Drive repo or folder not allow-listed | 403 with a clear error |
+| Google Drive not configured | Explicit 501 explaining the required token |
+| Connector sync fails | Previous knowledge kept, `sync.lastError` recorded, source stays `ready` |
+| Re-ingest while processing | 409; no duplicate claims |
+| Failed re-ingest | Previous content kept |
 | Share link opened by the wrong person or after expiry | Access denied; links are recipient-bound and expire after `SHARE_TTL_DAYS` |
+| Share link opened with no session outside the demo workspace | 403 asking for the named recipient to sign in |
+| Demo share link opened with no session | 200, read-only; an acknowledgement from it is audited as `public_share_link` |
 | Restricted citation on an otherwise visible claim | Whole claim withheld — partial visibility counts as no visibility |
-| Claim whose quote cannot be matched in the source | Marked unverified; excluded from handovers until a reviewer resolves it |
-| Demo reset with retired accounts | Retired demo emails return 401; stale users are removed from the database |
-| Backend cold start (Render free tier) | First request is slow (~60 s) but succeeds; noted as a known limitation, not a failure |
+| Quote cannot be matched in the source | Marked unverified; excluded from handovers until a reviewer resolves it |
+| Clarification addressed to someone other than the departing member | Refused (400/403) |
+| Backend cold start (Render free tier) | First request is slow (~60 s) but succeeds; the UI warns about it and repeats the notice after inactivity |
 
 ---
 
-## 4. Permission tests — summary of guarantees
+## 6. Permission guarantees
 
-- **Fail-closed:** unknown scopes, soft-deleted sources and missing evidence
-  all resolve to *hidden*, never to *visible*.
-- **All-citations rule:** a claim is included only when every citation
-  resolves to a source the recipient can read.
-- **No leakage in payloads:** recipient API responses were inspected for
-  restricted text, withheld details, reviewer notes and reviewer-only alerts
-  — none present.
-- **Review boundaries:** a reviewer cannot accept an item whose evidence
-  they cannot read; a lead cannot approve a handover containing such items.
-- **Read-time re-check:** visibility is recomputed on every recipient open,
-  so a revocation takes effect immediately, with an audit event.
+- **Fail closed:** unknown scopes, soft-deleted sources and missing evidence
+  resolve to *hidden*, never *visible*.
+- **All citations:** a claim is included only when every citation resolves to a
+  source the recipient can read.
+- **Counts:** viewers only ever see counts of rows they can already read. A
+  recipient whose items disappear is told content changed, without a withheld
+  number.
+- **Review boundaries:** a reviewer cannot accept an item whose evidence they
+  cannot read; a lead cannot approve a handover containing such accepted items.
+- **Read-time re-check:** visibility is recomputed on every recipient open, so a
+  revocation takes effect immediately with an audit event.
+- **Canary matrix:** five unique strings are planted across every restriction
+  type and asserted absent from every surface a viewer may not read.
 
 ---
 
-## 5. Reliability improvements made during the build
+## 7. Not yet covered / known gaps
 
-- Gemini model fallback chain (primary → fallback model → heuristic
-  extractor) so extraction degrades gracefully instead of failing.
-- SPA rewrites on the hosted frontend so share/profile deep links work.
-- Demo seed cleanup that removes retired demo accounts on reset.
-- Interrupted ingestion jobs older than 10 minutes are re-queued on startup.
-- Per-suite ephemeral databases keep the test suite hermetic and repeatable.
-
-## 6. Not yet covered / known gaps
-
-- No automated frontend tests; the UI is validated by build + scripted
-  browser journeys.
-- No load testing; concurrency beyond the demo scale is unmeasured.
-- The in-process queue does not survive a hard crash (jobs in flight at the
-  moment of the crash are lost) — a durable worker is on the roadmap.
+- No live GitHub or Drive sync demonstration here (no outbound API access, no
+  tokens, upload-only seed). The connector path is covered by mocked tests; see
+  [`SYNC_EVIDENCE.md`](SYNC_EVIDENCE.md).
+- No load testing; concurrency beyond demo scale is unmeasured.
+- The in-process queue does not survive a hard crash; startup recovery only
+  re-queues sources stuck for more than 10 minutes.
+- No component or end-to-end browser automation in CI; the frontend gate is the
+  production build, the smoke check and the scripted journeys above.
+- No axe/Lighthouse run; accessibility numbers come from the DOM audit in
+  section 4.
+- Round 3 changes are not on the hosted build until they are committed and
+  pushed.

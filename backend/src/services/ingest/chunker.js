@@ -51,9 +51,14 @@ function blockRanges(text, maxChars) {
  * source text so every extracted claim can be re-validated against the exact
  * span it came from.
  */
-export function chunkText(text, { maxChars = DEFAULT_CHUNK_CHARS, maxChunks = MAX_CHUNKS } = {}) {
+export function chunkTextWithMeta(
+  text,
+  { maxChars = DEFAULT_CHUNK_CHARS, maxChunks = MAX_CHUNKS } = {},
+) {
   const normalized = String(text ?? '');
-  if (!normalized.trim()) return [];
+  if (!normalized.trim()) {
+    return { chunks: [], totalSections: 0, droppedSections: 0, totalChars: 0, keptChars: 0 };
+  }
 
   const segments = blockRanges(normalized, maxChars);
   const ranges = [];
@@ -73,12 +78,23 @@ export function chunkText(text, { maxChars = DEFAULT_CHUNK_CHARS, maxChunks = MA
   }
   if (current) ranges.push(current);
 
-  return ranges.slice(0, maxChunks).map((range, index) => ({
-    index,
-    text: normalized.slice(range.start, range.end),
-    start: range.start,
-    end: range.end,
-  }));
+  const limited = ranges.slice(0, maxChunks);
+  return {
+    chunks: limited.map((range, index) => ({
+      index,
+      text: normalized.slice(range.start, range.end),
+      start: range.start,
+      end: range.end,
+    })),
+    totalSections: ranges.length,
+    droppedSections: Math.max(0, ranges.length - limited.length),
+    totalChars: normalized.length,
+    keptChars: limited.length > 0 ? limited[limited.length - 1].end : 0,
+  };
+}
+
+export function chunkText(text, options) {
+  return chunkTextWithMeta(text, options).chunks;
 }
 
 export function contextBefore(text, start, size = 240) {

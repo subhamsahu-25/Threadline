@@ -5,6 +5,7 @@ import {
   Clock3,
   FileSignature,
   LockKeyhole,
+  LogIn,
   LogOut,
   ShieldAlert,
   ShieldCheck,
@@ -42,14 +43,14 @@ function SharedShell({ children }) {
           </Link>
           <Badge tone="navy">
             <LockKeyhole className="h-3 w-3" aria-hidden="true" />
-            Secure share link
+            Read-only share link
           </Badge>
         </div>
       </header>
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">{children}</main>
       <footer className="mx-auto max-w-5xl px-4 pb-10 text-center text-[10.5px] text-ink-faint sm:px-6">
-        This view is filtered per recipient and rechecked on every open. Threadline never shows
-        material your account is not entitled to read.
+        This view is filtered for the named recipient and rechecked on every open. Nothing is
+        shown that the recipient is not entitled to read.
       </footer>
     </div>
   );
@@ -59,23 +60,28 @@ function LinkProblem({ error }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const expired = error?.code === 'share_expired' || error?.status === 410;
-  const wrongRecipient = error?.status === 403;
+  const wrongRecipient = error?.status === 403 && Boolean(user);
+  const signInRequired = error?.status === 403 && !user;
 
   const title = expired
     ? 'This share link has expired'
     : wrongRecipient
       ? 'This link belongs to a different recipient'
-      : error?.status === 404
-        ? 'This share link is not valid'
-        : 'The shared handover could not be opened';
+      : signInRequired
+        ? 'Sign in to open this link'
+        : error?.status === 404
+          ? 'This share link is not valid'
+          : 'The shared handover could not be opened';
 
   const description = expired
     ? 'Share links expire automatically. Ask the handover owner to share an updated version from the project workspace.'
     : wrongRecipient
       ? `You are signed in as ${user?.email || 'another account'}. Share links open only for the named recipient. Sign out and use the recipient’s account, or ask the sender for a new link.`
-      : error?.status === 404
-        ? 'The link may have been mistyped or replaced by a newer share. Ask the sender to resend it.'
-        : error?.message;
+      : signInRequired
+        ? 'This link belongs to a private project. Sign in as the person it was prepared for, or ask the sender for a new link.'
+        : error?.status === 404
+          ? 'The link may have been mistyped or replaced by a newer share. Ask the sender to resend it.'
+          : error?.message;
 
   return (
     <SharedShell>
@@ -86,6 +92,11 @@ function LinkProblem({ error }) {
         <h1 className="text-[20px] font-semibold">{title}</h1>
         <p className="mx-auto mt-2 max-w-md text-[13px] leading-6 text-ink-muted">{description}</p>
         <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+          {signInRequired && (
+            <Button icon={LogIn} onClick={() => navigate('/login')}>
+              Sign in
+            </Button>
+          )}
           {wrongRecipient && (
             <Button
               icon={LogOut}
@@ -97,9 +108,11 @@ function LinkProblem({ error }) {
               Sign out and switch account
             </Button>
           )}
-          <Button variant="secondary" icon={ArrowLeft} onClick={() => navigate('/')}>
-            Go to my workspace
-          </Button>
+          {user && (
+            <Button variant="secondary" icon={ArrowLeft} onClick={() => navigate('/')}>
+              Go to my workspace
+            </Button>
+          )}
         </div>
         {error?.code && (
           <p className="mt-4 font-mono text-[9.5px] uppercase tracking-wider text-ink-faint">
@@ -130,9 +143,9 @@ export default function SharedHandoverPage() {
     if (!handover) return;
     setAcknowledging(true);
     try {
-      const response = await api.post(`/api/handovers/${handover.id}/acknowledge`);
+      const response = await api.post(`/api/handovers/shared/${token}/acknowledge`);
       setHandover(response.handover);
-      toast.success('Acknowledgement recorded. The sender can see that you reviewed this handover.');
+      toast.success('Acknowledgement recorded. The sender can see that the handover was reviewed.');
     } catch (err) {
       toast.error(err?.message || 'The acknowledgement could not be recorded.');
     } finally {
@@ -155,14 +168,17 @@ export default function SharedHandoverPage() {
     );
   }
 
+  const recipientName =
+    data?.recipientName || handover.recipientSnapshot?.name || 'Recipient';
+
   return (
     <SharedShell>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <Avatar name={user?.name} size="md" />
+          <Avatar name={recipientName} size="md" />
           <div>
             <p className="text-[11px] text-ink-muted">Prepared for</p>
-            <p className="text-[13px] font-semibold leading-4">{user?.name || 'Recipient'}</p>
+            <p className="text-[13px] font-semibold leading-4">{recipientName}</p>
           </div>
           {handover.status === 'acknowledged' && (
             <Badge tone="green">
@@ -180,7 +196,7 @@ export default function SharedHandoverPage() {
             <Clock3 className="h-3 w-3" aria-hidden="true" />
             rechecked {handover.permissionRecheck?.checkedAt ? 'just now' : 'on open'}
           </span>
-          {handover.projectId && (
+          {user && handover.projectId && (
             <Link
               to={`/projects/${handover.projectId}/handovers`}
               className="inline-flex h-8 items-center rounded-md border border-line-strong bg-white px-3 text-[12px] font-semibold text-ink-soft transition hover:border-brand-300 hover:text-brand-800"
@@ -190,6 +206,13 @@ export default function SharedHandoverPage() {
           )}
         </div>
       </div>
+
+      {data?.publicPreview && (
+        <p className="mb-4 rounded-md border border-line bg-white px-3 py-2 text-[11px] leading-5 text-ink-muted">
+          Demo preview: this link opens without an account so it can be evaluated freely. In a
+          real project, only the named recipient can open it after signing in.
+        </p>
+      )}
 
       <RecipientHandover
         handover={handover}

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { AppError, asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
+import { authenticateIfPresent } from '../middleware/auth.js';
 import { getProjectForUser } from '../middleware/project.js';
+import { DEMO_PROJECT_KEY } from '../demo/seed.js';
 import { validate } from '../middleware/validate.js';
 import { Handover, Project, User } from '../models/index.js';
 import { canManageProject, roleOf } from '../services/access/policy.js';
@@ -10,14 +12,19 @@ import {
   approveHandover,
   buildRecipientView,
   buildReviewerView,
+  compareHandover,
   handoverAccess,
+  hashShareToken,
   listVersions,
+  regenerateHandover,
   rejectHandover,
   reopenHandover,
+  revokeShare,
   reviewItem,
   shareHandover,
   submitForReview,
   summarizeHandover,
+  versionDiff,
 } from '../services/handover/workflow.js';
 import {
   createHandoverSchema,
@@ -82,7 +89,21 @@ router.get(
     }
 
     const handovers = await Handover.find(query).sort({ createdAt: -1 }).limit(100);
-    res.json({ handovers: handovers.map(summarizeHandover) });
+
+    const projectIds = [...new Set(handovers.map((handover) => String(handover.project)))];
+    const projects = await Project.find({ _id: { $in: projectIds } }).lean();
+    const projectById = new Map(projects.map((project) => [String(project._id), project]));
+
+    res.json({
+      handovers: handovers.map((handover) => {
+        const project = projectById.get(String(handover.project));
+        const isCreator = String(handover.createdBy) === String(userId);
+        const isLead = project ? canManageProject(project, req.user) : false;
+        return summarizeHandover(handover, {
+          viewer: isCreator || isLead ? 'reviewer' : 'recipient',
+        });
+      }),
+    });
   }),
 );
 
@@ -113,36 +134,88 @@ router.post(
     });
 
     res.status(201).json({
-      handover: buildReviewerView({ handover, project, user: req.user }),
+      handover: await buildReviewerView({ handover, project, user: req.user }),
       viewer: 'author',
     });
   }),
 );
 
-router.get(
-  '/shared/:token',
-  asyncHandler(async (req, res) => {
-    const handover = await Handover.findOne({ shareToken: req.params.token });
-    if (!handover) throw notFound('This share link is not valid');
+/**
+ * Share links are public for the demo workspace so judges can evaluate the
+ * recipient journey without a password. Every other project keeps the original
+ * rule: the link opens only for the named recipient's signed-in account.
+ */
+export const sharedHandoverRouter = Router();
 
-    if (handover.shareExpiresAt && handover.shareExpiresAt.getTime() < Date.now()) {
-      throw new AppError(410, 'share_expired', 'This share link has expired');
-    }
-    if (String(handover.recipient) !== String(req.user._id)) {
+async function loadSharedHandover(token, viewer) {
+  const handover = await Handover.findOne({ shareTokenHash: hashShareToken(token) });
+  if (!handover) throw notFound('This share link is not valid');
+
+  if (handover.shareExpiresAt && handover.shareExpiresAt.getTime() < Date.now()) {
+    throw new AppError(410, 'share_expired', 'This share link has expired');
+  }
+  if (!['shared', 'acknowledged'].includes(handover.status)) {
+    throw forbidden('This handover is not currently shared');
+  }
+
+  const project = await Project.findById(handover.project);
+  if (!project) throw notFound('Project not found');
+  const recipient = await User.findById(handover.recipient);
+  if (!recipient || !roleOf(project, recipient._id)) {
+    throw forbidden('The recipient is no longer a member of this project');
+  }
+
+  if (viewer) {
+    if (String(handover.recipient) !== String(viewer._id)) {
       throw forbidden('This share link belongs to a different recipient');
     }
-    if (!['shared', 'acknowledged'].includes(handover.status)) {
-      throw forbidden('This handover is not currently shared');
-    }
+  } else if (project.key !== DEMO_PROJECT_KEY) {
+    throw forbidden('This share link opens only for the named recipient. Sign in to continue.');
+  }
 
-    const project = await Project.findById(handover.project);
-    if (!project) throw notFound('Project not found');
-    if (!roleOf(project, req.user._id)) {
-      throw forbidden('You are no longer a member of this project');
-    }
+  return { handover, project, recipient };
+}
 
-    const view = await buildRecipientView({ handover, project, user: req.user, req });
-    res.json({ handover: view, viewer: 'recipient' });
+sharedHandoverRouter.get(
+  '/:token',
+  authenticateIfPresent,
+  asyncHandler(async (req, res) => {
+    const { handover, project, recipient } = await loadSharedHandover(
+      req.params.token,
+      req.user,
+    );
+    const view = await buildRecipientView({ handover, project, user: recipient, req });
+    res.json({
+      handover: view,
+      viewer: 'recipient',
+      recipientName: recipient.name,
+      publicPreview: !req.user,
+    });
+  }),
+);
+
+sharedHandoverRouter.post(
+  '/:token/acknowledge',
+  authenticateIfPresent,
+  asyncHandler(async (req, res) => {
+    const { handover, project, recipient } = await loadSharedHandover(
+      req.params.token,
+      req.user,
+    );
+    await acknowledgeHandover({
+      handover,
+      project,
+      actor: recipient,
+      req,
+      channel: req.user ? 'share_link' : 'public_share_link',
+    });
+    const view = await buildRecipientView({ handover, project, user: recipient, req });
+    res.json({
+      handover: view,
+      viewer: 'recipient',
+      recipientName: recipient.name,
+      publicPreview: !req.user,
+    });
   }),
 );
 
@@ -166,7 +239,7 @@ router.get(
     }
 
     return res.json({
-      handover: buildReviewerView({ handover, project, user: req.user }),
+      handover: await buildReviewerView({ handover, project, user: req.user }),
       viewer: access.isCreator ? 'author' : 'reviewer',
     });
   }),
@@ -187,10 +260,11 @@ router.patch(
       decision: req.body.decision,
       editedStatement: req.body.editedStatement,
       note: req.body.note,
+      shareWithProject: req.body.shareWithProject === true,
       req,
     });
 
-    res.json({ handover: buildReviewerView({ handover, project, user: req.user }) });
+    res.json({ handover: await buildReviewerView({ handover, project, user: req.user }) });
   }),
 );
 
@@ -201,7 +275,7 @@ router.post(
     assertAuthorOrLead(handover, project, req.user, 'submit');
 
     await submitForReview({ handover, project, actor: req.user, req });
-    res.json({ handover: buildReviewerView({ handover, project, user: req.user }) });
+    res.json({ handover: await buildReviewerView({ handover, project, user: req.user }) });
   }),
 );
 
@@ -217,7 +291,7 @@ router.post(
       note: req.body.note,
       req,
     });
-    res.json({ handover: buildReviewerView({ handover, project, user: req.user }) });
+    res.json({ handover: await buildReviewerView({ handover, project, user: req.user }) });
   }),
 );
 
@@ -233,7 +307,7 @@ router.post(
       note: req.body.note,
       req,
     });
-    res.json({ handover: buildReviewerView({ handover, project, user: req.user }) });
+    res.json({ handover: await buildReviewerView({ handover, project, user: req.user }) });
   }),
 );
 
@@ -242,7 +316,36 @@ router.post(
   asyncHandler(async (req, res) => {
     const { handover, project } = await loadContext(req.params.id);
     await reopenHandover({ handover, project, actor: req.user, req });
-    res.json({ handover: buildReviewerView({ handover, project, user: req.user }) });
+    res.json({ handover: await buildReviewerView({ handover, project, user: req.user }) });
+  }),
+);
+
+router.get(
+  '/:id/freshness',
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    assertAuthorOrLead(handover, project, req.user, 'compare');
+    const comparison = await compareHandover({ handover, project, actor: req.user });
+    res.json({ comparison });
+  }),
+);
+
+router.post(
+  '/:id/regenerate',
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    assertAuthorOrLead(handover, project, req.user, 'regenerate');
+    const result = await regenerateHandover({
+      handover,
+      project,
+      actor: req.user,
+      req,
+    });
+    res.json({
+      regenerated: true,
+      ...result,
+      handover: await buildReviewerView({ handover, project, user: req.user }),
+    });
   }),
 );
 
@@ -250,13 +353,39 @@ router.post(
   '/:id/share',
   asyncHandler(async (req, res) => {
     const { handover, project } = await loadContext(req.params.id);
-    const token = await shareHandover({ handover, project, actor: req.user, req });
+    const token = await shareHandover({
+      handover,
+      project,
+      actor: req.user,
+      confirmRotation: req.body?.confirmRotation === true,
+      req,
+    });
 
     res.json({
       shared: true,
       sharePath: `/api/handovers/shared/${token}`,
       shareExpiresAt: handover.shareExpiresAt,
       status: handover.status,
+      rotated: Boolean(req.body?.confirmRotation),
+    });
+  }),
+);
+
+router.post(
+  '/:id/share/revoke',
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    const result = await revokeShare({
+      handover,
+      project,
+      actor: req.user,
+      reason: req.body?.reason,
+      req,
+    });
+    res.json({
+      revoked: true,
+      idempotent: result.idempotent,
+      handover: await buildReviewerView({ handover, project, user: req.user }),
     });
   }),
 );
@@ -278,6 +407,18 @@ router.get(
     assertAuthorOrLead(handover, project, req.user, 'view the history of');
     const versions = await listVersions(handover._id);
     res.json({ versions });
+  }),
+);
+
+router.get(
+  '/:id/versions/:version',
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    assertAuthorOrLead(handover, project, req.user, 'view the history of');
+    const version = Number(req.params.version);
+    if (!Number.isInteger(version) || version < 1) throw badRequest('Invalid version number');
+    const diff = await versionDiff(handover._id, version);
+    res.json({ diff });
   }),
 );
 
