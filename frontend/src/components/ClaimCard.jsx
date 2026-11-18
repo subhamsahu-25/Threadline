@@ -66,6 +66,8 @@ export default function ClaimCard({
   const overdue = claim.dueAt && new Date(claim.dueAt).getTime() < Date.now();
   const superseded = claim.status === 'superseded';
   const unverified = (claim.flags || []).includes('unverified_citation');
+  const lowConfidence = (claim.flags || []).includes('low_confidence');
+  const instructionLike = (claim.flags || []).includes('instruction_like');
   const personConfirmed = claim.origin === 'person_confirmed';
   const certainty = evidenceStatus(claim);
 
@@ -77,6 +79,27 @@ export default function ClaimCard({
         <Badge tone={certainty.tone} title={certainty.title}>
           {certainty.label}
         </Badge>
+        {claim.status === 'blocked' && (
+          <Badge tone="orange" title="This item is recorded as blocked.">
+            Blocked
+          </Badge>
+        )}
+        {lowConfidence && (
+          <Badge
+            tone="amber"
+            title="The extractor was not confident about this item. A reviewer should check it."
+          >
+            Low confidence
+          </Badge>
+        )}
+        {instructionLike && (
+          <Badge
+            tone="red"
+            title="The passage looks like it tries to give instructions. It is kept as data and needs review."
+          >
+            Suspicious instruction
+          </Badge>
+        )}
         {claim.sensitivity === 'confidential' && <SensitivityBadge sensitivity="confidential" />}
         {personConfirmed && (
           <Badge tone="violet" title="Answered by a named teammate instead of a document quote.">

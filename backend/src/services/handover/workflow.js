@@ -16,13 +16,22 @@ export async function loadSourceMap(projectId) {
   return new Map(sources.map((source) => [String(source._id), source]));
 }
 
+export function shareIsActive(handover, now = Date.now()) {
+  if (!handover.shareTokenHash || !handover.shareExpiresAt) return false;
+  return new Date(handover.shareExpiresAt).getTime() > now;
+}
+
 export function handoverAccess({ handover, project, user }) {
   const role = roleOf(project, user._id);
   const isRecipient = String(handover.recipient) === String(user._id);
   const isCreator = String(handover.createdBy) === String(user._id);
   const isLead = canManageProject(project, user);
+  // A cancelled or expired link must close the recipient's own route in as
+  // well as the token route, otherwise the link can be bypassed by signing in.
   const recipientMayView =
-    isRecipient && ['shared', 'acknowledged'].includes(handover.status);
+    isRecipient &&
+    ['shared', 'acknowledged'].includes(handover.status) &&
+    shareIsActive(handover);
   return {
     role,
     isRecipient,
@@ -1053,6 +1062,9 @@ export async function revokeShare({ handover, project, actor, reason, req }) {
 }
 
 export async function acknowledgeHandover({ handover, project, actor, req, channel }) {
+  if (!shareIsActive(handover)) {
+    throw forbidden('This share link is no longer active');
+  }
   if (handover.status === 'acknowledged') {
     return { idempotent: true, acknowledgement: handover.acknowledgement };
   }

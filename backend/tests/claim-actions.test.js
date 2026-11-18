@@ -12,6 +12,7 @@ describe('claim actions from the overview deck', () => {
   let leadToken;
   let outgoingToken;
   let observerToken;
+  let incomingToken;
 
   beforeAll(async () => {
     await startDb();
@@ -27,6 +28,7 @@ describe('claim actions from the overview deck', () => {
     leadToken = tokenOf(seeded, LEAD);
     outgoingToken = tokenOf(seeded, OUTGOING);
     observerToken = tokenOf(seeded, OBSERVER);
+    incomingToken = tokenOf(seeded, INCOMING);
   });
 
   function getState(token = leadToken) {
@@ -141,12 +143,35 @@ describe('claim actions from the overview deck', () => {
     expect(after.body.openRisks.length).toBe(before.body.openRisks.length - 1);
   });
 
-  it('lets contributors act but rejects observers', async () => {
+  it('lets the outgoing member answer but rejects observers and the incoming member', async () => {
     const before = await getState().expect(200);
     const question = before.body.openQuestions[0];
 
-    await act(question.id, { status: 'resolved' }, observerToken).expect(403);
-    await act(question.id, { status: 'resolved' }, outgoingToken).expect(200);
+    await act(question.id, { status: 'resolved', note: 'Answered by the lead' }, observerToken).expect(403);
+    await act(question.id, { status: 'resolved' }, incomingToken).expect(403);
+    await act(
+      question.id,
+      { status: 'resolved', note: 'Payments owns it after I leave' },
+      outgoingToken,
+    ).expect(200);
+  });
+
+  it('requires an answer note when resolving a question', async () => {
+    const before = await getState().expect(200);
+    const question = before.body.openQuestions[0];
+
+    await act(question.id, { status: 'resolved' }).expect(400);
+    await act(question.id, { status: 'resolved', note: '   ' }).expect(400);
+  });
+
+  it('still lets the incoming member close a task', async () => {
+    const before = await getState().expect(200);
+    const task = before.body.timeline.find(
+      (claim) => claim.type === 'task' && claim.status === 'open',
+    );
+    expect(task).toBeTruthy();
+
+    await act(task.id, { status: 'done', note: 'Handed over' }, incomingToken).expect(200);
   });
 
   it('rejects an action with no owner or status', async () => {

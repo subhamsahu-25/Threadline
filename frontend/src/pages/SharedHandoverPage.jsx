@@ -43,7 +43,7 @@ function SharedShell({ children }) {
           </Link>
           <Badge tone="navy">
             <LockKeyhole className="h-3 w-3" aria-hidden="true" />
-            Read-only share link
+            Recipient share link
           </Badge>
         </div>
       </header>
@@ -209,8 +209,9 @@ export default function SharedHandoverPage() {
 
       {data?.publicPreview && (
         <p className="mb-4 rounded-md border border-line bg-white px-3 py-2 text-[11px] leading-5 text-ink-muted">
-          Demo preview: this link opens without an account so it can be evaluated freely. In a
-          real project, only the named recipient can open it after signing in.
+          Demo preview: this link opens without an account so it can be evaluated freely, and the
+          acknowledgement is recorded against the demo recipient. In a real project, only the named
+          recipient can open it after signing in.
         </p>
       )}
 

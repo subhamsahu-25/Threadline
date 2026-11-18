@@ -472,6 +472,25 @@ export default function SourcesPage() {
     }
   };
 
+  const toggleHidden = async (source) => {
+    setBusyId(source.id);
+    try {
+      await api.patch(`/api/projects/${projectId}/sources/${source.id}`, {
+        hidden: !source.hidden,
+      });
+      toast.success(
+        source.hidden
+          ? 'Source restored. Its claims return to the project record.'
+          : 'Source hidden. Its content and claims are removed from every reader’s view.',
+      );
+      await reload({ quiet: true });
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const reingest = async (source) => {
     setBusyId(source.id);
     try {
@@ -657,6 +676,7 @@ export default function SourcesPage() {
                       <h2 className="text-[13.5px] font-semibold leading-5">{source.name}</h2>
                       <SourceStatusBadge status={source.status} />
                       <SensitivityBadge sensitivity={source.sensitivity} />
+                      {source.hidden && <Badge tone="slate">Hidden</Badge>}
                     </div>
                     <p className="mt-0.5 font-mono text-[10px] text-ink-muted">
                       {SOURCE_KINDS[source.kind] || source.kind}
@@ -742,6 +762,14 @@ export default function SourcesPage() {
                     <>
                       <Button variant="secondary" size="sm" onClick={() => openAccess(source)}>
                         Access
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={busyId === source.id}
+                        onClick={() => toggleHidden(source)}
+                      >
+                        {source.hidden ? 'Unhide' : 'Hide'}
                       </Button>
                       <Button
                         variant="ghost"

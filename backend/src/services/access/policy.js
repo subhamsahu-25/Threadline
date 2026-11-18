@@ -30,10 +30,10 @@ export function canContribute(project, user) {
 /**
  * Fail-closed content visibility. A source is visible only when the user is a
  * project member AND the source's explicit sharing rule names them or their
- * role. Unknown scopes and soft-deleted sources are hidden.
+ * role. Unknown scopes, soft-deleted sources and hidden sources are excluded.
  */
 export function sourceVisibleTo(source, project, userId) {
-  if (!source || source.deletedAt) return false;
+  if (!source || source.deletedAt || source.hiddenAt) return false;
   if (!isMember(project, userId)) return false;
 
   // Person-confirmed answers are owned by the project leads: whoever holds the

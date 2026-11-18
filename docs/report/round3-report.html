@@ -384,7 +384,7 @@
   <p class="res-text">
     All three improvements named in the Round 2 report are implemented in this submission tree: an
     access-rule canary matrix, connected-source freshness with outdated-handover diffs, and
-    person-confirmed clarifications. The local suite is <strong>103 tests across 16 suites, zero failures</strong>;
+    person-confirmed clarifications. The local suite is <strong>124 tests across 17 suites, zero failures</strong>;
     <strong>29/29</strong> rules-extracted and <strong>35/35</strong> Gemini-extracted quotes matched their source verbatim.
     The hosted demo and public repository still reflect the last push (15 November 2026); the Round 3 tree is not yet pushed.
   </p>
@@ -478,7 +478,7 @@
       <tr><td><strong>Source accuracy</strong></td><td>At least 90% of claims verified against a source quote.</td><td>100% exact: 29/29 with the rules extractor, 35/35 with Gemini; 0 normalized, 0 failed.</td></tr>
       <tr><td><strong>Update speed</strong></td><td>A change updates the overview within one refresh cycle; five-minute target.</td><td>Interval, checksum and outdated-handover behaviour proven by tests. No live connector run is claimed.</td></tr>
       <tr><td><strong>Knowledge capture</strong></td><td>At least one missing detail answered and approved.</td><td>One ownership gap closed by a person-confirmed answer; recipient sees the label, person and date.</td></tr>
-      <tr><td><strong>Reliability</strong></td><td>Zero test failures, existing and new.</td><td>103/103 pass across 16 suites on 17 Nov 2026; frontend build and 6-check smoke pass.</td></tr>
+      <tr><td><strong>Reliability</strong></td><td>Zero test failures, existing and new.</td><td>124/124 pass across 17 suites on 18 Nov 2026; frontend build and 6-check smoke pass.</td></tr>
     </tbody>
   </table>
 
@@ -564,7 +564,7 @@
       <tr><td>Demo</td><td>One-click profiles, in-app persona switcher, shared-workspace notice and scoped rebuild</td><td><span class="badge ok">Working</span></td><td class="mono">demo-seed.test.js</td></tr>
       <tr><td>Interface</td><td>Cold-start notice on load and again after inactivity</td><td><span class="badge ok">Working</span></td><td class="mono">AppShell.jsx</td></tr>
       <tr><td>Interface</td><td>Responsive at 1440&times;900 and 390&times;844; landmarks, one h1, skip link, labelled controls</td><td><span class="badge ok">Working</span></td><td class="mono">TESTING_NOTES &sect;3&ndash;4</td></tr>
-      <tr><td>Quality</td><td>16 test suites / 103 tests, CI workflow and quote-accuracy evaluation</td><td><span class="badge ok">Working</span></td><td class="mono">ci.yml</td></tr>
+      <tr><td>Quality</td><td>17 test suites / 124 tests, CI workflow and quote-accuracy evaluation</td><td><span class="badge ok">Working</span></td><td class="mono">ci.yml</td></tr>
     </tbody>
   </table>
 
@@ -635,7 +635,7 @@
       <tr><td>Sign-in</td><td>JWT with 12-hour expiry, bcryptjs, project role guard</td><td>Identity, role checks and logout revocation</td></tr>
       <tr><td>Extraction &amp; parsing</td><td>Gemini 3.8 Flash with 3.5 Flash-Lite fallback; rules fallback; unpdf, mammoth, custom TXT / MD / CSV / JSON</td><td>Structured claims with quotes validated against the source; text with absolute offsets and truncation flags</td></tr>
       <tr><td>Connectors &amp; queue</td><td>GitHub REST; Drive REST with a pasted token; in-process workers, <span class="mono">INGEST_CONCURRENCY=2</span>, one retry; one-minute scheduler</td><td>Read-only import with allow-lists; ingestion jobs, startup recovery and five-minute default refresh</td></tr>
-      <tr><td>Hosting / CI</td><td>Vercel, Render free tier, GitHub Actions</td><td>SPA rewrites, API hosting, 16 suites plus frontend build and smoke on each push</td></tr>
+      <tr><td>Hosting / CI</td><td>Vercel, Render free tier, GitHub Actions</td><td>SPA rewrites, API hosting, 17 suites plus frontend build and smoke on each push</td></tr>
     </tbody>
   </table>
 
@@ -898,10 +898,10 @@
 <section class="page">
   <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
   <div class="eyebrow">06 / TESTING &middot; 1 OF 2</div>
-  <h1>103 tests, sixteen suites, zero failures</h1>
+  <h1>124 tests, seventeen suites, zero failures</h1>
   <p class="lead">
     Each suite boots its own in-memory MongoDB, so no external service is needed and no test depends on the shared
-    demo workspace. Full run on 17 November 2026: <strong>16 suites, 103 tests, 0 failures, 87.57 seconds</strong>.
+    demo workspace. Full run on 18 November 2026: <strong>17 suites, 124 tests, 0 failures, 101.79 seconds</strong>.
   </p>
 
   <table class="tight">
@@ -909,20 +909,21 @@
     <thead><tr><th>Suite</th><th class="num">Tests</th><th>What it proves</th></tr></thead>
     <tbody>
       <tr><td class="mono">permission-matrix</td><td class="num">3</td><td>Seven viewer contexts across every content, handover, share and audit surface; five canaries before and after revocation and conflict resolution.</td></tr>
-      <tr><td class="mono">round3-hardening</td><td class="num">11</td><td>Recipient status refresh, purge, freshness, hashed tokens, revocation, maker-checker, acceptance notes, acknowledgement, logout, scoped views, diffs.</td></tr>
+      <tr><td class="mono">round3-hardening</td><td class="num">12</td><td>Recipient status refresh, purge, freshness, hashed tokens, revocation, maker-checker, acceptance notes, acknowledgement, logout, scoped views, diffs.</td></tr>
       <tr><td class="mono">source-sync</td><td class="num">7</td><td>Interval scheduling, forced checks, checksum skip, outdated diffs, mocked Drive path, failure retention, settings validation.</td></tr>
       <tr><td class="mono">clarifications</td><td class="num">7</td><td>Askable gaps, ask-all de-duplication, addressee-only answers, refusal for unreadable items, person-confirmed label, redaction.</td></tr>
-      <tr><td class="mono">claim-actions</td><td class="num">8</td><td>Owner assignment, done tasks, question answers, mitigations, closure notes, observer rejection, validation and 404 guards.</td></tr>
+      <tr><td class="mono">claim-actions</td><td class="num">10</td><td>Owner assignment, done tasks, question answers, mitigations, closure notes, observer rejection, validation and 404 guards.</td></tr>
       <tr><td class="mono">conflict-resolution</td><td class="num">6</td><td>Lead confirms the current decision, the rest are superseded, the conflict clears, drafts exclude superseded, audit, role rejection.</td></tr>
       <tr><td class="mono">handover-permissions</td><td class="num">10</td><td>Recipient withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review limits.</td></tr>
-      <tr><td class="mono">handover-workflow</td><td class="num">5</td><td>Edit, submit, approve, share and acknowledge; version history and audit; pending-item and transition guards; share rotation.</td></tr>
-      <tr><td class="mono">ingest-hardening</td><td class="num">10</td><td>Confidence and injection flags, truncation, re-ingest preservation, extraction counts, 409, allow-lists, failed-ingest retention.</td></tr>
+      <tr><td class="mono">handover-workflow</td><td class="num">7</td><td>Edit, submit, approve, share and acknowledge; version history and audit; pending-item and transition guards; share rotation; public demo link read and acknowledged without signing in, refused elsewhere.</td></tr>
+      <tr><td class="mono">ingest-hardening</td><td class="num">11</td><td>Confidence and injection flags, truncation, re-ingest preservation, extraction counts, 409, allow-lists, failed-ingest retention.</td></tr>
       <tr><td class="mono">reconstruction</td><td class="num">11</td><td>Blocked status, undated items, null readiness, phase, blockers, fuzzy conflicts, identical restatements, critical actions.</td></tr>
-      <tr><td class="mono">extraction</td><td class="num">8</td><td>Verbatim quote location (exact, normalized, failed), heuristic extraction, CSV normalization.</td></tr>
+      <tr><td class="mono">extraction</td><td class="num">9</td><td>Verbatim quote location (exact, normalized, failed), heuristic extraction, CSV normalization.</td></tr>
       <tr><td class="mono">redaction</td><td class="num">4</td><td>Emails, phones, credentials and 12-digit IDs; no double redaction; ordinary text untouched; compose-time redaction.</td></tr>
       <tr><td class="mono">api-ingestion</td><td class="num">3</td><td>Auth, upload &rarr; ingestion &rarr; claims &rarr; evidence preview, role isolation, unsupported files, audit trail.</td></tr>
       <tr><td class="mono">demo-seed</td><td class="num">7</td><td>Public seed only when the workspace is missing; scoped reset requires the lead; stale membership repaired without losing content; startup reconciliation.</td></tr>
-      <tr><td class="mono">membership</td><td class="num">2</td><td>Role changes and access boundaries.</td></tr>
+      <tr><td class="mono">membership</td><td class="num">4</td><td>Adding an existing account, refusing unknown or duplicate additions, role changes, removal that ends access, owner protection.</td></tr>
+      <tr><td class="mono">notifications</td><td class="num">10</td><td>Notices routed by role and event, one per recipient and event, removed when access ends, read state per user, payload limited to a title, detail, project key and link.</td></tr>
       <tr><td class="mono">llm-fallback</td><td class="num">3</td><td>Gemini retry on a retired model (404), 429 and 503.</td></tr>
     </tbody>
   </table>
@@ -1127,7 +1128,7 @@ curl -X POST "http://localhost:4000/api/demo/seed"</div>
     </div>
     <div class="side">
       <h2>Verification</h2>
-      <div class="code" style="font-size:7.8pt;"><span class="c"># 16 suites, 103 tests</span>
+      <div class="code" style="font-size:7.8pt;"><span class="c"># 17 suites, 124 tests</span>
 cd backend &amp;&amp; npm test
 
 <span class="c"># 29/29 rules + 35/35 Gemini</span>
@@ -1175,7 +1176,7 @@ npm run build &amp;&amp; npm run smoke</div>
     <tbody>
       <tr><td><strong>Completeness</strong><br><span class="small">25 points</span></td><td>38 features across ingestion, extraction, reconstruction, handover, identity and audit; the full loop runs in the browser. Partial: Drive OAuth, notifications, pattern redaction.</td><td class="num"><strong>21</strong></td></tr>
       <tr><td><strong>Three improvements</strong><br><span class="small">20 points</span></td><td>Canary matrix, quote report and CI workflow; sync with outdated diffs; clarifications end to end. Missing: a live connector run and a red CI run.</td><td class="num"><strong>18</strong></td></tr>
-      <tr><td><strong>Reliability</strong><br><span class="small">20 points</span></td><td>103 tests across 16 suites; failure retention; 409 guards; fail-closed policy; quote validation. Residual: in-process queue, no load test.</td><td class="num"><strong>17</strong></td></tr>
+      <tr><td><strong>Reliability</strong><br><span class="small">20 points</span></td><td>124 tests across 17 suites; failure retention; 409 guards; fail-closed policy; quote validation. Residual: in-process queue, no load test.</td><td class="num"><strong>17</strong></td></tr>
       <tr><td><strong>Usability</strong><br><span class="small">20 points</span></td><td>Four personas, one-click entry, first-week view, cold-start notice, accessibility audit. Missing: an unassisted usability session.</td><td class="num"><strong>15</strong></td></tr>
       <tr><td><strong>Documentation / roadmap</strong><br><span class="small">15 points</span></td><td>README, architecture, testing notes, quote report, sync and clarification evidence, improvements map, AI disclosure and a five-phase roadmap.</td><td class="num"><strong>14</strong></td></tr>
       <tr><td colspan="2"><strong>Total self-assessment</strong> &mdash; 100 points; the judges' number is their own.</td><td class="num"><strong>85</strong></td></tr>
@@ -1185,7 +1186,7 @@ npm run build &amp;&amp; npm run smoke</div>
   <h2>What I built, in my own words</h2>
   <div class="cert">
     <div class="line"><b>Role:</b> Backend, frontend and permissions &mdash; solo developer, with Qoder (Claude) as the AI pair-programming tool.</div>
-    <div class="line"><b>Built:</b> the fail-closed access policy and five-canary permission matrix; ingestion and extraction with verbatim quote validation; connected-source sync with outdated handovers; person-confirmed clarifications; the React review, recipient and shared-link flows; and 103 tests across 16 suites.</div>
+    <div class="line"><b>Built:</b> the fail-closed access policy and five-canary permission matrix; ingestion and extraction with verbatim quote validation; connected-source sync with outdated handovers; person-confirmed clarifications; the React review, recipient and shared-link flows; and 124 tests across 17 suites.</div>
   </div>
 
   <p>

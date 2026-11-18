@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { BrandMark } from '../components/AppShell.jsx';
 import { ColdStartNotice } from '../components/ColdStartNotice.jsx';
-import { Avatar, Badge } from '../components/ui.jsx';
+import { Avatar, Badge, Button, Field, Input } from '../components/ui.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { api, errorMessage } from '../lib/api.js';
@@ -145,6 +145,9 @@ export default function LoginPage() {
   const [pending, setPending] = useState(null);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [credentialPending, setCredentialPending] = useState(false);
   const [health, setHealth] = useState(null);
   const [coldStartOpen, setColdStartOpen] = useState(shouldShowColdStart);
 
@@ -226,7 +229,23 @@ export default function LoginPage() {
     }
   };
 
-  const busy = Boolean(pending) || resetting;
+  const submitCredentials = async (event) => {
+    event.preventDefault();
+    if (credentialPending) return;
+    setCredentialPending(true);
+    setError('');
+    try {
+      const signedIn = await login(email.trim(), password);
+      toast.success(`Signed in as ${signedIn.name}`);
+      navigate(destination, { replace: true });
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setCredentialPending(false);
+    }
+  };
+
+  const busy = Boolean(pending) || resetting || credentialPending;
 
   return (
     <div className="flex min-h-screen bg-canvas">
@@ -341,6 +360,38 @@ export default function LoginPage() {
                 })}
               </div>
             </section>
+
+            <details className="mt-3 rounded-lg border border-line bg-white/70 px-3 py-2.5">
+              <summary className="cursor-pointer text-[11.5px] font-semibold text-ink-muted hover:text-ink">
+                Sign in with email and password instead
+              </summary>
+              <form onSubmit={submitCredentials} className="mt-3 space-y-2.5">
+                <Field label="Email" htmlFor="credential-email">
+                  <Input
+                    id="credential-email"
+                    type="email"
+                    required
+                    autoComplete="username"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="you@company.com"
+                  />
+                </Field>
+                <Field label="Password" htmlFor="credential-password">
+                  <Input
+                    id="credential-password"
+                    type="password"
+                    required
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                  />
+                </Field>
+                <Button type="submit" size="sm" loading={credentialPending} disabled={busy}>
+                  Sign in
+                </Button>
+              </form>
+            </details>
 
             {error && (
               <p

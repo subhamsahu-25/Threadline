@@ -199,11 +199,40 @@ describe('round 3 hardenings', () => {
       .set(auth(incomingToken))
       .expect(404);
 
+    // The signed-in route must close too; otherwise revoking the link only
+    // hides the token while the recipient keeps reading the same handover.
+    await request(app)
+      .get(`/api/handovers/${handover.id}`)
+      .set(auth(incomingToken))
+      .expect(403);
+    await request(app)
+      .post(`/api/handovers/${handover.id}/acknowledge`)
+      .set(auth(incomingToken))
+      .expect(403);
+
     const repeated = await request(app)
       .post(`/api/handovers/${handover.id}/share/revoke`)
       .set(auth(leadToken));
     expect(repeated.status).toBe(200);
     expect(repeated.body.idempotent).toBe(true);
+  });
+
+  it('closes the recipient route when the share link expires', async () => {
+    const { handover, token } = await createShared();
+
+    await Handover.updateOne(
+      { _id: handover.id },
+      { $set: { shareExpiresAt: new Date(Date.now() - 60_000) } },
+    );
+
+    await request(app)
+      .get(`/api/handovers/${handover.id}`)
+      .set(auth(incomingToken))
+      .expect(403);
+    await request(app)
+      .get(`/api/handovers/shared/${token}`)
+      .set(auth(incomingToken))
+      .expect(410);
   });
 
   it('requires a second person to approve when maker-checker is enabled', async () => {

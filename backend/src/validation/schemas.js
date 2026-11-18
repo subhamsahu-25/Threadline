@@ -102,6 +102,7 @@ export const updateSourceSchema = z.object({
   name: z.string().trim().min(1).max(120).optional(),
   visibility: visibilitySchema.optional(),
   sensitivity: sensitivityField.optional(),
+  hidden: z.boolean().optional(),
 });
 
 export const syncSourceSchema = z

@@ -108,4 +108,93 @@ describe('project membership management', () => {
     );
     expect(eventsAfter).toHaveLength(eventsBefore.length);
   });
+
+  it('adds an existing account and refuses an unknown or duplicate invitation', async () => {
+    const duplicate = await request(app)
+      .post(`/api/projects/${projectId}/members`)
+      .set(auth(leadToken))
+      .send({ email: OBSERVER, role: 'contributor' });
+    expect(duplicate.status).toBe(409);
+
+    const unknown = await request(app)
+      .post(`/api/projects/${projectId}/members`)
+      .set(auth(leadToken))
+      .send({ email: 'nobody@example.com', role: 'observer' });
+    expect(unknown.status).toBe(404);
+
+    const registered = await request(app)
+      .post('/api/auth/register')
+      .send({ name: 'New Joiner', email: 'joiner@example.com', password: 'Threadline#2026' })
+      .expect(201);
+
+    const added = await request(app)
+      .post(`/api/projects/${projectId}/members`)
+      .set(auth(leadToken))
+      .send({ email: 'joiner@example.com', role: 'observer' })
+      .expect(201);
+    expect(
+      added.body.project.members.some(
+        (entry) => entry.userId === registered.body.user.id && entry.role === 'observer',
+      ),
+    ).toBe(true);
+
+    await request(app)
+      .get(`/api/projects/${projectId}/state`)
+      .set(auth(registered.body.token))
+      .expect(200);
+
+    const contributorAttempt = await request(app)
+      .post(`/api/projects/${projectId}/members`)
+      .set(auth(outgoingToken))
+      .send({ email: 'joiner@example.com', role: 'observer' });
+    expect(contributorAttempt.status).toBe(403);
+
+    const event = (await auditEvents()).find(
+      (entry) => entry.action === 'member.added' && entry.targetId === registered.body.user.id,
+    );
+    expect(event).toBeTruthy();
+    expect(event.meta.role).toBe('observer');
+  });
+
+  it('removes a member and ends their access, but never the owner', async () => {
+    const observerId = idOf(seeded, OBSERVER);
+    const observerToken = tokenOf(seeded, OBSERVER);
+    await request(app)
+      .get(`/api/projects/${projectId}/state`)
+      .set(auth(observerToken))
+      .expect(200);
+
+    const contributorAttempt = await request(app)
+      .delete(`/api/projects/${projectId}/members/${observerId}`)
+      .set(auth(outgoingToken));
+    expect(contributorAttempt.status).toBe(403);
+
+    const ownerAttempt = await request(app)
+      .delete(`/api/projects/${projectId}/members/${idOf(seeded, LEAD)}`)
+      .set(auth(leadToken));
+    expect(ownerAttempt.status).toBe(400);
+
+    const removed = await request(app)
+      .delete(`/api/projects/${projectId}/members/${observerId}`)
+      .set(auth(leadToken))
+      .expect(200);
+    expect(removed.body.removed).toBe(true);
+    const projectAfter = await request(app)
+      .get(`/api/projects/${projectId}`)
+      .set(auth(leadToken))
+      .expect(200);
+    expect(
+      projectAfter.body.project.members.some((entry) => entry.userId === observerId),
+    ).toBe(false);
+
+    await request(app)
+      .get(`/api/projects/${projectId}/state`)
+      .set(auth(observerToken))
+      .expect(403);
+
+    const event = (await auditEvents()).find(
+      (entry) => entry.action === 'member.removed' && entry.targetId === observerId,
+    );
+    expect(event).toBeTruthy();
+  });
 });

@@ -217,7 +217,7 @@ fails the build if any restricted string appears on any surface for any role.
 │   │       ├── ai/          Gemini + heuristic extraction, quote validation
 │   │       ├── reconstruction/  supersession, state, next actions
 │   │       └── handover/    compose, workflow, permission re-check
-│   ├── tests/               Vitest + Supertest suites (17 files, 117 tests)
+│   ├── tests/               Vitest + Supertest suites (17 files, 124 tests)
 │   └── README.md            Full API reference and backend documentation
 ├── docs/                    Architecture, testing, quote accuracy, sync and
 │                            clarification evidence, roadmap, improvement map
@@ -253,11 +253,11 @@ production builds. `VITE_API_PROXY` overrides the local dev proxy target.
 
 ```bash
 cd backend
-npm test               # 117 Vitest + Supertest tests, 17 suites
+npm test               # 124 Vitest + Supertest tests, 17 suites
 npm run eval:quotes    # quote-accuracy report (rules extractor; Gemini when configured)
 ```
 
-**17 suites, 117 tests**, each against its own ephemeral MongoDB — no external
+**17 suites, 124 tests**, each against its own ephemeral MongoDB — no external
 services needed. The permission canary matrix and the Round 3 suite run in CI on
 every push and pull request.
 

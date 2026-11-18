@@ -746,7 +746,8 @@ export default function HandoverReviewPage() {
   }
 
   const isAuthor = String(handover.createdBy) === String(user.id);
-  const canReviewItems = ['draft', 'in_review'].includes(handover.status);
+  const canReviewItems =
+    ['draft', 'in_review'].includes(handover.status) && (isAuthor || isLead);
   const canSubmit = handover.status === 'draft' && (isAuthor || isLead);
   const canApprove = handover.status === 'in_review' && isLead;
   const canReject = ['draft', 'in_review'].includes(handover.status) && isLead;
@@ -780,9 +781,11 @@ export default function HandoverReviewPage() {
         }
         actions={
           <>
-            <Button variant="secondary" size="sm" icon={History} onClick={openVersions}>
-              History
-            </Button>
+            {(isAuthor || isLead) && (
+              <Button variant="secondary" size="sm" icon={History} onClick={openVersions}>
+                History
+              </Button>
+            )}
             <Button
               variant="secondary"
               size="sm"
@@ -963,15 +966,17 @@ export default function HandoverReviewPage() {
                 state and sends it back through review.
               </p>
               <div className="mt-2 flex flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={RefreshCw}
-                  loading={working === 'regenerate'}
-                  onClick={regenerate}
-                >
-                  Regenerate from current state
-                </Button>
+                {(isAuthor || isLead) && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={RefreshCw}
+                    loading={working === 'regenerate'}
+                    onClick={regenerate}
+                  >
+                    Regenerate from current state
+                  </Button>
+                )}
                 <Button
                   size="sm"
                   variant="ghost"

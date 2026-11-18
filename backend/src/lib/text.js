@@ -79,26 +79,7 @@ export function locateQuote(haystack, quote) {
   if (!normalizedQuote) return { ok: false };
 
   const index = normalizedHaystack.text.indexOf(normalizedQuote);
-  if (index < 0) {
-    // Fall back to a long unique prefix, useful when the model paraphrases the
-    // tail of a sentence but copies the beginning faithfully.
-    const words = normalizedQuote.split(' ').filter(Boolean);
-    for (let take = words.length - 1; take >= 4; take -= 1) {
-      const prefix = words.slice(0, take).join(' ');
-      const at = normalizedHaystack.text.indexOf(prefix);
-      if (at >= 0) {
-        const start = normalizedHaystack.map[at];
-        const lastIndex = at + prefix.length - 1;
-        return {
-          ok: true,
-          start,
-          end: normalizedHaystack.map[lastIndex] + 1,
-          match: 'normalized',
-        };
-      }
-    }
-    return { ok: false };
-  }
+  if (index < 0) return { ok: false };
 
   const start = normalizedHaystack.map[index];
   const end = normalizedHaystack.map[index + normalizedQuote.length - 1] + 1;

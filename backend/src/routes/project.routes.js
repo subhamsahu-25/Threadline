@@ -30,6 +30,7 @@ import {
 import { parseDriveRef } from '../services/ingest/googleDrive.js';
 import { parseRepoRef } from '../services/ingest/github.js';
 import { isSyncable } from '../services/ingest/sync.js';
+import { handoverAccess } from '../services/handover/workflow.js';
 import {
   addMemberSchema,
   askClarificationsSchema,
@@ -152,11 +153,15 @@ router.get(
     const visibleSources = sources.filter((source) =>
       sourceVisibleTo(source, req.project, req.user._id),
     );
-    const handovers = await Handover.countDocuments({ project: req.project._id });
-    const sharedHandovers = await Handover.countDocuments({
-      project: req.project._id,
-      status: { $in: ['shared', 'acknowledged'] },
-    });
+    const handoverRows = await Handover.find({ project: req.project._id })
+      .select('createdBy recipient status shareTokenHash shareExpiresAt')
+      .lean();
+    const visibleHandovers = handoverRows.filter(
+      (handover) => handoverAccess({ handover, project: req.project, user: req.user }).canView,
+    );
+    const sharedHandovers = visibleHandovers.filter((handover) =>
+      ['shared', 'acknowledged'].includes(handover.status),
+    ).length;
 
     // Counts are description of what the viewer may read. Leads manage every
     // source but do not implicitly read content restricted to other people, so
@@ -166,7 +171,7 @@ router.get(
       stats: {
         sources: visibleSources.length,
         totalSources: visibleSources.length,
-        handovers,
+        handovers: visibleHandovers.length,
         sharedHandovers,
       },
     });
@@ -489,8 +494,12 @@ router.get(
     const sources = await Source.find({ project: req.project._id, deletedAt: null }).sort({
       createdAt: -1,
     });
+    // Hidden sources are removed from every reader's record. A lead still sees
+    // the row so the hide can be reversed; its content stays unreadable.
     const visible = sources.filter((source) =>
-      sourceVisibleTo(source, req.project, req.user._id),
+      source.hiddenAt
+        ? req.projectRole === 'lead'
+        : sourceVisibleTo(source, req.project, req.user._id),
     );
     res.json({ sources: visible.map(serializeSource) });
   }),
@@ -519,6 +528,23 @@ router.post(
     }
 
     const { ownerName, note, status } = req.body;
+
+    // Answering an open question is reserved for the people who hold the
+    // knowledge: the lead and the person whose departure created the gap.
+    // Contributors can still close tasks and assign owners.
+    if (claim.type === 'question' && status) {
+      const outgoingId = req.project.transition?.outgoingUserId;
+      const isKnowledgeHolder =
+        req.projectRole === 'lead' ||
+        (outgoingId && String(outgoingId) === String(req.user._id));
+      if (!isKnowledgeHolder) {
+        throw forbidden('Only the project lead or the departing member can answer an open question');
+      }
+      if (!note || !note.trim()) {
+        throw badRequest('An answer note is required to resolve an open question');
+      }
+    }
+
     const before = { ownerName: claim.ownerName, status: claim.status };
 
     if (ownerName) {
@@ -718,18 +744,27 @@ router.patch(
     const before = {
       visibility: source.visibility?.toObject ? source.visibility.toObject() : source.visibility,
       sensitivity: source.sensitivity,
+      hidden: Boolean(source.hiddenAt),
     };
 
     for (const field of ['name', 'sensitivity']) {
       if (req.body[field] !== undefined) source[field] = req.body[field];
     }
     if (req.body.visibility !== undefined) source.visibility = req.body.visibility;
+    if (req.body.hidden !== undefined) {
+      source.hiddenAt = req.body.hidden ? new Date() : undefined;
+    }
 
     await source.save();
     await recordAudit({
       projectId: req.project._id,
       actor: req.user,
-      action: 'source.access_changed',
+      action:
+        req.body.hidden === undefined
+          ? 'source.access_changed'
+          : source.hiddenAt
+            ? 'source.hidden'
+            : 'source.unhidden',
       targetType: 'source',
       targetId: source._id,
       targetLabel: source.name,
@@ -738,6 +773,7 @@ router.patch(
         after: {
           visibility: source.visibility,
           sensitivity: source.sensitivity,
+          hidden: Boolean(source.hiddenAt),
         },
       },
       req,

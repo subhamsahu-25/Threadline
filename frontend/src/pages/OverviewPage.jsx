@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ArrowRight,
   ArrowUpRight,
+  Ban,
   CheckCircle2,
   CircleHelp,
   FileWarning,
@@ -167,6 +168,10 @@ export default function OverviewPage() {
     } else if (config.mode === 'done') {
       payload.status = 'done';
     } else {
+      if (action.kind === 'resolve_question' && !actionForm.note.trim()) {
+        toast.error('Record the answer before resolving the question');
+        return;
+      }
       payload.status = 'resolved';
     }
     if (actionForm.note.trim()) payload.note = actionForm.note.trim();
@@ -217,6 +222,11 @@ export default function OverviewPage() {
   const canPrepare = ['lead', 'contributor'].includes(project.role);
   const canResolve = project.role === 'lead';
   const canAct = ['lead', 'contributor'].includes(project.role);
+  const outgoingUserId = project.transition?.outgoingUserId
+    ? String(project.transition.outgoingUserId)
+    : null;
+  const canAnswerQuestions =
+    project.role === 'lead' || (outgoingUserId && outgoingUserId === String(user?.id));
 
   const checklist = [
     {
@@ -648,6 +658,28 @@ export default function OverviewPage() {
                   <p className="px-1.5 text-[11px] text-ink-muted">None recorded.</p>
                 )}
               </div>
+              <div className="border-t border-line pt-2.5">
+                <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
+                  <Ban className="h-3 w-3" aria-hidden="true" /> Blocked work
+                </p>
+                {(data.blockers || []).slice(0, 3).map((claim) => (
+                  <button
+                    key={claim.id}
+                    type="button"
+                    onClick={() => {
+                      const evidence = evidenceForClaim(claim);
+                      if (evidence) setEvidenceId(evidence);
+                    }}
+                    className="mb-1 flex w-full items-start gap-2 rounded-md px-1.5 py-1 text-left text-[11.5px] leading-4 text-ink-soft hover:bg-slate-50"
+                  >
+                    <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-orange-500" />
+                    {truncate(claim.statement, 110)}
+                  </button>
+                ))}
+                {(data.blockers || []).length === 0 && (
+                  <p className="px-1.5 text-[11px] text-ink-muted">None recorded.</p>
+                )}
+              </div>
             </div>
           </Card>
         </div>
@@ -799,16 +831,18 @@ export default function OverviewPage() {
                         evidence
                       </button>
                     )}
-                    {canAct && claim && ACTION_MODES[action.kind] && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="shrink-0"
-                        onClick={() => openAction(action, claim)}
-                      >
-                        {ACTION_MODES[action.kind].label}
-                      </Button>
-                    )}
+                    {claim &&
+                      ACTION_MODES[action.kind] &&
+                      (action.kind === 'resolve_question' ? canAnswerQuestions : canAct) && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => openAction(action, claim)}
+                        >
+                          {ACTION_MODES[action.kind].label}
+                        </Button>
+                      )}
                   </div>
                 );
               })}
@@ -922,15 +956,25 @@ export default function OverviewPage() {
               </Field>
             ) : (
               <Field
-                label="Resolution note"
+                label={actionTarget.action.kind === 'resolve_question' ? 'Answer' : 'Resolution note'}
                 htmlFor="action-note"
-                hint="Optional. Stored with the item so the reviewer and recipient can see how it was closed out."
+                required={actionTarget.action.kind === 'resolve_question'}
+                hint={
+                  actionTarget.action.kind === 'resolve_question'
+                    ? 'Required. Recorded as the departing member’s or lead’s answer; it becomes the resolution of record.'
+                    : 'Optional. Stored with the item so the reviewer and recipient can see how it was closed out.'
+                }
               >
                 <Textarea
                   id="action-note"
                   rows={3}
                   maxLength={600}
-                  placeholder="What was decided, agreed or completed?"
+                  required={actionTarget.action.kind === 'resolve_question'}
+                  placeholder={
+                    actionTarget.action.kind === 'resolve_question'
+                      ? 'State the answer and who confirmed it'
+                      : 'What was decided, agreed or completed?'
+                  }
                   value={actionForm.note}
                   onChange={(event) =>
                     setActionForm((form) => ({ ...form, note: event.target.value }))

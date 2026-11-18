@@ -148,6 +148,7 @@ const sourceSchema = new Schema(
     },
     lastIngestedAt: Date,
     deletedAt: Date,
+    hiddenAt: Date,
     sync: {
       enabled: { type: Boolean, default: false },
       intervalMinutes: { type: Number, default: 5 },

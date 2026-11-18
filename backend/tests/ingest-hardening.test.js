@@ -164,6 +164,53 @@ describe('ingestion hardening over the API', () => {
     expect(preserved.retiredAt || null).toBeNull();
   });
 
+  it('hides a source and its claims from every reader, then restores it', async () => {
+    const hiddenId = await upload(
+      'Hidden notes',
+      'Decision: Archive invoices older than seven years. (status: active)',
+    );
+    await whenIdle({ timeoutMs: 60_000 });
+
+    const before = await claimsFor(lead);
+    expect(before.some((claim) => claim.statement.includes('Archive invoices'))).toBe(true);
+
+    const hidden = await request(app)
+      .patch(`/api/projects/${projectId}/sources/${hiddenId}`)
+      .set(auth(lead.token))
+      .send({ hidden: true })
+      .expect(200);
+    expect(hidden.body.source.hidden).toBe(true);
+
+    const leadSources = await request(app)
+      .get(`/api/projects/${projectId}/sources`)
+      .set(auth(lead.token))
+      .expect(200);
+    expect(leadSources.body.sources.find((source) => source.id === hiddenId)?.hidden).toBe(true);
+
+    const observerSources = await request(app)
+      .get(`/api/projects/${projectId}/sources`)
+      .set(auth(observer.token))
+      .expect(200);
+    expect(observerSources.body.sources.some((source) => source.id === hiddenId)).toBe(false);
+
+    const after = await claimsFor(lead);
+    expect(after.some((claim) => claim.statement.includes('Archive invoices'))).toBe(false);
+
+    await request(app)
+      .get(`/api/projects/${projectId}/sources/${hiddenId}`)
+      .set(auth(lead.token))
+      .expect(403);
+
+    await request(app)
+      .patch(`/api/projects/${projectId}/sources/${hiddenId}`)
+      .set(auth(lead.token))
+      .send({ hidden: false })
+      .expect(200);
+
+    const restored = await claimsFor(lead);
+    expect(restored.some((claim) => claim.statement.includes('Archive invoices'))).toBe(true);
+  });
+
   it('records per-source extraction method counts and progress', async () => {
     const source = await request(app)
       .get(`/api/projects/${projectId}/sources/${sourceId}`)

@@ -38,6 +38,15 @@ describe('verbatim evidence location', () => {
     const result = locateQuote('nothing relevant here', 'Use PostgreSQL for the ledger');
     expect(result.ok).toBe(false);
   });
+
+  it('rejects a paraphrase that only shares the opening words', () => {
+    const haystack = 'Decision: Use PostgreSQL for the ledger.';
+    const result = locateQuote(
+      haystack,
+      'Decision: Use PostgreSQL for the ledger and archive every invoice forever.',
+    );
+    expect(result.ok).toBe(false);
+  });
 });
 
 describe('deterministic heuristic extractor', () => {
