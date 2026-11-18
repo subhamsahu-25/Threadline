@@ -61,7 +61,7 @@ covers the same product from a fresh clone.
 
 ## Demo in 60 seconds
 
-Requirements: Node.js 20+ (22 LTS recommended) and npm.
+Requirements: Node.js 22+ and npm.
 
 ```bash
 # Terminal 1 — API on http://localhost:4000 (in-memory MongoDB, no setup)

@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Threadline - permission-aware, evidence-linked project handover API",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "dev": "node --watch src/server.js",

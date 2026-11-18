@@ -10,7 +10,7 @@ the hosted deployment is checked separately and called out where it differs.
 ## 1. Automated tests
 
 `cd backend && npm test` — **30 suites, 278 tests**, green on the last full run
-(18 Nov 2026, 214 s). Each suite boots its own ephemeral MongoDB
+(18 Nov 2026, Node 22, 279 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
@@ -59,7 +59,7 @@ Production dependency audits (`npm audit --omit=dev --audit-level=high`) report
 **0 vulnerabilities** in both workspaces after upgrading `unpdf` to 1.9.1,
 `zod` to 4.6.7 and `react-router-dom` to 7.18.5.
 
-CI (`.github/workflows/ci.yml`) runs on every push and pull request:
+CI (`.github/workflows/ci.yml`) runs on Node 22 on every push and pull request:
 
 | Job | What it runs |
 | --- | --- |

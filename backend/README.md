@@ -13,7 +13,7 @@ The guiding rule: **no claim without evidence, no evidence without permission.**
 
 ## 1. Quick start
 
-Requirements: Node.js 20+ (22 LTS recommended), npm.
+Requirements: Node.js 22+, npm.
 
 ```bash
 cd backend
