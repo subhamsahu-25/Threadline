@@ -504,7 +504,7 @@ export default function RecipientHandover({
               loading={downloading}
               onClick={download}
             >
-              Download Markdown
+              Download PDF
             </Button>
           )}
           {showAcknowledge && !acknowledged && (

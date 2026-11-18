@@ -80,18 +80,17 @@ test('lead prepares and shares a handover that the recipient opens, flags and ac
     await expect(
       guest.getByText(/Demo preview: this link opens without an account/),
     ).toBeVisible();
-    await expect(guest.getByRole('button', { name: 'Download Markdown' })).toBeVisible();
+    await expect(guest.getByRole('button', { name: 'Download PDF' })).toBeVisible();
 
     const downloadEvent = guest.waitForEvent('download');
-    await guest.getByRole('button', { name: 'Download Markdown' }).click();
+    await guest.getByRole('button', { name: 'Download PDF' }).click();
     const download = await downloadEvent;
     expect(download.suggestedFilename()).toMatch(
-      /^handover-ananya-rao-\d{4}-\d{2}-\d{2}\.md$/,
+      /^handover-ananya-rao-\d{4}-\d{2}-\d{2}\.pdf$/,
     );
-    const markdown = await fs.readFile(await download.path(), 'utf8');
-    expect(markdown).toContain('# Handover for Ananya Rao');
-    expect(markdown).toContain('**View:** recipient copy');
-    expect(markdown).not.toContain('vendor-contract-summary.md');
+    const pdf = await fs.readFile(await download.path());
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(pdf.length).toBeGreaterThan(2000);
 
     await guest.getByRole('button', { name: 'Flag this item' }).first().click();
     const feedbackDialog = guest.getByRole('dialog', { name: 'Flag this item' });

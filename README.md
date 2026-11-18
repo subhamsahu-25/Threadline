@@ -171,8 +171,9 @@ Google Drive            chunk + offsets           extraction + quote       confl
    view adds a first-week summary of what they own, what is blocked and what to
    do first.
 6. **Hand over and close the loop** — both the reviewer and the recipient can
-   download the handover as Markdown, rendered from the same permission-filtered
-   view they are looking at. The sender sees how many times the share link was
+   download the handover as a PDF, rendered on the server from the same
+   permission-filtered view they are looking at. The sender sees how many times
+   the share link was
    opened, the first and last open times, and any recipient notes; the recipient
    can flag a single item or send a general note. Notes are audited and the lead
    can mark them resolved. Sharing, acknowledgement, clarification asks and
@@ -269,7 +270,7 @@ production builds. `VITE_API_PROXY` overrides the local dev proxy target.
 
 ```bash
 cd backend
-npm test               # 280 Vitest + Supertest tests, 30 suites
+npm test               # 281 Vitest + Supertest tests, 30 suites
 npm run eval:quotes    # quote-accuracy report (rules extractor; Gemini when configured)
 
 cd ../frontend
@@ -278,7 +279,7 @@ npm run smoke          # built page mounts, every asset resolves
 npm run e2e            # Playwright: four journeys against a fresh in-memory API
 ```
 
-**30 suites, 280 tests**, each against its own ephemeral MongoDB — no external
+**30 suites, 281 tests**, each against its own ephemeral MongoDB — no external
 services needed. CI runs every suite on each push and pull request, alongside
 the Playwright journeys, a production-dependency audit and a secret scan.
 
@@ -303,7 +304,7 @@ the Playwright journeys, a production-dependency audit and a secret scan.
 - **handover-workflow** — edit/submit/approve/share/acknowledge, version
   history, pending-item guard, transition guards, share rotation, and the public
   demo link (opens without sign-in, still refused for non-demo projects).
-- **handover-extras** — permission-filtered Markdown exports, access control on
+- **handover-extras** — permission-filtered PDF exports, access control on
   exports, share-open counters and reset on rotation, recipient feedback
   (including rejection of notes on items that became unreadable), honest
   `skipped` / `sent` / `failed` delivery rows, and once-only reminders that
@@ -341,7 +342,7 @@ the Playwright journeys, a production-dependency audit and a secret scan.
 The frontend is validated with `npm run build`, `npm run smoke` (the built page
 mounts and every bundled asset exists) and a Playwright run over the four core
 journeys: one-click lead sign-in, compose → approve → share, guest recipient
-opens the link, and acknowledges it. The same run downloads the Markdown copy,
+opens the link, and acknowledges it. The same run downloads the PDF copy,
 flags an item, resolves it as the lead, checks the `skipped` delivery row and
 exports the audit CSV. `npm run e2e` starts both servers itself against a fresh
 in-memory database and records traces, screenshots and video on failure; the

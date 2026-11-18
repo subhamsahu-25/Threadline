@@ -156,7 +156,7 @@ export default function SharedHandoverPage() {
 
   const download = async () => {
     try {
-      await downloadFile(`/api/handovers/shared/${token}/export`, 'handover.md');
+      await downloadFile(`/api/handovers/shared/${token}/export`, 'handover.pdf');
       toast.success('Download started. This copy contains only what you can read.');
     } catch (err) {
       toast.error(errorMessage(err));

@@ -729,7 +729,7 @@ export default function HandoverReviewPage() {
 
   const downloadHandover = async () => {
     try {
-      await downloadFile(`/api/handovers/${handoverId}/export`, 'handover.md');
+      await downloadFile(`/api/handovers/${handoverId}/export`, 'handover.pdf');
       toast.success('Download started. The file matches the view on this screen.');
     } catch (err) {
       toast.error(errorMessage(err));
@@ -863,7 +863,7 @@ export default function HandoverReviewPage() {
               icon={Download}
               onClick={downloadHandover}
             >
-              Download
+              Download PDF
             </Button>
             <Button
               variant="secondary"

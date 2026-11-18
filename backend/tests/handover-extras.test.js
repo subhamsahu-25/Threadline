@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { getDocumentProxy, extractText } from 'unpdf';
 import { env } from '../src/config/env.js';
 import { Delivery, Handover, Notification, Source } from '../src/models/index.js';
 import { sendDueReminders } from '../src/services/handover/reminders.js';
@@ -86,6 +87,16 @@ describe('handover downloads, feedback, delivery and reminders', () => {
     return { handover, shareToken: shared.body.sharePath.split('/').pop() };
   }
 
+  async function pdfText(response) {
+    const buffer = Buffer.isBuffer(response.body)
+      ? response.body
+      : Buffer.from(response.body);
+    expect(buffer.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    const doc = await getDocumentProxy(new Uint8Array(buffer));
+    const { text } = await extractText(doc, { mergePages: true });
+    return { buffer, text, flat: text.replace(/\s+/g, ' ') };
+  }
+
   it('exports the recipient copy without restricted evidence', async () => {
     const { shareToken } = await createShared();
 
@@ -93,14 +104,18 @@ describe('handover downloads, feedback, delivery and reminders', () => {
       .get(`/api/handovers/shared/${shareToken}/export`)
       .expect(200);
 
-    expect(exported.headers['content-type']).toContain('text/markdown');
+    expect(exported.headers['content-type']).toContain('application/pdf');
     expect(exported.headers['content-disposition']).toContain('attachment;');
     expect(exported.headers['content-disposition']).toContain('ananya-rao');
-    expect(exported.text).toContain('# Handover for Ananya Rao');
-    expect(exported.text).toContain('**View:** recipient copy');
-    expect(exported.text).not.toContain('vendor-contract-summary.md');
-    expect(exported.text).not.toContain('22 percent');
-    expect(exported.text).not.toContain('## Withheld from this view');
+    expect(exported.headers['content-disposition']).toContain('.pdf');
+
+    const { buffer, flat } = await pdfText(exported);
+    expect(Number(exported.headers['content-length'])).toBe(buffer.length);
+    expect(flat).toContain('Handover for Ananya Rao');
+    expect(flat.toLowerCase()).toContain('recipient copy');
+    expect(flat).not.toContain('vendor-contract-summary.md');
+    expect(flat).not.toContain('22 percent');
+    expect(flat).not.toContain('Withheld from this view');
   });
 
   it('exports the reviewer copy with a withheld summary', async () => {
@@ -111,9 +126,42 @@ describe('handover downloads, feedback, delivery and reminders', () => {
       .set(auth(leadToken))
       .expect(200);
 
-    expect(exported.text).toContain('**View:** reviewer copy');
-    expect(exported.text).toContain('## Withheld from this view');
-    expect(exported.text).toContain('Details are intentionally omitted');
+    expect(exported.headers['content-type']).toContain('application/pdf');
+
+    const { flat } = await pdfText(exported);
+    expect(flat.toLowerCase()).toContain('reviewer copy');
+    expect(flat).toContain('Withheld from this view');
+    expect(flat).toContain('Details are intentionally omitted');
+  });
+
+  it('renders non-Latin statements and page footers', async () => {
+    const { renderHandoverPdf } = await import('../src/services/handover/export.js');
+    const pdf = await renderHandoverPdf({
+      handover: {
+        status: 'draft',
+        version: 1,
+        recipientSnapshot: { name: 'Ananya Rao' },
+        snapshot: { projectName: 'Atlas' },
+        items: [
+          {
+            type: 'decision',
+            status: 'active',
+            statement: 'टीम ने नए खाते को मंजूरी दी',
+            citations: [],
+          },
+        ],
+      },
+      projectName: 'Atlas',
+      viewer: 'recipient',
+    });
+
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+
+    const doc = await getDocumentProxy(new Uint8Array(pdf));
+    const { text } = await extractText(doc, { mergePages: true });
+    const flat = text.replace(/\s+/g, ' ');
+    expect(flat).toContain('टीम ने नए खाते को मंजूरी दी');
+    expect(flat).toContain('Page 1 of');
   });
 
   it('only exports to viewers with access to the handover', async () => {

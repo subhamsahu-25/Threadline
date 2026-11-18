@@ -9,7 +9,7 @@ import { Delivery, Handover, HandoverFeedback, Project, User } from '../models/i
 import { canContribute, canManageProject, roleOf, sourceVisibleTo } from '../services/access/policy.js';
 import { recordAudit } from '../services/audit.js';
 import { composeHandover } from '../services/handover/compose.js';
-import { renderHandoverMarkdown } from '../services/handover/export.js';
+import { renderHandoverPdf } from '../services/handover/export.js';
 import { leadIds, notify } from '../services/notifications.js';
 import {
   acknowledgeHandover,
@@ -146,18 +146,20 @@ function exportFilename(handover) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
   const day = new Date().toISOString().slice(0, 10);
-  return `handover-${who || 'recipient'}-${day}.md`;
+  return `handover-${who || 'recipient'}-${day}.pdf`;
 }
 
-function sendMarkdown(res, { view, project, viewer, filename }) {
-  const markdown = renderHandoverMarkdown({
+async function sendPdf(res, { view, project, viewer, filename }) {
+  const pdf = await renderHandoverPdf({
     handover: view,
     projectName: project.name,
     viewer,
   });
-  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  res.send(markdown);
+  res.setHeader('Content-Length', pdf.length);
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(pdf);
 }
 
 router.get(
@@ -380,7 +382,7 @@ sharedHandoverRouter.get(
       req,
       auditActor: req.user || null,
     });
-    sendMarkdown(res, {
+    await sendPdf(res, {
       view,
       project,
       viewer: 'recipient',
@@ -479,7 +481,7 @@ router.get(
       ? await buildRecipientView({ handover, project, user: req.user, req })
       : await buildReviewerView({ handover, project, user: req.user });
 
-    sendMarkdown(res, {
+    await sendPdf(res, {
       view,
       project,
       viewer: recipientOnly ? 'recipient' : 'reviewer',

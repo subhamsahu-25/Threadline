@@ -9,8 +9,8 @@ the hosted deployment is checked separately and called out where it differs.
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **30 suites, 280 tests**, green on the last full run
-(18 Nov 2026, Node 22, 270 s). Each suite boots its own ephemeral MongoDB
+`cd backend && npm test` — **30 suites, 281 tests**, green on the last full run
+(18 Nov 2026, Node 22, 291 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
@@ -30,7 +30,7 @@ the hosted deployment is checked separately and called out where it differs.
 | `conflict-resolution.test.js` | 8 | Lead confirms the current decision, the rest are superseded, conflict clears, drafts exclude superseded statements, audit event, contributor/observer rejection, and restore/supersede edge cases |
 | `handover-permissions.test.js` | 14 | Recipient-specific withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review boundaries, non-member rejection, refusal for incoming-recipient handover creation, the incoming seat limited to the shared handover plus readable sources, and no view of a draft they authored under the old seat |
 | `handover-workflow.test.js` | 7 | Edit/submit/approve/share/acknowledge, version history and audit, pending-item guard, transition guards, share rotation, and the public demo link: anonymous read and acknowledgement, audited with `channel: public_share_link`, refused for non-demo projects |
-| `handover-extras.test.js` | 11 | Recipient and reviewer Markdown exports hide restricted evidence; export access control; share-open counts reset on rotation; feedback create/list/notify/resolve and rejection before sharing, from non-recipients, on items that became unreadable, and below the minimum length; honest `skipped`, `sent` and `failed` delivery rows with no webhook URL leaked; clarification delivery; reminder once-only, delay, acknowledgement and switch |
+| `handover-extras.test.js` | 12 | Recipient and reviewer PDF exports hide restricted evidence; export access control; share-open counts reset on rotation; feedback create/list/notify/resolve and rejection before sharing, from non-recipients, on items that became unreadable, and below the minimum length; honest `skipped`, `sent` and `failed` delivery rows with no webhook URL leaked; clarification delivery; reminder once-only, delay, acknowledgement and switch |
 | `ingest-hardening.test.js` | 11 | Low-confidence and injection-like flags, truncation warnings, re-ingest preserves IDs/owners/statuses/resolutions, extraction method counts, 409 while processing, connector allow-list, confidential uploads lead-only, large-upload reporting, failed re-ingest keeps content, hiding a source removes it and its claims from every reader |
 | `reconstruction.test.js` | 11 | Blocked status, no ingestion-time dates, no stale undated items, null readiness when empty, execution phase while anything is open, blockers list, fuzzy topic conflicts, identical restatements, critical unblock actions |
 | `extraction.test.js` | 9 | Verbatim quote location (`exact` / `normalized` / `failed`), paraphrase rejection, heuristic extraction, CSV normalization |
@@ -156,7 +156,7 @@ Result: **2 passed (51.8 s)**, one Chromium worker, no retries. The spec
 | Seed | `POST /api/demo/seed` succeeds against the fresh in-memory database |
 | 1. Lead sign-in | One-click Subham profile lands on the Atlas project card; opening it shows **New handover** |
 | 2. Compose–approve–share | Create a draft for Ananya Rao, accept all 25 items, submit, approve, create the share link |
-| 3. Recipient open | The link opens in a clean guest context; **Download Markdown** produces `handover-ananya-rao-YYYY-MM-DD.md` containing the recipient view, and without a restricted source name; flagging an item sends a note |
+| 3. Recipient open | The link opens in a clean guest context; **Download PDF** produces `handover-ananya-rao-YYYY-MM-DD.pdf` containing the recipient view, and without a restricted source name; flagging an item sends a note |
 | 4. Acknowledge | **Acknowledge receipt** shows the acknowledged state |
 | Lead re-check | After reload: open count, the feedback text, a `skipped` delivery row, then **Mark resolved** changes the note to Resolved |
 | Audit CSV | **Export CSV** downloads `atlas-audit-YYYY-MM-DD.csv` containing `handover.feedback_received` and `handover.acknowledged` |
