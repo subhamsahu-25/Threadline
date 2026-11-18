@@ -49,6 +49,33 @@ describe('demo seed authorization', () => {
     expect(await Project.countDocuments({ key: DEMO_PROJECT_KEY })).toBe(1);
   });
 
+  it('keeps a visitor upload that shares a seeded filename', async () => {
+    const project = await Project.findOne({ key: DEMO_PROJECT_KEY });
+    const lead = await User.findOne({ email: LEAD });
+    const visitor = await Source.create({
+      project: project._id,
+      kind: 'upload',
+      name: 'kickoff-notes.md',
+      createdBy: lead._id,
+      status: 'ready',
+      files: [],
+    });
+
+    await rebuild(tokenOf(seeded, LEAD)).expect(201);
+
+    expect(await Source.exists({ _id: visitor._id })).toBeTruthy();
+    expect(await Source.countDocuments({ seeded: true })).toBe(6);
+  });
+
+  it('adopts a workspace seeded before the flag existed', async () => {
+    await Source.updateMany({}, { $unset: { seeded: 1 } });
+
+    await rebuild(tokenOf(seeded, LEAD)).expect(201);
+
+    expect(await Source.countDocuments()).toBe(6);
+    expect(await Source.countDocuments({ seeded: true })).toBe(6);
+  });
+
   it('seeds without wiping when reset is not requested', async () => {
     const response = await ensureSeeded().expect(200);
     expect(response.body.alreadySeeded).toBe(true);

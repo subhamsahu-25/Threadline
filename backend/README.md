@@ -397,7 +397,7 @@ silently rewriting history.
 ## 8. Tests
 
 ```bash
-npm test          # 278 Vitest + Supertest tests across 30 suites
+npm test          # 280 Vitest + Supertest tests across 30 suites
 npm run test:watch
 npm run eval:quotes   # quote-accuracy report
 ```

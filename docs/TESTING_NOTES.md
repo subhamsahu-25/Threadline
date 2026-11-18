@@ -9,8 +9,8 @@ the hosted deployment is checked separately and called out where it differs.
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **30 suites, 278 tests**, green on the last full run
-(18 Nov 2026, Node 22, 279 s). Each suite boots its own ephemeral MongoDB
+`cd backend && npm test` — **30 suites, 280 tests**, green on the last full run
+(18 Nov 2026, Node 22, 270 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
@@ -41,7 +41,7 @@ the hosted deployment is checked separately and called out where it differs.
 | `connector-refs.test.js` | 14 | GitHub `owner/repo` and pasted URL forms, length and character limits, no network call for traversal references, and fail-closed behavior with no allowlist for GitHub and Drive |
 | `share-audit.test.js` | 3 | Anonymous demo share-link views and acknowledgements attributed to an anonymous actor, one row per hour, repeated permission re-checks folded into one hourly row |
 | `audit-labels.test.js` | 2 | Every action the backend can write has a label, and no label exists for an action that is never written |
-| `demo-seed.test.js` | 11 | Public seed only when the workspace is missing, scoped reset requires the lead, retired accounts, stale membership/owner/outgoing repaired without losing content, startup reconciliation leaves a missing workspace alone |
+| `demo-seed.test.js` | 13 | Public seed only when the workspace is missing, scoped reset requires the lead, retired accounts, stale membership/owner/outgoing repaired without losing content, startup reconciliation leaves a missing workspace alone, reset removes only flagged seeded sources and adopts pre-flag workspaces by content |
 | `membership.test.js` | 4 | Role changes and access boundaries, adding an existing account, duplicate and unknown invitations, and member removal |
 | `llm-fallback.test.js` | 3 | Gemini retry on 404 (retired model), 429 and 503 |
 | `notifications.test.js` | 10 | Notices routed by role and event, one per recipient and event, removed when access ends, read state isolated per user, payload limited to a title, detail, project key and link |

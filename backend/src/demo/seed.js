@@ -13,6 +13,7 @@ import {
 } from '../models/index.js';
 import { enqueue, whenIdle } from '../services/queue.js';
 import { hashPassword, issueSession } from '../services/auth.js';
+import { parseFile } from '../services/ingest/parsers.js';
 
 export const DEMO_PASSWORD = 'Threadline#2026';
 export const DEMO_PROJECT_KEY = 'ATLAS';
@@ -143,19 +144,46 @@ function projectSummary(project) {
   };
 }
 
-const SEEDED_SOURCE_NAMES = DEMO_DOCUMENTS.map((document) => document.name);
+/**
+ * Workspaces seeded before the `seeded` flag existed carry no marker. Match
+ * their stored text against the documents this seed writes, so a reset can
+ * adopt them without deleting a visitor upload that shares a filename.
+ */
+async function tagLegacySeededSources(project) {
+  const legacy = await Source.find({ project: project._id, seeded: { $ne: true } }).select('_id');
+  if (legacy.length === 0) return;
+
+  const expected = new Set(
+    await Promise.all(
+      DEMO_DOCUMENTS.map(async (document) => {
+        const parsed = await parseFile({
+          buffer: Buffer.from(document.content, 'utf8'),
+          filename: document.name,
+        });
+        return parsed.text;
+      }),
+    ),
+  );
+  const documents = await Document.find({ source: { $in: legacy.map((source) => source._id) } })
+    .select('source rawText')
+    .lean();
+  const matching = new Set();
+  for (const document of documents) {
+    if (expected.has(document.rawText)) matching.add(String(document.source));
+  }
+  if (matching.size > 0) {
+    await Source.updateMany({ _id: { $in: [...matching] } }, { $set: { seeded: true } });
+  }
+}
 
 /**
  * The demo workspace is shared by every visitor, so a reset must restore the
- * seeded corpus without erasing work someone else uploaded. Only sources whose
- * name matches a seeded document are removed, together with the claims and
- * evidence that came from them.
+ * seeded corpus without erasing work someone else uploaded. Only sources the
+ * seed itself created are removed, together with their claims and evidence.
  */
 async function removeSeededContent(project) {
-  const seededSources = await Source.find({
-    project: project._id,
-    name: { $in: SEEDED_SOURCE_NAMES },
-  });
+  await tagLegacySeededSources(project);
+  const seededSources = await Source.find({ project: project._id, seeded: true });
   if (seededSources.length === 0) return;
 
   const sourceIds = seededSources.map((source) => source._id);
@@ -256,6 +284,7 @@ export async function seedDemo({ reset = true } = {}) {
     const source = await Source.create({
       project: project._id,
       kind: 'upload',
+      seeded: true,
       name: document.name,
       externalRef: '',
       visibility: document.visibility,

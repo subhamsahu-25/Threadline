@@ -147,6 +147,9 @@ const sourceSchema = new Schema(
     project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
     kind: { type: String, enum: ['upload', 'github', 'drive', 'confirmation'], required: true },
     name: { type: String, required: true, trim: true },
+    // Set only by the demo seed. A reset removes flagged sources, so a visitor
+    // upload that happens to share a seeded filename is left alone.
+    seeded: { type: Boolean, default: false },
     externalRef: { type: String, default: '' },
     visibility: { type: sourceVisibilitySchema, default: () => ({}) },
     sensitivity: { type: String, enum: SENSITIVITIES, default: 'internal' },

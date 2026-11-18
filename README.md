@@ -269,7 +269,7 @@ production builds. `VITE_API_PROXY` overrides the local dev proxy target.
 
 ```bash
 cd backend
-npm test               # 278 Vitest + Supertest tests, 30 suites
+npm test               # 280 Vitest + Supertest tests, 30 suites
 npm run eval:quotes    # quote-accuracy report (rules extractor; Gemini when configured)
 
 cd ../frontend
@@ -278,7 +278,7 @@ npm run smoke          # built page mounts, every asset resolves
 npm run e2e            # Playwright: four journeys against a fresh in-memory API
 ```
 
-**30 suites, 278 tests**, each against its own ephemeral MongoDB — no external
+**30 suites, 280 tests**, each against its own ephemeral MongoDB — no external
 services needed. CI runs every suite on each push and pull request, alongside
 the Playwright journeys, a production-dependency audit and a secret scan.
 
