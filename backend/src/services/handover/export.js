@@ -57,8 +57,10 @@ function formatDateTime(value) {
   return `${day}, ${time} UTC`;
 }
 
-function capitalise(value) {
-  const text = String(value || '');
+function humanise(value) {
+  const text = String(value || '')
+    .replace(/[_-]+/g, ' ')
+    .trim();
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
 }
 
@@ -142,7 +144,7 @@ export function buildHandoverExport({ handover, projectName, viewer }) {
     ['Recipient', recipientName],
     [
       'Status',
-      `${capitalise(handover.status || 'draft')} · version ${handover.version ?? 1}`,
+      `${humanise(handover.status || 'draft')} · version ${handover.version ?? 1}`,
     ],
     ['Prepared by', handover.createdBySnapshot?.name || 'Project team'],
   ];

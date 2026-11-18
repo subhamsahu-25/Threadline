@@ -138,7 +138,7 @@ describe('handover downloads, feedback, delivery and reminders', () => {
     const { renderHandoverPdf } = await import('../src/services/handover/export.js');
     const pdf = await renderHandoverPdf({
       handover: {
-        status: 'draft',
+        status: 'in_review',
         version: 1,
         recipientSnapshot: { name: 'Ananya Rao' },
         snapshot: { projectName: 'Atlas' },
@@ -161,6 +161,7 @@ describe('handover downloads, feedback, delivery and reminders', () => {
     const { text } = await extractText(doc, { mergePages: true });
     const flat = text.replace(/\s+/g, ' ');
     expect(flat).toContain('टीम ने नए खाते को मंजूरी दी');
+    expect(flat).toContain('In review · version 1');
     expect(flat).toContain('Page 1 of');
   });
 
