@@ -197,18 +197,19 @@ router.get(
     // read-time access check used by the detail route decides list membership,
     // so an unshared draft never leaks through the list.
     const visible = handovers
-      .map((handover) => ({
-        handover,
-        project: projectById.get(String(handover.project)),
-        isCreator: String(handover.createdBy) === String(userId),
-        isLead: canManageProject(projectById.get(String(handover.project)) || {}, req.user),
-      }))
-      .filter(
-        ({ handover, project, isCreator, isLead }) =>
-          isCreator ||
-          isLead ||
-          Boolean(project && handoverAccess({ handover, project, user: req.user }).canView),
-      );
+      .map((handover) => {
+        const project = projectById.get(String(handover.project));
+        return {
+          handover,
+          project,
+          isCreator: String(handover.createdBy) === String(userId),
+          isLead: canManageProject(project || {}, req.user),
+          canView: Boolean(
+            project && handoverAccess({ handover, project, user: req.user }).canView,
+          ),
+        };
+      })
+      .filter(({ canView }) => canView);
 
     res.json({
       handovers: visible.map(({ handover, isCreator, isLead }) =>

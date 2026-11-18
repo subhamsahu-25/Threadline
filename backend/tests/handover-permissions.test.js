@@ -11,6 +11,7 @@ import {
   tokenOf,
   whenIdle,
 } from './helpers.js';
+import { Handover } from '../src/models/index.js';
 
 const LEAD = 'subham@threadline.demo';
 const INCOMING = 'ananya@threadline.demo';
@@ -230,6 +231,25 @@ describe('permission-aware handovers', () => {
     expect(shared.body.handovers.map((entry) => entry.id)).toEqual([handoverId]);
     // Recipient list entries deliberately omit review and withholding counts.
     expect(shared.body.handovers[0]).not.toHaveProperty('itemCount');
+  });
+
+  it('hides a handover the incoming recipient authored before the seat was locked down', async () => {
+    const created = await createHandover({ recipientId: idOf(seeded, OBSERVER) });
+    expect(created.status).toBe(201);
+    const handoverId = created.body.handover.id;
+    await Handover.updateOne({ _id: handoverId }, { $set: { createdBy: rohanId } });
+
+    const list = await request(app)
+      .get(`/api/handovers?projectId=${projectId}&scope=all`)
+      .set(auth(rohanToken))
+      .expect(200);
+    expect(list.body.handovers).toHaveLength(0);
+
+    await request(app).get(`/api/handovers/${handoverId}`).set(auth(rohanToken)).expect(403);
+    await request(app)
+      .get(`/api/handovers/${handoverId}/export`)
+      .set(auth(rohanToken))
+      .expect(403);
   });
 
   it('does not leak a lead-only source into a contributor-authored handover', async () => {

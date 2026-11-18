@@ -9,8 +9,8 @@ checked separately and called out where it differs.
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **18 suites, 137 tests**, green on the last full run
-(18 Nov 2026, 135.04 s). Each suite boots its own ephemeral MongoDB
+`cd backend && npm test` — **18 suites, 138 tests**, green on the last full run
+(18 Nov 2026, 136.47 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
@@ -21,7 +21,7 @@ checked separately and called out where it differs.
 | `clarifications.test.js` | 7 | Askable gaps and answer options, ask-all dedupe, addressee-only answer/decline, refusal for unreadable items, person-confirmed claim clears the gap, recipient label after sharing, redaction of answers |
 | `claim-actions.test.js` | 10 | Owner assignment closes the gap, done tasks leave open work, question answers and mitigations, closure notes in the next draft, observer and incoming-recipient rejection, only the lead or departing member can answer a question, an answer note is required, validation and 404 guards |
 | `conflict-resolution.test.js` | 6 | Lead confirms the current decision, the rest are superseded, conflict clears, drafts exclude superseded statements, audit event, contributor/observer rejection |
-| `handover-permissions.test.js` | 12 | Recipient-specific withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review boundaries, non-member rejection, refusal for incoming-recipient handover creation, and the incoming seat limited to the shared handover plus readable sources |
+| `handover-permissions.test.js` | 13 | Recipient-specific withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review boundaries, non-member rejection, refusal for incoming-recipient handover creation, the incoming seat limited to the shared handover plus readable sources, and no view of a draft they authored under the old seat |
 | `handover-workflow.test.js` | 7 | Edit/submit/approve/share/acknowledge, version history and audit, pending-item guard, transition guards, share rotation, and the public demo link: anonymous read and acknowledgement, audited with `channel: public_share_link`, refused for non-demo projects |
 | `handover-extras.test.js` | 11 | Recipient and reviewer Markdown exports hide restricted evidence; export access control; share-open counts reset on rotation; feedback create/list/notify/resolve and rejection before sharing, from non-recipients, on items that became unreadable, and below the minimum length; honest `skipped`, `sent` and `failed` delivery rows with no webhook URL leaked; clarification delivery; reminder once-only, delay, acknowledgement and switch |
 | `ingest-hardening.test.js` | 11 | Low-confidence and injection-like flags, truncation warnings, re-ingest preserves IDs/owners/statuses/resolutions, extraction method counts, 409 while processing, connector allow-list, confidential uploads lead-only, large-upload reporting, failed re-ingest keeps content, hiding a source removes it and its claims from every reader |

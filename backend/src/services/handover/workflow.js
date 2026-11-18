@@ -14,7 +14,7 @@ import {
   Source,
   User,
 } from '../../models/index.js';
-import { canManageProject, claimVisibleTo, roleOf, sourceVisibleTo } from '../access/policy.js';
+import { canManageProject, claimVisibleTo, isIncoming, roleOf, sourceVisibleTo } from '../access/policy.js';
 import { recordAudit } from '../audit.js';
 import { deliverOutbound } from '../delivery.js';
 import { leadIds, notify } from '../notifications.js';
@@ -43,12 +43,17 @@ export function handoverAccess({ handover, project, user }) {
     isRecipient &&
     ['shared', 'acknowledged'].includes(handover.status) &&
     shareIsActive(handover);
+  // An incoming recipient only ever receives. Drafts or handovers they
+  // authored under the old, looser seat are not theirs to read anymore.
+  const canView = isIncoming(project, user._id)
+    ? recipientMayView
+    : isCreator || isLead || recipientMayView;
   return {
     role,
     isRecipient,
     isCreator,
     isLead,
-    canView: isCreator || isLead || recipientMayView,
+    canView,
   };
 }
 
