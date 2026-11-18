@@ -1,16 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { auth, request, app, startDb, stopDb, whenIdle } from './helpers.js';
+import { auth, registerAndLogin, request, app, startDb, stopDb, whenIdle } from './helpers.js';
 
 const MEMBER_EMAIL = 'member@api.test';
 
 async function register(email, name) {
-  const response = await request(app).post('/api/auth/register').send({
-    email,
-    name,
-    password: 'Threadline#2026',
-  });
-  expect(response.status).toBe(201);
-  return response.body;
+  return registerAndLogin(email, name);
 }
 
 function notes(namespace, statement) {

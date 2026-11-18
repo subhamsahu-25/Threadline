@@ -1,51 +1,77 @@
 # Testing Notes
 
-Living document — last updated 18 Nov 2026. Supersedes the Round 2 notes.
-All results below were observed directly; no metric is projected or estimated.
-Every automated result was produced on the local stack; the hosted deployment is
-checked separately and called out where it differs.
+Living document — last updated 18 Nov 2026. Supersedes the Round 2 notes and the
+earlier Round 3 notes. All results below were observed directly; no metric is
+projected or estimated. Every automated result was produced on the local stack;
+the hosted deployment is checked separately and called out where it differs.
 
 ---
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **18 suites, 138 tests**, green on the last full run
-(18 Nov 2026, 134.83 s). Each suite boots its own ephemeral MongoDB
+`cd backend && npm test` — **30 suites, 278 tests**, green on the last full run
+(18 Nov 2026, 214 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
 | --- | ---: | --- |
 | `permission-matrix.test.js` | 3 | Seven viewer contexts × every content, handover, shared-link and audit surface; five canaries only reach the roles allowed to read them, before and after role revocation and after a conflict is resolved |
 | `round3-hardening.test.js` | 12 | Live status/owner refresh for recipients, source purge with `source_removed`, freshness compare + regenerate, hashed share tokens and revocation, expired share links, maker-checker approval, accept-without-evidence note, acknowledgement snapshots, logout token revocation, distinct executive/audit scopes, first-week view, readable version diffs |
+| `findings-h.test.js` | 9 | H1–H12 permission fixes: version reasons and diffs never quote unreadable text, reviewer counts and freshness use readable claims only, clarifications about unreadable claims become stubs, re-classification and re-ingest stay within readable scope, purge erases text from claims/handovers/questions, sensitivity cascades to claims, removing an addressee closes their questions, simultaneous answers produce one confirmation |
+| `l-findings.test.js` | 13 | L1–L12 API consistency: handover-list scoping per role, outgoing person must be a member, member removal clears live references, critical actions fail closed when audit cannot be written while routine views still work, note-only decisions, no-op role changes, outsider counts hidden, second-lead approval, long question context, exact-name owner linking, folded document-open rows, readiness weights and the old-question window |
+| `d-findings.test.js` | 19 | D1–D10 data correctness: Unicode-safe comparison keys, invented quote tails rejected, case-folded matches, invalid dates dropped with a warning, plural labels and owner lines, truncation reported, contradiction-aware conflict grouping, supersession restore, unique-name/email owner resolution, citations surviving re-ingest, resumable extraction, restricted sources marking drafts outdated, stored recipient owner id, regenerate resetting only changed decisions |
+| `r-findings.test.js` | 7 | R1–R8 reliability: bulk review in one request and one history row, single review returning only the changed item, stale save mapped to 409, connector sync opt-in with backoff, cursor paging for claims, handovers and versions with visibility-aware totals, stored-text caps with a truncation warning |
+| `ingest-limits.test.js` | 12 | Real DOCX and PDF parsing in a worker process, page-count and uncompressed-size caps, magic-byte checks rejecting renamed binaries, and a huge declared DOCX size refused |
+| `ai-privacy.test.js` | 8 | Confidential sources default to local processing, ordinary sources stay external unless opted out, secrets and identifiers are redacted before text leaves the server, one random data block wraps context and chunk, and delimiter strings inside the document cannot break out |
+| `auth-hardening.test.js` | 7 | Identical answers for unknown addresses and wrong passwords, weak/short/personal passwords rejected with a reason, invite-only and approved-domain modes, lockout after repeated failures, and a strict API content security policy |
 | `source-sync.test.js` | 7 | Interval scheduling, forced checks, checksum skip, outdated handovers with a diff (author and recipient), mocked Drive path, failure retention, sync settings rejected for uploads, collection-order-independent fingerprints |
 | `clarifications.test.js` | 7 | Askable gaps and answer options, ask-all dedupe, addressee-only answer/decline, refusal for unreadable items, person-confirmed claim clears the gap, recipient label after sharing, redaction of answers |
 | `claim-actions.test.js` | 10 | Owner assignment closes the gap, done tasks leave open work, question answers and mitigations, closure notes in the next draft, observer and incoming-recipient rejection, only the lead or departing member can answer a question, an answer note is required, validation and 404 guards |
-| `conflict-resolution.test.js` | 6 | Lead confirms the current decision, the rest are superseded, conflict clears, drafts exclude superseded statements, audit event, contributor/observer rejection |
-| `handover-permissions.test.js` | 13 | Recipient-specific withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review boundaries, non-member rejection, refusal for incoming-recipient handover creation, the incoming seat limited to the shared handover plus readable sources, and no view of a draft they authored under the old seat |
+| `conflict-resolution.test.js` | 8 | Lead confirms the current decision, the rest are superseded, conflict clears, drafts exclude superseded statements, audit event, contributor/observer rejection, and restore/supersede edge cases |
+| `handover-permissions.test.js` | 14 | Recipient-specific withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review boundaries, non-member rejection, refusal for incoming-recipient handover creation, the incoming seat limited to the shared handover plus readable sources, and no view of a draft they authored under the old seat |
 | `handover-workflow.test.js` | 7 | Edit/submit/approve/share/acknowledge, version history and audit, pending-item guard, transition guards, share rotation, and the public demo link: anonymous read and acknowledgement, audited with `channel: public_share_link`, refused for non-demo projects |
 | `handover-extras.test.js` | 11 | Recipient and reviewer Markdown exports hide restricted evidence; export access control; share-open counts reset on rotation; feedback create/list/notify/resolve and rejection before sharing, from non-recipients, on items that became unreadable, and below the minimum length; honest `skipped`, `sent` and `failed` delivery rows with no webhook URL leaked; clarification delivery; reminder once-only, delay, acknowledgement and switch |
 | `ingest-hardening.test.js` | 11 | Low-confidence and injection-like flags, truncation warnings, re-ingest preserves IDs/owners/statuses/resolutions, extraction method counts, 409 while processing, connector allow-list, confidential uploads lead-only, large-upload reporting, failed re-ingest keeps content, hiding a source removes it and its claims from every reader |
 | `reconstruction.test.js` | 11 | Blocked status, no ingestion-time dates, no stale undated items, null readiness when empty, execution phase while anything is open, blockers list, fuzzy topic conflicts, identical restatements, critical unblock actions |
 | `extraction.test.js` | 9 | Verbatim quote location (`exact` / `normalized` / `failed`), paraphrase rejection, heuristic extraction, CSV normalization |
 | `redaction.test.js` | 4 | Emails, phones, credentials and 12-digit IDs; no double-redaction; ordinary text untouched; compose-time redaction of statements and quotes |
+| `redaction-samples.test.js` | 36 | A corpus of 36 secrets and PII samples (GitHub, Stripe, AWS, private keys, emails, labelled Aadhaar numbers and more) replaced with typed placeholders and absent from the output |
 | `api-ingestion.test.js` | 3 | Auth, upload → ingestion → claims → evidence preview, role-restricted isolation, unsupported files, audit trail |
-| `demo-seed.test.js` | 7 | Public seed only when the workspace is missing, scoped reset requires the lead, retired accounts, stale membership/owner/outgoing repaired without losing content, startup reconciliation leaves a missing workspace alone |
+| `upload-cleanup.test.js` | 3 | Written files deleted when request validation fails, when multer rejects before the handler, and when a successful upload is superseded while still referenced files are kept |
+| `connector-refs.test.js` | 14 | GitHub `owner/repo` and pasted URL forms, length and character limits, no network call for traversal references, and fail-closed behavior with no allowlist for GitHub and Drive |
+| `share-audit.test.js` | 3 | Anonymous demo share-link views and acknowledgements attributed to an anonymous actor, one row per hour, repeated permission re-checks folded into one hourly row |
+| `audit-labels.test.js` | 2 | Every action the backend can write has a label, and no label exists for an action that is never written |
+| `demo-seed.test.js` | 11 | Public seed only when the workspace is missing, scoped reset requires the lead, retired accounts, stale membership/owner/outgoing repaired without losing content, startup reconciliation leaves a missing workspace alone |
 | `membership.test.js` | 4 | Role changes and access boundaries, adding an existing account, duplicate and unknown invitations, and member removal |
 | `llm-fallback.test.js` | 3 | Gemini retry on 404 (retired model), 429 and 503 |
 | `notifications.test.js` | 10 | Notices routed by role and event, one per recipient and event, removed when access ends, read state isolated per user, payload limited to a title, detail, project key and link |
 
-Frontend validation: `npm run build` (clean Vite production build, 1,610 modules,
-496.94 kB JS), `npm run smoke` (the built `index.html` mounts and every asset
-exists) and `npm run e2e` (Playwright/Chromium, one spec covering the four core
-journeys). The Playwright run starts its own backend on a spare port with an
-empty `MONGODB_URI` (fresh in-memory database), seeds through the public demo
-endpoint, and keeps `OUTBOUND_WEBHOOK_URL` empty and reminders disabled so the
-delivery and reminder assertions are deterministic. There is still no component
-test suite.
+Frontend validation: `npm run build` (clean Vite production build, 1,619 modules,
+524.06 kB JS with a size warning that predates this round), `npm run smoke`
+(the built `index.html` mounts and every asset exists) and `npm run e2e`
+(Playwright/Chromium, one spec covering the four core journeys). The Playwright
+run starts its own backend on a spare port with an empty `MONGODB_URI` (fresh
+in-memory database), seeds through the public demo endpoint, and keeps
+`OUTBOUND_WEBHOOK_URL` empty and reminders disabled so the delivery and reminder
+assertions are deterministic. There is still no component test suite.
 
-CI (`.github/workflows/ci.yml`) runs backend `npm ci && npm test` and frontend
-`npm ci && npm run build && npm run smoke` on every push and pull request. The
-Playwright run is a local gate, not yet a CI job.
+Production dependency audits (`npm audit --omit=dev --audit-level=high`) report
+**0 vulnerabilities** in both workspaces after upgrading `unpdf` to 1.9.1,
+`zod` to 4.6.7 and `react-router-dom` to 7.18.5.
+
+CI (`.github/workflows/ci.yml`) runs on every push and pull request:
+
+| Job | What it runs |
+| --- | --- |
+| `backend` | `npm ci && npm test` |
+| `frontend` | `npm ci && npm run build && npm run smoke` |
+| `e2e` | `npm ci` in both workspaces, `npx playwright install --with-deps chromium`, `npm run e2e`; the HTML report is uploaded when the job fails |
+| `audit` | `npm audit --omit=dev --audit-level=high` for backend and frontend |
+| `secrets` | `node scripts/check-secrets.mjs` over every tracked file |
+
+The secret scan checks 149 tracked files, skips dependencies, lockfiles, test
+fixtures and binaries, flags private keys, cloud and API tokens, and fails if a
+non-example `.env` file is tracked.
 
 ---
 
@@ -119,10 +145,10 @@ in the release notes rather than duplicated here.
 Command (from `frontend/`):
 
 ```bash
-E2E_BACKEND_PORT=4200 E2E_FRONTEND_PORT=5190 npx playwright test
+E2E_BACKEND_PORT=4207 E2E_FRONTEND_PORT=5308 npx playwright test
 ```
 
-Result: **2 passed (34.3 s)**, one Chromium worker, no retries. The spec
+Result: **2 passed (51.8 s)**, one Chromium worker, no retries. The spec
 (`e2e/handover-journey.spec.js`) runs these steps in order:
 
 | Step | What it asserts |
@@ -141,32 +167,45 @@ Result: **2 passed (34.3 s)**, one Chromium worker, no retries. The spec
 
 Artifacts on failure (trace, screenshot, video) are written under
 `frontend/test-results/`; a passing run keeps the HTML report under
-`frontend/playwright-report/`. Both directories are gitignored.
+`frontend/playwright-report/`. Both directories are gitignored. The same command
+runs in the CI `e2e` job.
 
 ---
 
 ## 4. Accessibility
 
-Method: an in-page DOM audit on four screens (login, overview, review, recipient
-view) plus a WCAG contrast calculation for the text tokens. **axe and Lighthouse
-could not be installed** — this environment has no outbound access to npm or the
-CDN — so no automated accessibility score is claimed.
+Method: axe-core 4.10.2 (WCAG A/AA rules) injected into a real Chromium page,
+run against **50 page/persona/viewport combinations** — every main screen for
+lead, contributor, observer and incoming recipient, at desktop 1440×900 and
+mobile 390×844 — plus scripted focus-order walkthroughs, horizontal-overflow
+measurements and console-error capture.
 
 | Check | Result |
 | --- | --- |
-| Interactive elements audited | 134 (login 4, overview 49, review 46, recipient 35) |
-| Controls without an accessible name | 0 |
+| axe-core violations across 50 combinations | 0 |
+| Horizontal overflow at 390 px | 0 pages |
+| Console errors during the pass | 0 |
+| Tab order visible on every focus stop | Pass on all audited screens |
+| Landmarks and page heading | One `main` and one `h1` per screen; the desktop toolbar is a labelled `region` |
 | Form fields without a label | 0 |
+| Controls without an accessible name | 0 |
 | Images without `alt` | 0 |
 | Positive `tabindex` values | 0 |
-| Focusable elements inside `aria-hidden` | 0 |
-| Landmarks and page heading | `main` = 1 and a visible `h1` on every audited screen; login now uses `main`/`aside` and a single `h1` |
 | Text contrast | `ink.muted` `#5b6a7e` = 5.52:1 on white, 5.19:1 on canvas; `ink.faint` `#63718a` = 4.93:1 on white, 4.64:1 on canvas (both ≥ 4.5:1) |
 
-Known gap: automated tooling was unavailable, so these numbers come from a
-targeted DOM audit, not axe/Lighthouse. The recipient view after the contrast
-and landmark fixes is captured in
-`docs/screens/round3-recipient-accessible.png`.
+Fixes made from this pass:
+
+- The desktop project toolbar is now a labelled `region` landmark.
+- The project key field has a visible label and an `id`.
+- Superseded claim cards no longer dim text with `opacity`, restoring contrast.
+- Empty-state headings use `h2`, removing a heading-order violation.
+- The access-capabilities table is a focusable, labelled scroll region.
+- Overview and People grids use `minmax(0, 1fr)` / single-column mobile layout,
+  removing 12–142 px of horizontal overflow at 390 px.
+
+The recipient view after these fixes is captured in
+`docs/screens/round3-recipient-accessible.png`. axe-core was installed with
+`--no-save`; it is not a project dependency.
 
 ---
 
@@ -175,7 +214,10 @@ and landmark fixes is captured in
 | Failure | Observed result |
 | --- | --- |
 | Unsupported / oversized upload | Rejected with a specific error code; nothing ingested |
+| Renamed binary (PDF or DOCX bytes behind another extension) | Refused by the magic-byte check before parsing |
+| PDF above the page cap, or DOCX declaring a huge uncompressed size | Rejected with a limit error; the parser worker does not load the document |
 | `GEMINI_API_KEY` missing | Deterministic heuristic extractor runs; it only reads explicit `Decision:` / `Task:` / `Risk:` lines, CSV rows and checkboxes |
+| Confidential source with AI enabled | Processed locally; text is not sent to the external model |
 | Primary Gemini model unavailable (404 / 429 / 503) | Automatic retry on the fallback model, logged as a warning |
 | GitHub repo not found / unreachable | Typed 404 / 502 errors surfaced in the UI |
 | GitHub/Drive repo or folder not allow-listed | 403 with a clear error |
@@ -189,6 +231,8 @@ and landmark fixes is captured in
 | Restricted citation on an otherwise visible claim | Whole claim withheld — partial visibility counts as no visibility |
 | Quote cannot be matched in the source | Marked unverified; excluded from handovers until a reviewer resolves it |
 | Clarification addressed to someone other than the departing member | Refused (400/403) |
+| Critical action whose audit row cannot be written | Action fails closed; routine document views still succeed |
+| Stale save from a second tab | 409 with a reload prompt, not a 500 |
 | Backend cold start (Render free tier) | First request is slow (~60 s) but succeeds; the UI warns about it and repeats the notice after inactivity |
 
 ---
@@ -208,6 +252,8 @@ and landmark fixes is captured in
   revocation takes effect immediately with an audit event.
 - **Canary matrix:** five unique strings are planted across every restriction
   type and asserted absent from every surface a viewer may not read.
+- **Versions and diffs:** reasons and diffs are filtered by the reader's
+  visibility, so a change to a hidden item does not leak its text.
 
 ---
 
@@ -220,10 +266,9 @@ and landmark fixes is captured in
 - The in-process queue does not survive a hard crash; startup recovery only
   re-queues sources stuck for more than 10 minutes.
 - No component tests. Playwright covers the core handover journey and the new
-  export, feedback, delivery and CSV paths, but not every screen, and the E2E run
-  is not yet a CI job.
-- No axe/Lighthouse run; accessibility numbers come from the DOM audit in
-  section 4.
+  export, feedback, delivery and CSV paths, but not every screen.
+- Accessibility numbers come from the axe-core/DOM pass in section 4, not a
+  Lighthouse score.
 - Outbound delivery is a single webhook POST with no retry queue. Without
   `OUTBOUND_WEBHOOK_URL`, rows say `skipped` and nothing leaves the server, so
   the hosted demo does not send real email.

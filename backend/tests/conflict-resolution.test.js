@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { app, auth, idOf, request, seed, startDb, stopDb, tokenOf } from './helpers.js';
+import { Claim } from '../src/models/index.js';
 
 const LEAD = 'subham@threadline.demo';
 const OUTGOING = 'rohan@threadline.demo';
@@ -39,7 +40,10 @@ describe('decision conflict resolution', () => {
     return request(app)
       .post(`/api/projects/${projectId}/conflicts/resolve`)
       .set(auth(token))
-      .send({ topicKey: conflict.topicKey, keepClaimId });
+      .send({
+        claimIds: conflict.claimIds.map(String),
+        keepClaimId,
+      });
   }
 
   it('marks the other statements superseded and clears the conflict', async () => {
@@ -110,7 +114,7 @@ describe('decision conflict resolution', () => {
     await resolve(conflict, conflict.statements[0].claimId, observerToken).expect(403);
   });
 
-  it('rejects a statement that is not part of the conflict', async () => {
+  it('rejects a keep choice that is not one of the submitted conflict claims', async () => {
     const before = await getState().expect(200);
     const conflict = before.body.conflicts[0];
     const inConflict = new Set(conflict.statements.map((entry) => String(entry.claimId)));
@@ -119,8 +123,39 @@ describe('decision conflict resolution', () => {
     );
     expect(otherDecision).toBeTruthy();
 
-    const resolved = await resolve(conflict, otherDecision.id).expect(404);
-    expect(resolved.body.error.message).toMatch(/not part of this conflict/i);
+    const rejected = await resolve(conflict, otherDecision.id).expect(400);
+    expect(rejected.body.error.message).toMatch(/invalid fields|claimIds|conflict/i);
+  });
+
+  it('rejects a claim list that includes a statement from another conflict', async () => {
+    const before = await getState().expect(200);
+    const conflict = before.body.conflicts[0];
+    const inConflict = new Set(conflict.statements.map((entry) => String(entry.claimId)));
+    const foreign = before.body.timeline.find(
+      (claim) => claim.type === 'decision' && !inConflict.has(String(claim.id)),
+    );
+
+    const submitted = [...conflict.claimIds.map(String), String(foreign.id)];
+    const rejected = await request(app)
+      .post(`/api/projects/${projectId}/conflicts/resolve`)
+      .set(auth(leadToken))
+      .send({ claimIds: submitted, keepClaimId: String(foreign.id) })
+      .expect(404);
+    expect(rejected.body.error.message).toMatch(/not part of this conflict/i);
+  });
+
+  it('keeps the kept decision status instead of forcing it active', async () => {
+    const before = await getState().expect(200);
+    const conflict = before.body.conflicts[0];
+    const keep = conflict.statements[0];
+    await Claim.updateOne({ _id: keep.claimId }, { $set: { status: 'planned' } });
+
+    const resolved = await resolve(conflict, keep.claimId).expect(200);
+    expect(resolved.body.keptStatus).toBe('planned');
+
+    const after = await getState().expect(200);
+    const kept = after.body.timeline.find((claim) => String(claim.id) === String(keep.claimId));
+    expect(kept.status).toBe('planned');
   });
 
   it('rejects resolving the same conflict twice', async () => {

@@ -174,12 +174,21 @@ describe('claim actions from the overview deck', () => {
     await act(task.id, { status: 'done', note: 'Handed over' }, incomingToken).expect(403);
   });
 
-  it('rejects an action with no owner or status', async () => {
+  it('requires some input, and accepts a note without changing status', async () => {
     const before = await getState().expect(200);
     const question = before.body.openQuestions[0];
 
     await act(question.id, {}).expect(400);
-    await act(question.id, { note: 'hmm' }).expect(400);
+
+    const noted = await act(question.id, { note: 'Asked finance to confirm the window.' })
+      .expect(200);
+    expect(noted.body.claim.status).toBe(question.status);
+    expect(noted.body.claim.resolution.note).toBe('Asked finance to confirm the window.');
+
+    const event = (await auditEvents()).find(
+      (entry) => entry.action === 'claim.note_added' && entry.targetId === question.id,
+    );
+    expect(event).toBeTruthy();
   });
 
   it('returns 404 for a claim that does not exist', async () => {

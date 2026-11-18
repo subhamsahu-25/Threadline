@@ -195,7 +195,9 @@ export default function NotificationBell() {
                       {item.detail}
                     </span>
                     <span className="mt-0.5 block font-mono text-[9.5px] uppercase tracking-wider text-ink-faint">
-                      {item.projectKey} · {formatRelative(item.createdAt)}
+                      {item.projectKey
+                        ? `${item.projectKey} · ${formatRelative(item.createdAt)}`
+                        : formatRelative(item.createdAt)}
                     </span>
                   </span>
                 </button>

@@ -17,7 +17,7 @@ claimed as built.
 
 | Item | Why it matters | Risk |
 | --- | --- | --- |
-| Google Drive OAuth consent flow | Today the connector needs a pasted access token, which expires. | Medium: redirect handling, token storage and per-user grants. |
+| Google Drive OAuth consent flow | The connector uses pasted server-wide credentials (access token or refresh-token env vars); there is no per-user consent flow. | Medium: redirect handling, token storage and per-user grants. |
 | GitHub/Drive webhooks | Polling every five minutes is a floor, not a guarantee; webhooks make changes arrive in seconds. | Medium–high: signature verification, replay protection, per-repo setup. |
 | Per-user connector credentials | The current `GITHUB_TOKEN` / `GOOGLE_DRIVE_ACCESS_TOKEN` is server-wide. | High: this is an authorisation-model change, not just storage. |
 | Connector health UI | Show last error, next check and allow-list state per source. | Low. |
@@ -37,14 +37,14 @@ claimed as built.
 | --- | --- | --- |
 | Vector retrieval for cross-source questions | Extraction is per chunk; there is no semantic index for "what changed across these sources?". | Medium: an index to operate, plus evaluation for retrieval quality. |
 | Semantic conflict detection | Current conflicts are topic-key based, not entailment. | High: model quality and explainability. |
-| Notification delivery | Questions, approvals and acknowledgements are pull-based. | Low: email/Slack delivery plus preference handling. |
+| Email/Slack delivery | In-app notices and an optional outbound webhook exist; there is no bundled email or Slack provider and no preference handling. | Low: provider integration and retry queue. |
 | Reviewer assignment and SLA reminders | Handovers have no due date or escalation. | Low. |
 
 ## Phase 5 — Evaluation depth (ongoing)
 
 | Item | Why it matters | Risk |
 | --- | --- | --- |
-| Frontend component and accessibility tests | Today the UI gate is the production build, a smoke test and scripted browser journeys. | Low–medium: test infrastructure and stable fixtures. |
+| Frontend component tests | The UI gate is the production build, a smoke test, a CI Playwright journey and an axe-core pass over 50 page/persona/viewport combinations; there is no component test suite. | Low–medium: test infrastructure and stable fixtures. |
 | Load and concurrency testing | Behaviour beyond demo scale is unmeasured. | Medium: needs a staging environment and representative data. |
 | Extraction quality benchmark | Quote accuracy is measured; statement completeness and precision are not. | Medium: requires a labelled corpus. |
 

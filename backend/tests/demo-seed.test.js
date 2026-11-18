@@ -55,7 +55,7 @@ describe('demo seed authorization', () => {
     expect(await Project.countDocuments({ key: DEMO_PROJECT_KEY })).toBe(1);
   });
 
-  it('repairs stale members and the outgoing person without touching content', async () => {
+  it('never rewrites an existing workspace when reset is not requested', async () => {
     const stale = await User.create({
       email: 'soumyajit@threadline.demo',
       name: 'Soumyajit Jena',
@@ -78,33 +78,90 @@ describe('demo seed authorization', () => {
         },
       },
     );
+    const passwordBefore = await User.findOne({ email: LEAD }).select('+passwordHash').lean();
 
     const response = await ensureSeeded().expect(200);
-    expect(response.body.reconciled).toBe(true);
+    expect(response.body.alreadySeeded).toBe(true);
+    expect(response.body.reconciled).toBeUndefined();
 
     const project = await Project.findOne({ key: DEMO_PROJECT_KEY }).populate(
       'members.user',
       'email',
     );
-    const roles = Object.fromEntries(project.members.map((entry) => [entry.user.email, entry.role]));
-    expect(roles).toEqual({
-      'subham@threadline.demo': 'lead',
-      'rohan@threadline.demo': 'contributor',
-      'ananya@threadline.demo': 'contributor',
-      'vikram@threadline.demo': 'observer',
-    });
-    const lead = await User.findOne({ email: LEAD });
-    const rohan = await User.findOne({ email: 'rohan@threadline.demo' });
-    expect(String(project.owner)).toBe(String(lead._id));
-    expect(String(project.transition.outgoingUserId)).toBe(String(rohan._id));
-    expect(project.transition.outgoingName).toBe('Rohan Mehta');
+    expect(String(project.owner)).toBe(String(stale._id));
+    expect(project.members.map((entry) => entry.user.email)).toEqual([
+      'soumyajit@threadline.demo',
+    ]);
+    expect(String(project.transition.outgoingUserId)).toBe(String(stale._id));
     expect(await Source.countDocuments()).toBe(before);
+
+    const passwordAfter = await User.findOne({ email: LEAD }).select('+passwordHash').lean();
+    expect(passwordAfter.passwordHash).toBe(passwordBefore.passwordHash);
+  });
+
+  it('does not return signed tokens from the public seed endpoint', async () => {
+    await mongoose.connection.dropDatabase();
+    const response = await request(app).post('/api/demo/seed').expect(201);
+    expect(response.body.users).toHaveLength(4);
+    for (const user of response.body.users) {
+      expect(user.token).toBeUndefined();
+    }
+  });
+
+  it('reserves the ATLAS key for the demo workspace', async () => {
+    const response = await request(app)
+      .post('/api/projects')
+      .set(auth(tokenOf(seeded, LEAD)))
+      .send({ key: 'ATLAS', name: 'Real Atlas project' });
+    expect(response.status).toBe(400);
+    expect(response.body.error.message).toMatch(/reserved/i);
+  });
+
+  it('leaves a real project keyed ATLAS alone', async () => {
+    await mongoose.connection.dropDatabase();
+    const user = await User.create({
+      email: 'real@example.com',
+      name: 'Real Owner',
+      passwordHash: 'not-a-real-hash',
+    });
+    await Project.create({
+      key: DEMO_PROJECT_KEY,
+      name: 'A real Atlas project',
+      owner: user._id,
+      members: [{ user: user._id, role: 'lead' }],
+    });
+
+    const seededResponse = await ensureSeeded();
+    expect(seededResponse.status).toBe(404);
+
+    const resetResponse = await rebuild();
+    expect(resetResponse.status).toBe(404);
+    const project = await Project.findOne({ key: DEMO_PROJECT_KEY });
+    expect(project.name).toBe('A real Atlas project');
+    expect(project.isDemo).toBe(false);
+    expect(String(project.owner)).toBe(String(user._id));
   });
 
   it('leaves a missing workspace alone when reconciling at startup', async () => {
     await mongoose.connection.dropDatabase();
     expect(await reconcileDemoWorkspace()).toBeNull();
     expect(await Project.countDocuments({ key: DEMO_PROJECT_KEY })).toBe(0);
+  });
+
+  it('adopts a legacy demo workspace without rewriting its members', async () => {
+    await Project.updateOne({ key: DEMO_PROJECT_KEY }, { $unset: { isDemo: 1 } });
+    const before = await Project.findOne({ key: DEMO_PROJECT_KEY }).lean();
+
+    const result = await reconcileDemoWorkspace();
+    expect(result?.adopted).toBe(true);
+
+    const after = await Project.findOne({ key: DEMO_PROJECT_KEY }).lean();
+    expect(after.isDemo).toBe(true);
+    expect(String(after.owner)).toBe(String(before.owner));
+    expect(after.members.map((entry) => String(entry.user))).toEqual(
+      before.members.map((entry) => String(entry.user)),
+    );
+    expect(await Source.countDocuments()).toBeGreaterThan(0);
   });
 
   it('creates a missing workspace anonymously', async () => {

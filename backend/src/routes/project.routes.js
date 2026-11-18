@@ -1,28 +1,45 @@
 import { Router } from 'express';
-import fs from 'node:fs/promises';
-import path from 'node:path';
-import { AppError, asyncHandler, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { AppError, asyncHandler, badRequest, conflict, forbidden, notFound, unprocessable } from '../lib/errors.js';
 import { env } from '../config/env.js';
-import { uploadFiles } from '../middleware/upload.js';
+import { DEMO_PROJECT_KEY } from '../demo/seed.js';
+import { discardUploads, uploadFiles } from '../middleware/upload.js';
 import { loadProject, requireProjectContributor, requireProjectLead } from '../middleware/project.js';
 import { validate } from '../middleware/validate.js';
-import { AuditEvent, Claim, Clarification, Document, Evidence, Handover, Project, Source, User } from '../models/index.js';
+import {
+  AuditEvent,
+  Claim,
+  Clarification,
+  Document,
+  Evidence,
+  Handover,
+  Notification,
+  Project,
+  Source,
+  User,
+} from '../models/index.js';
 import {
   assertSourceVisible,
+  canContribute,
   canManageProject,
   claimVisibleTo,
   isIncoming,
   roleOf,
   sourceVisibleTo,
 } from '../services/access/policy.js';
-import { recordAudit, redactAuditEventsForViewer } from '../services/audit.js';
+import { recordAudit, recordViewAudit, redactAuditEventsForViewer } from '../services/audit.js';
 import { notify } from '../services/notifications.js';
-import { askClarifications, buildClarificationCandidates } from '../services/clarifications.js';
+import {
+  askClarifications,
+  buildClarificationCandidates,
+  closeOpenClarificationsForMember,
+} from '../services/clarifications.js';
 import { redactText } from '../lib/redaction.js';
+import { locateQuote } from '../lib/text.js';
 import { enqueue } from '../services/queue.js';
 import {
   buildStateForUser,
   decorateClaim,
+  loadVisibleClaimPage,
   loadVisibleClaims,
   serializeDocument,
   serializeProject,
@@ -30,8 +47,16 @@ import {
 } from '../services/projectState.js';
 import { parseDriveRef } from '../services/ingest/googleDrive.js';
 import { parseRepoRef } from '../services/ingest/github.js';
+import { allowsExternalAI } from '../services/ai/policy.js';
 import { isSyncable } from '../services/ingest/sync.js';
-import { handoverAccess } from '../services/handover/workflow.js';
+import {
+  detachMemberFromHandovers,
+  handoverAccess,
+  refreshOutdatedHandovers,
+} from '../services/handover/workflow.js';
+import { loadOwnerDirectory, resolveOwnerName } from '../services/owners.js';
+import { findSupersededPairs } from '../services/reconstruction/link.js';
+import { purgeSourceContent } from '../services/purge.js';
 import {
   addMemberSchema,
   askClarificationsSchema,
@@ -89,6 +114,10 @@ router.post(
   asyncHandler(async (req, res) => {
     const { key, name, description, members, transition, startedAt, targetDate } = req.body;
     const normalizedKey = key.toUpperCase();
+
+    if (normalizedKey === DEMO_PROJECT_KEY) {
+      throw badRequest('The ATLAS key is reserved for the demo workspace');
+    }
 
     const existing = await Project.findOne({ key: normalizedKey });
     if (existing) throw conflict(`Project key ${normalizedKey} is already in use`);
@@ -163,17 +192,27 @@ router.get(
     const sharedHandovers = visibleHandovers.filter((handover) =>
       ['shared', 'acknowledged'].includes(handover.status),
     ).length;
+    // Handover activity is only described to people who can reach a handover:
+    // the delivery team, or the recipient/author of one. An observer who is
+    // not part of any handover sees source counts and nothing else.
+    const handoverActivityVisible =
+      canContribute(req.project, req.user) ||
+      visibleHandovers.some(
+        (handover) =>
+          String(handover.recipient) === String(req.user._id) ||
+          String(handover.createdBy) === String(req.user._id),
+      );
 
-    // Counts are description of what the viewer may read. Leads manage every
-    // source but do not implicitly read content restricted to other people, so
-    // both totals come from the same fail-closed visibility rule.
+    // Counts describe what the viewer may read. Leads manage every source but
+    // do not implicitly read content restricted to other people, so the total
+    // comes from the same fail-closed visibility rule.
     res.json({
       project: serializeProject(req.project, req.user),
       stats: {
         sources: visibleSources.length,
-        totalSources: visibleSources.length,
-        handovers: visibleHandovers.length,
-        sharedHandovers,
+        ...(handoverActivityVisible
+          ? { handovers: visibleHandovers.length, sharedHandovers }
+          : {}),
       },
     });
   }),
@@ -194,11 +233,28 @@ router.patch(
       }
     }
     if (body.transition) {
+      if (
+        body.transition.outgoingUserId &&
+        !req.project.members.some(
+          (member) => String(member.user?._id ?? member.user) === String(body.transition.outgoingUserId),
+        )
+      ) {
+        throw badRequest('The outgoing person must be a project member');
+      }
       const current = req.project.transition?.toObject
         ? req.project.transition.toObject()
         : req.project.transition || {};
       req.project.transition = { ...current, ...body.transition };
       changed.push('transition');
+    }
+    if (body.settings) {
+      req.project.settings = {
+        ...(req.project.settings?.toObject
+          ? req.project.settings.toObject()
+          : req.project.settings || {}),
+        ...body.settings,
+      };
+      changed.push('settings');
     }
 
     await req.project.save();
@@ -211,6 +267,8 @@ router.patch(
       targetLabel: req.project.name,
       meta: { changed },
       req,
+      // Project settings include access and four-eyes approval rules.
+      critical: true,
     });
 
     await req.project.populate('members.user', 'name email');
@@ -246,6 +304,7 @@ router.post(
       targetLabel: user.name,
       meta: { role },
       req,
+      critical: true,
     });
 
     await notify({
@@ -278,6 +337,9 @@ router.patch(
     if (!member) throw notFound('That person is not a member');
     const role = req.body.role;
     if (member.role === role) {
+      // Serialization reads member.user for names and emails, so the no-op
+      // path must populate exactly like the changed path.
+      await req.project.populate('members.user', 'name email');
       res.json({ project: serializeProject(req.project, req.user) });
       return;
     }
@@ -293,6 +355,7 @@ router.patch(
       targetId: userId,
       meta: { from: previousRole, to: role },
       req,
+      critical: true,
     });
 
     await notify({
@@ -324,6 +387,17 @@ router.delete(
     );
     if (req.project.members.length === before) throw notFound('That person is not a member');
 
+    const removedUser = await User.findById(userId).select('name email').lean();
+
+    // The departing person is a membership fact, not a name. Clear the link
+    // now that the account no longer belongs to the project.
+    if (
+      req.project.transition?.outgoingUserId &&
+      String(req.project.transition.outgoingUserId) === String(userId)
+    ) {
+      req.project.transition.outgoingUserId = undefined;
+    }
+
     await req.project.save();
     await recordAudit({
       projectId: req.project._id,
@@ -331,9 +405,35 @@ router.delete(
       action: 'member.removed',
       targetType: 'user',
       targetId: userId,
+      targetLabel: removedUser?.name,
       meta: {},
       req,
+      critical: true,
     });
+
+    // Questions addressed to the departed member can never be answered now.
+    await closeOpenClarificationsForMember({
+      project: req.project,
+      userId,
+      actor: req.user,
+      req,
+    });
+
+    // Remove every live reference to the account: source audience lists,
+    // share links addressed to them, and any queued notice. Handovers that
+    // still need a person are flagged to the leads instead of going silent.
+    await Source.updateMany(
+      { project: req.project._id, 'visibility.users': userId },
+      { $pull: { 'visibility.users': userId } },
+    );
+    await Notification.deleteMany({ project: req.project._id, recipient: userId });
+    await detachMemberFromHandovers({
+      project: req.project,
+      userId,
+      actor: req.user,
+      req,
+    });
+
     res.json({ removed: true });
   }),
 );
@@ -412,15 +512,19 @@ router.get(
     if (isIncoming(req.project, req.user._id)) {
       throw forbidden('Incoming recipients read the shared handover, not the outgoing team record');
     }
-    const { type, limit } = req.query;
-    const { claims, citationsByClaim } = await loadVisibleClaims({
+    const { type, limit, cursor } = req.query;
+    const page = await loadVisibleClaimPage({
       project: req.project,
       userId: req.user._id,
+      type,
+      limit,
+      cursor,
     });
-    const filtered = type ? claims.filter((claim) => claim.type === type) : claims;
     res.json({
-      claims: filtered.slice(0, limit).map((claim) => decorateClaim(claim, citationsByClaim)),
-      total: filtered.length,
+      claims: page.claims.map((claim) => decorateClaim(claim, page.citationsByClaim)),
+      total: page.total,
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
     });
   }),
 );
@@ -431,17 +535,22 @@ router.post(
   requireProjectLead,
   validate({ body: resolveConflictSchema }),
   asyncHandler(async (req, res) => {
-    const { topicKey, keepClaimId } = req.body;
+    const { claimIds, keepClaimId } = req.body;
     const group = await Claim.find({
+      _id: { $in: claimIds },
       project: req.project._id,
       type: 'decision',
-      topicKey,
       retiredAt: null,
     });
 
+    // Act on exactly the claims the reviewer saw. A fuzzy topic group can span
+    // several topic keys, so resolving by one key used to miss members.
+    if (group.length !== new Set(claimIds.map(String)).size) {
+      throw notFound('Some statements in this conflict no longer exist');
+    }
     const active = group.filter((claim) => claim.status !== 'superseded');
     if (active.length < 2) throw badRequest('This conflict is already resolved');
-    const keep = active.find((claim) => String(claim._id) === keepClaimId);
+    const keep = active.find((claim) => String(claim._id) === String(keepClaimId));
     if (!keep) throw notFound('The selected statement is not part of this conflict');
 
     // Fail closed: a lead may only confirm a decision when every statement in
@@ -457,7 +566,20 @@ router.post(
       );
     }
 
-    const superseded = active.filter((claim) => String(claim._id) !== keepClaimId);
+    // The submitted list must be exactly one of the conflict groups the state
+    // endpoint shows. Appending an unrelated decision would otherwise let one
+    // request supersede claims that were never part of the reviewed conflict.
+    const submitted = new Set(active.map((claim) => String(claim._id)));
+    const isOneConflict = findSupersededPairs(visibleClaims).some(
+      (pair) =>
+        pair.claims.length === submitted.size &&
+        pair.claims.every((claim) => submitted.has(String(claim._id))),
+    );
+    if (!isOneConflict) {
+      throw notFound('The submitted statements are not part of this conflict');
+    }
+
+    const superseded = active.filter((claim) => String(claim._id) !== String(keep._id));
     await Claim.updateMany(
       { _id: { $in: superseded.map((claim) => claim._id) } },
       {
@@ -465,9 +587,11 @@ router.post(
         $addToSet: { flags: 'superseded_by_reviewer' },
       },
     );
+    // The kept statement keeps the status it already had (planned, done, ...);
+    // resolving only says which statement is current.
     await Claim.updateOne(
       { _id: keep._id },
-      { $set: { status: 'active' }, $addToSet: { flags: 'reviewer_confirmed_current' } },
+      { $addToSet: { flags: 'reviewer_confirmed_current' } },
     );
 
     await recordAudit({
@@ -476,19 +600,25 @@ router.post(
       action: 'claim.conflict_resolved',
       targetType: 'claim',
       targetId: keep._id,
-      targetLabel: `Current decision: ${keep.topic || topicKey}`,
+      targetLabel: `Current decision: ${keep.topic || keep.topicKey}`,
       meta: {
-        topicKey,
+        topicKey: keep.topicKey,
         topic: keep.topic,
         keptClaimId: String(keep._id),
+        keptStatus: keep.status,
+        conflictClaimIds: claimIds.map(String),
         supersededClaimIds: superseded.map((claim) => String(claim._id)),
       },
       req,
+      critical: true,
     });
+
+    await refreshOutdatedHandovers({ projectId: req.project._id, req });
 
     res.json({
       resolved: true,
       keptClaimId: String(keep._id),
+      keptStatus: keep.status,
       supersededClaimIds: superseded.map((claim) => String(claim._id)),
     });
   }),
@@ -536,6 +666,12 @@ router.post(
 
     const { ownerName, note, status } = req.body;
 
+    // Supersession is a reviewer decision. Letting a status change land on a
+    // superseded row would quietly make an outdated statement current again.
+    if (claim.status === 'superseded' && status) {
+      throw badRequest('This statement was superseded; change the statement that replaced it instead');
+    }
+
     // Answering an open question is reserved for the people who hold the
     // knowledge: the lead and the person whose departure created the gap.
     // Contributors can still close tasks and assign owners.
@@ -553,9 +689,49 @@ router.post(
     }
 
     const before = { ownerName: claim.ownerName, status: claim.status };
+    let ownerResolution = null;
 
     if (ownerName) {
-      claim.ownerName = ownerName;
+      // A typed name is matched to a project member so the recipient's "you
+      // own this" board and notifications target an account, not a string.
+      // An ambiguous first name is kept as text and flagged for a person.
+      const directory = await loadOwnerDirectory(req.project);
+      ownerResolution = resolveOwnerName(directory, ownerName);
+      claim.ownerName = ownerName.trim().slice(0, 120);
+      claim.ownerUser = ownerResolution.userId || undefined;
+      if (ownerResolution.ambiguous) {
+        claim.state = 'needs_review';
+        claim.flags = [...new Set([...(claim.flags || []), 'ambiguous_owner'])];
+      } else if (ownerResolution.userId) {
+        claim.flags = (claim.flags || []).filter((flag) => flag !== 'ambiguous_owner');
+      }
+    }
+
+    const safeNote = note ? redactText(note).text : '';
+    if (status) {
+      claim.status = status;
+      claim.resolution = {
+        note: safeNote,
+        by: req.user._id,
+        byName: req.user.name,
+        at: new Date(),
+      };
+    } else if (safeNote) {
+      // A note on its own is still a decision the team made. Store it without
+      // touching the status instead of dropping the input on the floor.
+      claim.resolution = {
+        note: safeNote,
+        by: req.user._id,
+        byName: req.user.name,
+        at: new Date(),
+      };
+    }
+
+    await claim.save();
+    // The audit rows are written only once the claim is stored. These actions
+    // change ownership and status, so an unwritable log must surface as a
+    // failure rather than a silent success.
+    if (ownerName) {
       await recordAudit({
         projectId: req.project._id,
         actor: req.user,
@@ -563,20 +739,17 @@ router.post(
         targetType: 'claim',
         targetId: claim._id,
         targetLabel: claim.statement.slice(0, 120),
-        meta: { ownerName, before: before.ownerName || null },
+        meta: {
+          ownerName,
+          ownerUserId: ownerResolution.userId ? String(ownerResolution.userId) : null,
+          ambiguous: ownerResolution.ambiguous,
+          before: before.ownerName || null,
+        },
         req,
+        critical: true,
       });
     }
-
     if (status) {
-      claim.status = status;
-      const safeNote = redactText(note || '').text;
-      claim.resolution = {
-        note: safeNote,
-        by: req.user._id,
-        byName: req.user.name,
-        at: new Date(),
-      };
       await recordAudit({
         projectId: req.project._id,
         actor: req.user,
@@ -586,16 +759,34 @@ router.post(
         targetLabel: claim.statement.slice(0, 120),
         meta: { status, before: before.status, note: safeNote || null },
         req,
+        critical: true,
+      });
+    } else if (safeNote) {
+      await recordAudit({
+        projectId: req.project._id,
+        actor: req.user,
+        action: 'claim.note_added',
+        targetType: 'claim',
+        targetId: claim._id,
+        targetLabel: claim.statement.slice(0, 120),
+        meta: { note: safeNote },
+        req,
+        critical: true,
       });
     }
-
-    await claim.save();
+    // An owner or status change is a freshness event for any handover that
+    // already carries this claim.
+    await refreshOutdatedHandovers({ projectId: req.project._id, req });
     res.json({
       resolved: true,
       claim: {
         id: String(claim._id),
         status: claim.status,
         ownerName: claim.ownerName || null,
+        ownerUserId: claim.ownerUser ? String(claim.ownerUser) : null,
+        ownerResolution: ownerResolution
+          ? { ambiguous: ownerResolution.ambiguous }
+          : undefined,
         resolution: claim.resolution || null,
       },
     });
@@ -605,7 +796,9 @@ router.post(
 router.post(
   '/:projectId/sources',
   loadProject,
-  requireProjectContributor,
+  // Connectors fetch with the deployment's shared provider token, so only a
+  // lead may point one at a repository or folder.
+  requireProjectLead,
   validate({ body: createSourceSchema }),
   asyncHandler(async (req, res) => {
     const { kind, externalRef, name, visibility, sensitivity } = req.body;
@@ -613,6 +806,29 @@ router.post(
     let normalizedRef = externalRef;
     if (kind === 'github') normalizedRef = parseRepoRef(externalRef).fullName;
     if (kind === 'drive') normalizedRef = parseDriveRef(externalRef);
+
+    const duplicate = await Source.findOne({
+      project: req.project._id,
+      kind,
+      externalRef: normalizedRef,
+      deletedAt: null,
+    }).lean();
+    if (duplicate) {
+      throw conflict('This repository or folder is already connected to the project', {
+        sourceId: String(duplicate._id),
+      });
+    }
+
+    const connectorCount = await Source.countDocuments({
+      project: req.project._id,
+      kind: { $in: ['github', 'drive'] },
+      deletedAt: null,
+    });
+    if (connectorCount >= env.maxConnectorSources) {
+      throw unprocessable(
+        `A project can have at most ${env.maxConnectorSources} connected sources. Remove one before adding another.`,
+      );
+    }
 
     const source = await Source.create({
       project: req.project._id,
@@ -625,11 +841,16 @@ router.post(
         visibility,
       }),
       sensitivity: sensitivity || 'internal',
+      aiPolicy: req.body.aiPolicy
+        ? { ...req.body.aiPolicy, updatedAt: new Date(), updatedBy: req.user._id }
+        : undefined,
       createdBy: req.user._id,
       status: 'queued',
       sync: {
-        enabled: kind === 'github' || kind === 'drive',
-        intervalMinutes: 5,
+        // Sync spends the shared provider token's quota, so it is opt-in.
+        // The project lead turns it on from the source settings.
+        enabled: false,
+        intervalMinutes: 15,
       },
     });
 
@@ -643,6 +864,7 @@ router.post(
       targetLabel: source.name,
       meta: { kind, ref: normalizedRef, visibility: source.visibility, sensitivity: source.sensitivity },
       req,
+      critical: true,
     });
 
     res.status(202).json({ source: serializeSource(source) });
@@ -655,66 +877,72 @@ router.post(
   requireProjectContributor,
   uploadFiles,
   asyncHandler(async (req, res) => {
-    const files = req.files || [];
-    if (files.length === 0) throw badRequest('Attach at least one file in the "files" field');
+    try {
+      const files = req.files || [];
+      if (files.length === 0) throw badRequest('Attach at least one file in the "files" field');
 
-    let visibility;
-    if (req.body.visibility) {
-      try {
-        visibility = typeof req.body.visibility === 'string'
-          ? JSON.parse(req.body.visibility)
-          : req.body.visibility;
-      } catch {
-        throw badRequest('visibility must be valid JSON');
+      let visibility;
+      if (req.body.visibility) {
+        try {
+          visibility = typeof req.body.visibility === 'string'
+            ? JSON.parse(req.body.visibility)
+            : req.body.visibility;
+        } catch {
+          throw badRequest('visibility must be valid JSON');
+        }
       }
-    }
 
-    const parsed = uploadSourceSchema.safeParse({
-      name: req.body.name,
-      sensitivity: req.body.sensitivity || 'internal',
-      visibility,
-    });
-    if (!parsed.success) throw zodError(parsed.error);
+      const parsed = uploadSourceSchema.safeParse({
+        name: req.body.name,
+        sensitivity: req.body.sensitivity || 'internal',
+        visibility,
+      });
+      if (!parsed.success) throw zodError(parsed.error);
 
-    const source = await Source.create({
-      project: req.project._id,
-      kind: 'upload',
-      name: parsed.data.name || files[0].originalname,
-      externalRef: '',
-      visibility: defaultSourceVisibility({
+      const source = await Source.create({
+        project: req.project._id,
         kind: 'upload',
+        name: parsed.data.name || files[0].originalname,
+        externalRef: '',
+        visibility: defaultSourceVisibility({
+          kind: 'upload',
+          sensitivity: parsed.data.sensitivity,
+          visibility: parsed.data.visibility,
+        }),
         sensitivity: parsed.data.sensitivity,
-        visibility: parsed.data.visibility,
-      }),
-      sensitivity: parsed.data.sensitivity,
-      createdBy: req.user._id,
-      status: 'queued',
-      files: files.map((file) => ({
-        originalName: file.originalname,
-        storedName: file.filename,
-        mime: file.mimetype,
-        size: file.size,
-      })),
-    });
+        createdBy: req.user._id,
+        status: 'queued',
+        files: files.map((file) => ({
+          originalName: file.originalname,
+          storedName: file.filename,
+          mime: file.mimetype,
+          size: file.size,
+        })),
+      });
 
-    enqueue('ingest_source', { sourceId: String(source._id) });
-    await recordAudit({
-      projectId: req.project._id,
-      actor: req.user,
-      action: 'source.created',
-      targetType: 'source',
-      targetId: source._id,
-      targetLabel: source.name,
-      meta: {
-        kind: 'upload',
-        files: files.map((file) => file.originalname),
-        visibility: source.visibility,
-        sensitivity: source.sensitivity,
-      },
-      req,
-    });
+      enqueue('ingest_source', { sourceId: String(source._id) });
+      await recordAudit({
+        projectId: req.project._id,
+        actor: req.user,
+        action: 'source.created',
+        targetType: 'source',
+        targetId: source._id,
+        targetLabel: source.name,
+        meta: {
+          kind: 'upload',
+          files: files.map((file) => file.originalname),
+          visibility: source.visibility,
+          sensitivity: source.sensitivity,
+        },
+        req,
+        critical: true,
+      });
 
-    res.status(202).json({ source: serializeSource(source) });
+      res.status(202).json({ source: serializeSource(source) });
+    } catch (error) {
+      await discardUploads(req.files);
+      throw error;
+    }
   }),
 );
 
@@ -748,10 +976,25 @@ router.patch(
     });
     if (!source) throw notFound('Source not found');
 
+    // Leads manage sources but do not implicitly read them. No change that
+    // alters how the content is classified or shared may widen access beyond
+    // what the caller can already see. Hiding, unhiding and removal stay
+    // available because they never reveal content.
+    const changesAccess =
+      req.body.name !== undefined ||
+      req.body.sensitivity !== undefined ||
+      req.body.visibility !== undefined;
+    if (changesAccess && !sourceVisibleTo(source, req.project, req.user._id)) {
+      throw forbidden(
+        'You can only change a source you are authorized to read. Use purge to remove it instead.',
+      );
+    }
+
     const before = {
       visibility: source.visibility?.toObject ? source.visibility.toObject() : source.visibility,
       sensitivity: source.sensitivity,
       hidden: Boolean(source.hiddenAt),
+      allowExternalAI: allowsExternalAI(source),
     };
 
     for (const field of ['name', 'sensitivity']) {
@@ -761,17 +1004,61 @@ router.patch(
     if (req.body.hidden !== undefined) {
       source.hiddenAt = req.body.hidden ? new Date() : undefined;
     }
+    if (req.body.aiPolicy?.allowExternal !== undefined) {
+      source.aiPolicy = {
+        allowExternal: req.body.aiPolicy.allowExternal,
+        updatedAt: new Date(),
+        updatedBy: req.user._id,
+      };
+    } else if (
+      req.body.sensitivity !== undefined &&
+      source.sensitivity === 'confidential' &&
+      source.sensitivity !== before.sensitivity
+    ) {
+      // Making a source confidential withdraws any earlier consent to send it
+      // to an external model; a lead has to allow it again on purpose.
+      source.aiPolicy = {
+        allowExternal: false,
+        updatedAt: new Date(),
+        updatedBy: req.user._id,
+      };
+    }
 
     await source.save();
+
+    // Claims copy the sensitivity at ingest, so re-classifying a source must
+    // cascade or templates keep including now-confidential claims.
+    if (
+      req.body.sensitivity !== undefined &&
+      source.sensitivity !== before.sensitivity
+    ) {
+      await Claim.updateMany(
+        { source: source._id },
+        { $set: { sensitivity: source.sensitivity } },
+      );
+    }
+
+    // Any access change (sensitivity, visibility or hidden state) alters what
+    // a recipient can read, so live handovers are re-judged immediately.
+    if (
+      source.sensitivity !== before.sensitivity ||
+      JSON.stringify(source.visibility) !== JSON.stringify(before.visibility) ||
+      Boolean(source.hiddenAt) !== before.hidden
+    ) {
+      await refreshOutdatedHandovers({ projectId: req.project._id, req });
+    }
+
     await recordAudit({
       projectId: req.project._id,
       actor: req.user,
       action:
-        req.body.hidden === undefined
-          ? 'source.access_changed'
-          : source.hiddenAt
+        req.body.hidden !== undefined
+          ? source.hiddenAt
             ? 'source.hidden'
-            : 'source.unhidden',
+            : 'source.unhidden'
+          : before.allowExternalAI !== allowsExternalAI(source) && !changesAccess
+            ? 'source.ai_policy_changed'
+            : 'source.access_changed',
       targetType: 'source',
       targetId: source._id,
       targetLabel: source.name,
@@ -781,9 +1068,11 @@ router.patch(
           visibility: source.visibility,
           sensitivity: source.sensitivity,
           hidden: Boolean(source.hiddenAt),
+          allowExternalAI: allowsExternalAI(source),
         },
       },
       req,
+      critical: true,
     });
 
     res.json({ source: serializeSource(source) });
@@ -805,46 +1094,11 @@ router.delete(
       throw conflict('Wait for ingestion to finish before removing this source');
     }
 
-    // Purging removes the content a permission decision was based on. The
-    // source row itself is kept (marked deleted) so citations and audits can
-    // still explain why an item disappeared, but no text, evidence or file
-    // survives, and every claim it produced is retired.
-    const documents = await Document.find({ source: source._id }).select('_id').lean();
-    const documentIds = documents.map((document) => document._id);
-    const claims = await Claim.find({ source: source._id }).select('_id').lean();
-    const claimIds = claims.map((claim) => claim._id);
-
-    const evidence = await Evidence.deleteMany({
-      $or: [
-        { source: source._id },
-        ...(documentIds.length > 0 ? [{ document: { $in: documentIds } }] : []),
-        ...(claimIds.length > 0 ? [{ claim: { $in: claimIds } }] : []),
-      ],
-    });
-    if (documentIds.length > 0) {
-      await Document.deleteMany({ _id: { $in: documentIds } });
-    }
-    if (claimIds.length > 0) {
-      await Claim.updateMany(
-        { _id: { $in: claimIds }, retiredAt: null },
-        { $set: { retiredAt: new Date() }, $unset: { document: 1 } },
-      );
-    }
-
-    for (const file of source.files || []) {
-      if (!file.storedName) continue;
-      await fs
-        .unlink(path.join(env.uploadDir, path.basename(file.storedName)))
-        .catch(() => {});
-    }
-    const fileCount = (source.files || []).length;
-
-    source.deletedAt = new Date();
-    source.statusMessage =
-      'Source purged: stored text, evidence and files deleted; its claims are retired';
-    source.files = [];
-    if (source.sync) source.sync.enabled = false;
-    await source.save();
+    // Purging removes every copy of the content a permission decision was
+    // based on, including handover items, saved version snapshots and
+    // clarification text. The source row itself is kept (marked deleted) so
+    // the audit trail still explains why items vanished.
+    const result = await purgeSourceContent({ project: req.project, source });
 
     await recordAudit({
       projectId: req.project._id,
@@ -853,22 +1107,12 @@ router.delete(
       targetType: 'source',
       targetId: source._id,
       targetLabel: source.name,
-      meta: {
-        documents: documentIds.length,
-        evidence: evidence.deletedCount || 0,
-        claimsRetired: claimIds.length,
-        files: fileCount,
-      },
+      meta: result,
       req,
+      critical: true,
     });
 
-    res.json({
-      deleted: true,
-      purged: true,
-      documents: documentIds.length,
-      evidence: evidence.deletedCount || 0,
-      claimsRetired: claimIds.length,
-    });
+    res.json({ deleted: true, purged: true, ...result });
   }),
 );
 
@@ -877,30 +1121,29 @@ router.post(
   loadProject,
   requireProjectContributor,
   asyncHandler(async (req, res) => {
-    const source = await Source.findOneAndUpdate(
-      {
-        _id: req.params.sourceId,
-        project: req.project._id,
-        deletedAt: null,
-        status: { $in: ['ready', 'partial', 'failed'] },
-      },
-      { $set: { status: 'queued', statusMessage: 'Re-ingestion requested' } },
-      { new: true },
-    );
-
-    if (!source) {
-      const existing = await Source.findOne({
-        _id: req.params.sourceId,
-        project: req.project._id,
-        deletedAt: null,
-      }).select('status');
-      if (!existing) throw notFound('Source not found');
+    const source = await Source.findOne({
+      _id: req.params.sourceId,
+      project: req.project._id,
+      deletedAt: null,
+    });
+    // A source the caller cannot read is indistinguishable from a missing one.
+    if (!source || !sourceVisibleTo(source, req.project, req.user._id)) {
+      throw notFound('Source not found');
+    }
+    if (['queued', 'processing'].includes(source.status)) {
       throw conflict(
-        existing.status === 'queued'
+        source.status === 'queued'
           ? 'This source is already queued for ingestion'
           : 'This source is already being ingested',
       );
     }
+    if (!['ready', 'partial', 'failed'].includes(source.status)) {
+      throw conflict('This source cannot be re-ingested in its current state');
+    }
+
+    source.status = 'queued';
+    source.statusMessage = 'Re-ingestion requested';
+    await source.save();
 
     enqueue('ingest_source', { sourceId: String(source._id) });
 
@@ -915,7 +1158,7 @@ router.post(
       req,
     });
 
-    res.status(202).json({ source: serializeSource(source) });
+    res.status(202).json({ source: { id: String(source._id), status: source.status } });
   }),
 );
 
@@ -929,7 +1172,9 @@ router.post(
       project: req.project._id,
       deletedAt: null,
     });
-    if (!source) throw notFound('Source not found');
+    if (!source || !sourceVisibleTo(source, req.project, req.user._id)) {
+      throw notFound('Source not found');
+    }
     if (!isSyncable(source)) {
       throw badRequest('Only connected GitHub and Drive sources can be synced');
     }
@@ -949,7 +1194,10 @@ router.post(
       req,
     });
 
-    res.status(202).json({ queued: true, source: serializeSource(source) });
+    res.status(202).json({
+      queued: true,
+      source: { id: String(source._id), status: source.status },
+    });
   }),
 );
 
@@ -1031,7 +1279,7 @@ router.get(
     const source = await Source.findById(document.source);
     assertSourceVisible(source, req.project, req.user._id);
 
-    await recordAudit({
+    await recordViewAudit({
       projectId: req.project._id,
       actor: req.user,
       action: 'document.viewed',
@@ -1058,19 +1306,6 @@ router.get(
   '/:projectId/evidence/:evidenceId',
   loadProject,
   asyncHandler(async (req, res) => {
-    const evidence = await Evidence.findOne({
-      _id: req.params.evidenceId,
-      project: req.project._id,
-    });
-    if (!evidence) throw notFound('Evidence not found');
-
-    const [source, document] = await Promise.all([
-      Source.findById(evidence.source),
-      Document.findById(evidence.document),
-    ]);
-    assertSourceVisible(source, req.project, req.user._id);
-    if (!document) throw notFound('The source document for this citation is unavailable');
-
     let handover = null;
     if (req.query.handover) {
       handover = await Handover.findOne({
@@ -1084,64 +1319,141 @@ router.get(
       if (!isRecipient && !isCreator && !canManageProject(req.project, req.user)) {
         throw forbidden('You do not have access to this handover');
       }
-
-      if (isRecipient) {
-        // A recipient may only resolve evidence that is actually cited by a
-        // shareable item in this handover, never arbitrary evidence IDs.
-        const cited = (handover.items || []).some(
-          (item) =>
-            ['accepted', 'edited'].includes(item.decision) &&
-            (item.citations || []).some(
-              (citation) => String(citation.evidenceId) === String(evidence._id),
-            ),
-        );
-        if (!cited) throw notFound('Evidence not found');
-      }
     }
 
     const asRecipient = Boolean(
       handover && String(handover.recipient) === String(req.user._id),
     );
 
-    const contextStart = Math.max(0, evidence.charStart - 600);
-    const contextEnd = Math.min(document.rawText.length, evidence.charEnd + 600);
-
-    let quote = evidence.quote;
-    let context = document.rawText.slice(contextStart, contextEnd);
-    let highlight = {
-      start: evidence.charStart - contextStart,
-      end: evidence.charEnd - contextStart,
+    // The handover stores the quote, source and document it was approved with.
+    // That snapshot keeps a citation readable after the evidence row was
+    // replaced by a re-ingest, and lets the drawer say when the passage changed.
+    const snapshotCitation = () => {
+      if (!handover) return null;
+      for (const item of handover.items || []) {
+        if (asRecipient && !['accepted', 'edited'].includes(item.decision)) continue;
+        const match = (item.citations || []).find(
+          (citation) => String(citation.evidenceId) === String(req.params.evidenceId),
+        );
+        if (match) return match;
+      }
+      return null;
     };
-    let redactions = { count: 0, kinds: [] };
 
-    if (asRecipient) {
-      // Redact the three slices independently, then rebuild the highlight from
-      // the redacted lengths so it still lands on the right words.
-      const before = redactText(document.rawText.slice(contextStart, evidence.charStart));
-      const middle = redactText(evidence.quote);
-      const after = redactText(document.rawText.slice(evidence.charEnd, contextEnd));
-      context = `${before.text}${middle.text}${after.text}`;
-      quote = middle.text;
-      highlight = {
-        start: before.text.length,
-        end: before.text.length + middle.text.length,
-      };
-      redactions = {
-        count: before.count + middle.count + after.count,
-        kinds: [...new Set([...before.kinds, ...middle.kinds, ...after.kinds])],
-      };
+    const citation = snapshotCitation();
+    // A recipient may only resolve evidence that is actually cited by a
+    // shareable item in this handover, never arbitrary evidence IDs.
+    if (asRecipient && !citation) throw notFound('Evidence not found');
+
+    const evidence = await Evidence.findOne({
+      _id: req.params.evidenceId,
+      project: req.project._id,
+    });
+    if (!evidence && !citation) throw notFound('Evidence not found');
+
+    const sourceId = evidence ? evidence.source : citation.sourceId;
+    const source = await Source.findById(sourceId);
+    assertSourceVisible(source, req.project, req.user._id);
+
+    const documentId = evidence ? evidence.document : citation.documentId;
+    let document = documentId ? await Document.findById(documentId) : null;
+    if (!document && !evidence && citation?.documentId) {
+      // A re-ingest prunes the old revision, but the handover keeps a citation
+      // snapshot. Check that snapshot against the current revision of the same
+      // document so a reviewed quote stays verifiable instead of always
+      // reading as changed.
+      const sameTitle = citation.docTitle ? { title: citation.docTitle } : null;
+      document =
+        (sameTitle &&
+          (await Document.findOne({ source: sourceId, retiredAt: null, ...sameTitle }).sort({
+            revision: -1,
+          }))) ||
+        (await Document.findOne({ source: sourceId, retiredAt: null }).sort({ revision: -1 }));
     }
 
-    const isPersonConfirmed = evidence.validation === 'person_confirmed';
+    const isPersonConfirmed = (evidence?.validation || citation.validation) === 'person_confirmed';
+    const storedQuote = evidence ? evidence.quote : citation.quote || '';
+    const storedValidation = evidence ? evidence.validation : citation.validation;
+    let changed = false;
+    let note;
+
+    if (!evidence) {
+      note =
+        'The original evidence record was replaced when this source was re-ingested. This is the quote stored with the handover when it was reviewed.';
+    }
+
+    // Locate the quote in the current revision. A missing match means the
+    // passage no longer exists as cited, so the response falls back to the
+    // stored quote instead of highlighting the wrong characters.
+    let located = { ok: false };
+    if (document && !isPersonConfirmed && storedQuote) {
+      if (
+        Number.isInteger(evidence?.charStart) &&
+        Number.isInteger(evidence?.charEnd) &&
+        document.rawText.slice(evidence.charStart, evidence.charEnd) === evidence.quote
+      ) {
+        located = { ok: true, start: evidence.charStart, end: evidence.charEnd };
+      } else {
+        located = locateQuote(document.rawText, storedQuote);
+      }
+      if (!located.ok) {
+        changed = true;
+        note =
+          note ||
+          'This passage is no longer present in the current revision of the source document. The quote below is the one stored with the handover.';
+      }
+    } else if (!document && !isPersonConfirmed) {
+      changed = true;
+      note =
+        note ||
+        'The source document for this citation is no longer available. The quote below is the one stored with the handover.';
+    }
+
+    const charStart = located.ok ? located.start : evidence?.charStart ?? citation?.charStart;
+    const charEnd = located.ok ? located.end : evidence?.charEnd ?? citation?.charEnd;
+
+    let quote = storedQuote;
+    let context = null;
+    let highlight = null;
+    let redactions = { count: 0, kinds: [] };
+
+    if (document && located.ok && !isPersonConfirmed) {
+      const contextStart = Math.max(0, located.start - 600);
+      const contextEnd = Math.min(document.rawText.length, located.end + 600);
+      if (asRecipient) {
+        // Redact the three slices independently, then rebuild the highlight
+        // from the redacted lengths so it still lands on the right words.
+        const before = redactText(document.rawText.slice(contextStart, located.start));
+        const middle = redactText(storedQuote);
+        const after = redactText(document.rawText.slice(located.end, contextEnd));
+        context = `${before.text}${middle.text}${after.text}`;
+        quote = middle.text;
+        highlight = {
+          start: before.text.length,
+          end: before.text.length + middle.text.length,
+        };
+        redactions = {
+          count: before.count + middle.count + after.count,
+          kinds: [...new Set([...before.kinds, ...middle.kinds, ...after.kinds])],
+        };
+      } else {
+        context = document.rawText.slice(contextStart, contextEnd);
+        highlight = { start: located.start - contextStart, end: located.end - contextStart };
+      }
+    } else if (asRecipient) {
+      quote = redactText(storedQuote).text;
+    }
+
     let confirmation = null;
     if (isPersonConfirmed) {
-      const clarification = evidence.answerRef
+      if (asRecipient) quote = redactText(storedQuote).text;
+      const clarification = evidence?.answerRef
         ? await Clarification.findById(evidence.answerRef).lean()
         : null;
       confirmation = {
         answer: quote,
-        by: evidence.confirmedByName || null,
-        at: evidence.confirmedAt || null,
+        by: evidence?.confirmedByName || citation?.confirmedByName || null,
+        at: evidence?.confirmedAt || citation?.confirmedAt || null,
         prompt: clarification?.prompt || null,
         kind: clarification?.kind || null,
       };
@@ -1149,14 +1461,14 @@ router.get(
 
     res.json({
       evidence: {
-        id: String(evidence._id),
+        id: String(evidence?._id || citation.evidenceId || req.params.evidenceId),
         quote,
-        validation: evidence.validation,
-        charStart: evidence.charStart,
-        charEnd: evidence.charEnd,
+        validation: storedValidation,
+        charStart: charStart ?? null,
+        charEnd: charEnd ?? null,
         origin: isPersonConfirmed ? 'person_confirmed' : 'document',
-        confirmedByName: evidence.confirmedByName || null,
-        confirmedAt: evidence.confirmedAt || null,
+        confirmedByName: evidence?.confirmedByName || citation?.confirmedByName || null,
+        confirmedAt: evidence?.confirmedAt || citation?.confirmedAt || null,
       },
       confirmation,
       // A confirmed answer has no document context to show; the drawer renders
@@ -1165,15 +1477,30 @@ router.get(
       highlight: isPersonConfirmed ? null : highlight,
       redacted: asRecipient,
       redactions: asRecipient ? redactions : undefined,
+      // True when this response is served from the handover citation rather
+      // than a live evidence row, or when the passage moved or disappeared.
+      snapshot: !evidence,
+      changed,
+      note,
       source: { name: source.name, kind: source.kind },
-      document: {
-        id: String(document._id),
-        title: document.title,
-        path: document.path,
-        url: document.locator?.url,
-        occurredAt: document.occurredAt,
-        revision: document.revision,
-      },
+      document: document
+        ? {
+            id: String(document._id),
+            title: document.title,
+            path: document.path,
+            url: document.locator?.url,
+            occurredAt: document.occurredAt,
+            revision: document.revision,
+          }
+        : {
+            id: citation?.documentId ? String(citation.documentId) : null,
+            title: citation?.docTitle || 'Source document',
+            path: citation?.locator?.path,
+            url: citation?.locator?.url,
+            occurredAt: citation?.occurredAt || null,
+            revision: null,
+            available: false,
+          },
     });
   }),
 );

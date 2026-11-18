@@ -4,7 +4,9 @@ import { Source } from '../../models/index.js';
 import { enqueue } from '../queue.js';
 
 const SYNCABLE_KINDS = ['github', 'drive'];
-const DEFAULT_INTERVAL_MINUTES = 5;
+// Connector checks spend the deployment's shared provider quota, so the
+// default is deliberately rare; a project lead can opt into a shorter interval.
+export const DEFAULT_INTERVAL_MINUTES = 15;
 
 /**
  * Fingerprints the collected document set, not the ingestion time. Two syncs
@@ -37,6 +39,7 @@ export function syncDue(source, now = new Date()) {
   if (!isSyncable(source)) return false;
   if (!source.sync?.enabled) return false;
   if (['queued', 'processing'].includes(source.status)) return false;
+  if (source.sync.nextAttemptAt && new Date(source.sync.nextAttemptAt) > now) return false;
   const intervalMinutes = Math.max(1, source.sync.intervalMinutes || DEFAULT_INTERVAL_MINUTES);
   const last = source.sync.lastCheckedAt ? new Date(source.sync.lastCheckedAt).getTime() : 0;
   return now.getTime() - last >= intervalMinutes * 60_000;
@@ -44,8 +47,8 @@ export function syncDue(source, now = new Date()) {
 
 /**
  * Enqueues a sync for every connected source whose interval has elapsed. The
- * scheduler runs this every minute; each source's own interval decides whether
- * it is actually checked, so the default five-minute promise holds.
+ * attempt is reserved atomically so two scheduler ticks (or two processes)
+ * cannot both enqueue the same source.
  */
 export async function runDueSyncs({ now = new Date(), limit = 25 } = {}) {
   const sources = await Source.find({
@@ -57,16 +60,50 @@ export async function runDueSyncs({ now = new Date(), limit = 25 } = {}) {
     .limit(200);
 
   const due = sources.filter((source) => syncDue(source, now)).slice(0, limit);
+  const enqueued = [];
   for (const source of due) {
-    enqueue('sync_source', { sourceId: String(source._id) });
+    const intervalMinutes = Math.max(1, source.sync.intervalMinutes || DEFAULT_INTERVAL_MINUTES);
+    const reserved = await Source.findOneAndUpdate(
+      {
+        _id: source._id,
+        deletedAt: null,
+        $or: [
+          { 'sync.nextAttemptAt': { $exists: false } },
+          { 'sync.nextAttemptAt': { $lte: now } },
+        ],
+      },
+      { $set: { 'sync.nextAttemptAt': new Date(now.getTime() + intervalMinutes * 60_000) } },
+      { new: false },
+    );
+    if (!reserved) continue;
+    if (enqueue('sync_source', { sourceId: String(source._id) })) {
+      enqueued.push(String(source._id));
+    }
   }
-  return due.map((source) => String(source._id));
+  return enqueued;
+}
+
+/** Pushes the next check out after a provider rate limit or outage. */
+export async function deferSync(sourceId, { retryAt, error } = {}) {
+  const nextAttemptAt =
+    retryAt instanceof Date && retryAt.getTime() > Date.now()
+      ? retryAt
+      : new Date(Date.now() + DEFAULT_INTERVAL_MINUTES * 60_000);
+  await Source.updateOne(
+    { _id: sourceId },
+    {
+      $set: {
+        'sync.nextAttemptAt': nextAttemptAt,
+        ...(error ? { 'sync.lastError': String(error).slice(0, 300) } : {}),
+      },
+    },
+  ).catch(() => {});
 }
 
 export function startSyncScheduler({ intervalMs = 60_000 } = {}) {
   const timer = setInterval(() => {
     runDueSyncs().catch((error) => {
-      logger.warn({ error: error.message }, 'Source sync scan failed');
+      logger.warn({ err: error }, 'Source sync scan failed');
     });
   }, intervalMs);
   timer.unref();

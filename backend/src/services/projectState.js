@@ -1,6 +1,14 @@
+import { Types } from 'mongoose';
 import { env } from '../config/env.js';
 import { Claim, Document, Evidence, Source } from '../models/index.js';
-import { canContribute, claimVisibleTo, isIncoming, roleOf } from './access/policy.js';
+import { allowsExternalAI } from './ai/policy.js';
+import {
+  canContribute,
+  claimVisibleTo,
+  isIncoming,
+  roleOf,
+  sourceVisibleTo,
+} from './access/policy.js';
 import { deriveNextActions } from './reconstruction/nextActions.js';
 import { reconstructState } from './reconstruction/state.js';
 
@@ -12,6 +20,7 @@ export function serializeProject(project, user) {
     name: data.name,
     description: data.description,
     status: data.status,
+    isDemo: Boolean(data.isDemo),
     owner: String(data.owner?._id ?? data.owner),
     role: roleOf(project, user?._id),
     incoming: isIncoming(project, user?._id),
@@ -25,6 +34,9 @@ export function serializeProject(project, user) {
       joinedAt: member.joinedAt,
     })),
     transition: data.transition,
+    settings: {
+      requireSeparateApprover: Boolean(data.settings?.requireSeparateApprover),
+    },
     startedAt: data.startedAt,
     targetDate: data.targetDate,
     createdAt: data.createdAt,
@@ -47,6 +59,10 @@ export function serializeSource(source) {
     hiddenAt: data.hiddenAt,
     stats: data.stats,
     parseWarnings: data.parseWarnings || [],
+    aiPolicy: {
+      allowExternal: allowsExternalAI(data),
+      updatedAt: data.aiPolicy?.updatedAt,
+    },
     sync: data.sync,
     lastIngestedAt: data.lastIngestedAt,
     createdAt: data.createdAt,
@@ -89,6 +105,8 @@ function citationFor(evidence, sourceById, docById) {
     sourceKind: source?.kind,
     docTitle: document?.title,
     quote: evidence.quote,
+    charStart: evidence.charStart,
+    charEnd: evidence.charEnd,
     validation: evidence.validation,
     locator: document?.locator,
     occurredAt: document?.occurredAt,
@@ -137,11 +155,175 @@ export async function loadVisibleClaims({ project, userId }) {
   return { claims: visibleClaims, citationsByClaim, sources, sourceById };
 }
 
+function encodeClaimCursor(claim) {
+  // The cursor is built both from a claim row and from the {occurredAt, id}
+  // bookkeeping object used while paging.
+  return Buffer.from(
+    JSON.stringify({
+      o: claim?.occurredAt ? new Date(claim.occurredAt).getTime() : null,
+      id: String(claim?._id ?? claim?.id),
+    }),
+  ).toString('base64url');
+}
+
+function decodeClaimCursor(raw) {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+    if (!parsed || !Types.ObjectId.isValid(parsed.id)) return null;
+    if (parsed.o !== null) {
+      const date = new Date(parsed.o);
+      if (Number.isNaN(date.getTime())) return null;
+      return { occurredAt: date, id: new Types.ObjectId(parsed.id) };
+    }
+    return { occurredAt: null, id: new Types.ObjectId(parsed.id) };
+  } catch {
+    return null;
+  }
+}
+
+function remainingClaimFilter(after) {
+  if (!after) return {};
+  if (after.occurredAt === null) return { occurredAt: null, _id: { $lt: after.id } };
+  return {
+    $or: [
+      { occurredAt: { $lt: after.occurredAt } },
+      { occurredAt: null },
+      { occurredAt: after.occurredAt, _id: { $lt: after.id } },
+    ],
+  };
+}
+
+async function countVisibleClaims({ project, userId, type, sources }) {
+  const visibleSourceIds = sources
+    .filter((source) => sourceVisibleTo(source, project, userId))
+    .map((source) => source._id);
+  const match = { project: project._id, retiredAt: null };
+  if (type) match.type = type;
+
+  // A claim counts only when it has evidence and every evidence source is
+  // readable, mirroring claimVisibleTo without loading the project into memory.
+  const [row] = await Claim.aggregate([
+    { $match: match },
+    {
+      $lookup: {
+        from: Evidence.collection.name,
+        localField: '_id',
+        foreignField: 'claim',
+        as: 'claimEvidence',
+      },
+    },
+    { $match: { 'claimEvidence.0': { $exists: true } } },
+    { $addFields: { evidenceSources: { $setUnion: '$claimEvidence.source' } } },
+    {
+      $match: {
+        evidenceSources: { $not: { $elemMatch: { $nin: visibleSourceIds } } },
+      },
+    },
+    { $count: 'total' },
+  ]);
+  return row?.total || 0;
+}
+
+/**
+ * Cursor-paged variant of loadVisibleClaims used by the claims list. Only the
+ * claims on the requested page are hydrated with evidence and documents; the
+ * visibility rule itself is unchanged, so a page can be shorter than the limit
+ * when a hidden claim sits at the boundary.
+ */
+export async function loadVisibleClaimPage({
+  project,
+  userId,
+  type,
+  limit,
+  cursor,
+}) {
+  const sources = await Source.find({ project: project._id }).lean();
+  const sourceById = new Map(sources.map((source) => [String(source._id), source]));
+  const baseFilter = { project: project._id, retiredAt: null };
+  if (type) baseFilter.type = type;
+
+  const [total, visible] = await Promise.all([
+    countVisibleClaims({ project, userId, type, sources }),
+    (async () => {
+      const batchSize = limit;
+      let after = decodeClaimCursor(cursor);
+      let examined = after;
+      const entries = [];
+
+      while (entries.length < limit) {
+        const batch = await Claim.find({ ...baseFilter, ...remainingClaimFilter(examined) })
+          .sort({ occurredAt: -1, _id: -1 })
+          .limit(batchSize)
+          .lean();
+        if (batch.length === 0) break;
+
+        const evidence = await Evidence.find({
+          claim: { $in: batch.map((claim) => claim._id) },
+        }).lean();
+        const evidenceByClaim = new Map();
+        for (const item of evidence) {
+          const key = String(item.claim);
+          if (!evidenceByClaim.has(key)) evidenceByClaim.set(key, []);
+          evidenceByClaim.get(key).push(item);
+        }
+
+        let consumed = null;
+        for (const claim of batch) {
+          consumed = claim;
+          const claimEvidence = evidenceByClaim.get(String(claim._id)) || [];
+          if (!claimVisibleTo({ evidence: claimEvidence, sourceById, project, userId })) continue;
+          entries.push({ claim, evidence: claimEvidence });
+          if (entries.length === limit) break;
+        }
+
+        examined = { occurredAt: consumed?.occurredAt || null, id: consumed?._id };
+        if (batch.length < batchSize) break;
+      }
+
+      return { entries, examined };
+    })(),
+  ]);
+
+  const documentIds = [
+    ...new Set(visible.entries.flatMap(({ evidence }) => evidence.map((item) => String(item.document)))),
+  ];
+  const documents = await Document.find({ _id: { $in: documentIds } })
+    .select('title path locator occurredAt')
+    .lean();
+  const docById = new Map(documents.map((document) => [String(document._id), document]));
+
+  const citationsByClaim = new Map();
+  const claims = visible.entries.map(({ claim, evidence }) => {
+    citationsByClaim.set(
+      String(claim._id),
+      evidence.map((item) => citationFor(item, sourceById, docById)),
+    );
+    return claim;
+  });
+
+  const hasMore = Boolean(
+    visible.examined &&
+      (await Claim.exists({ ...baseFilter, ...remainingClaimFilter(visible.examined) })),
+  );
+
+  return {
+    claims,
+    citationsByClaim,
+    sources,
+    sourceById,
+    total,
+    hasMore,
+    nextCursor: hasMore ? encodeClaimCursor(visible.examined) : null,
+  };
+}
+
 export function decorateClaim(claim, citationsByClaim) {
   return {
     id: String(claim._id),
     type: claim.type,
     statement: claim.statement,
+    context: claim.context || null,
     topic: claim.topic,
     status: claim.status,
     state: claim.state,
@@ -164,7 +346,13 @@ export function decorateClaim(claim, citationsByClaim) {
 export async function buildStateForUser({ project, userId, limit = 12 }) {
   const { claims, citationsByClaim } = await loadVisibleClaims({ project, userId });
   const staleDays = env.staleDays;
-  const state = reconstructState({ project, claims, staleDays });
+  const state = reconstructState({
+    project,
+    claims,
+    staleDays,
+    oldQuestionDays: env.oldQuestionDays,
+    readinessWeights: env.readinessWeights,
+  });
   const nextActions = deriveNextActions({ state, limit });
 
   const decorated = (list) => list.map((claim) => decorateClaim(claim, citationsByClaim));

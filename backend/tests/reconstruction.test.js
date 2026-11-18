@@ -128,8 +128,8 @@ describe('decision conflict grouping', () => {
         status: 'active',
         topic: 'Authentication provider',
         topicKey: 'authentication provider',
-        statement: 'Build auth in-house',
-        statementKey: 'build auth in-house',
+        statement: 'Use AWS Cognito',
+        statementKey: 'use aws cognito',
       }),
     ]);
 

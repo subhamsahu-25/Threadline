@@ -23,7 +23,23 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-app.use(helmet());
+// The API only returns JSON (and, for downloads, files with an attachment
+// disposition), so every document directive can be denied outright.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: {
+        defaultSrc: ["'none'"],
+        baseUri: ["'none'"],
+        frameAncestors: ["'none'"],
+        formAction: ["'none'"],
+      },
+    },
+    referrerPolicy: { policy: 'no-referrer' },
+    crossOriginResourcePolicy: { policy: 'same-site' },
+  }),
+);
 app.use(
   cors({
     origin: env.corsOrigins.length > 0 ? env.corsOrigins : true,
@@ -56,16 +72,22 @@ app.get('/', (_req, res) => {
 });
 
 app.get('/api/health', async (_req, res) => {
+  // A process that cannot reach its database is not healthy. Reporting 503
+  // lets the platform's probe restart or drain this instance instead of
+  // routing traffic to an API that can only return errors.
+  const databaseUp = mongoose.connection.readyState === 1;
   let demoProjectReady = false;
-  if (mongoose.connection.readyState === 1) {
+  if (databaseUp) {
     try {
-      demoProjectReady = Boolean(await Project.exists({ key: DEMO_PROJECT_KEY }));
+      demoProjectReady = Boolean(
+        await Project.exists({ key: DEMO_PROJECT_KEY, isDemo: true }),
+      );
     } catch {
       demoProjectReady = false;
     }
   }
-  res.json({
-    status: 'ok',
+  res.status(databaseUp ? 200 : 503).json({
+    status: databaseUp ? 'ok' : 'degraded',
     service: 'threadline-api',
     version: '0.1.0',
     time: new Date().toISOString(),

@@ -125,7 +125,9 @@ export default function OverviewPage() {
     setResolving(String(statement.claimId));
     try {
       const result = await api.post(`/api/projects/${projectId}/conflicts/resolve`, {
-        topicKey: conflict.topicKey,
+        claimIds: (conflict.claimIds || conflict.statements?.map((entry) => entry.claimId) || []).map(
+          String,
+        ),
         keepClaimId: statement.claimId,
       });
       toast.success(
@@ -383,7 +385,7 @@ export default function OverviewPage() {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-12">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         <Card className="p-5 lg:col-span-4">
           <div className="flex items-start justify-between gap-2">
             <div>
@@ -491,7 +493,10 @@ export default function OverviewPage() {
               action={<Badge tone="red" dot>{data.conflicts.length} unresolved</Badge>}
             />
             {data.conflicts.slice(0, 3).map((conflict) => (
-              <Card key={conflict.topicKey || conflict.topic} className="overflow-hidden">
+              <Card
+                key={(conflict.claimIds || []).map(String).join('-') || conflict.topic}
+                className="overflow-hidden"
+              >
                 <div className="flex flex-wrap items-center gap-2 border-b border-line bg-red-50/50 px-4 py-2.5">
                   <GitCompareArrows className="h-3.5 w-3.5 text-red-600" aria-hidden="true" />
                   <p className="text-[12px] font-semibold text-red-900">
@@ -527,7 +532,7 @@ export default function OverviewPage() {
                           )}
                         </div>
                         <p className="text-[12.5px] leading-5 text-ink-soft">{statement.statement}</p>
-                        {canResolve && conflict.topicKey && (
+                        {canResolve && (conflict.claimIds?.length || 0) > 1 && (
                           <div className="mt-2 flex justify-end">
                             <Button
                               variant="secondary"

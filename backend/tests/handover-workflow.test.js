@@ -57,8 +57,9 @@ describe('review and handover workflow', () => {
       .set(auth(leadToken))
       .send({ decision: 'edited', editedStatement: 'Backfill invoices written after 2024.' })
       .expect(200);
-    expect(edited.body.handover.version).toBe(2);
-    expect(edited.body.handover.counts.edited).toBe(1);
+    expect(edited.body.version).toBe(2);
+    expect(edited.body.counts.edited).toBe(1);
+    expect(edited.body.item.statement).toBe('Backfill invoices written after 2024.');
 
     await request(app)
       .post(`/api/handovers/${handoverId}/submit`)
@@ -397,7 +398,10 @@ describe('review and handover workflow', () => {
 
   it('keeps share links private outside the demo workspace', async () => {
     const { shareToken } = await createShared();
-    await Project.updateOne({ _id: projectId }, { $set: { key: 'PRIVATE' } });
+    await Project.updateOne(
+      { _id: projectId },
+      { $set: { key: 'PRIVATE', isDemo: false } },
+    );
 
     const anonymous = await request(app)
       .get(`/api/handovers/shared/${shareToken}`);

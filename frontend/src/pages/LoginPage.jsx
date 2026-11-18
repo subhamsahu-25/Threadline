@@ -44,7 +44,7 @@ function shouldShowColdStart() {
   }
 }
 
-function BrandPanel() {
+function BrandPanel({ demoEnabled }) {
   return (
     <aside className="relative hidden overflow-hidden bg-brand-950 lg:flex lg:w-[54%] lg:flex-col lg:justify-between lg:p-12">
       <div
@@ -131,22 +131,141 @@ function BrandPanel() {
       </div>
 
       <p className="relative mt-10 text-[10.5px] text-brand-200/45">
-        Demo workspace uses synthetic data only. No enterprise systems are connected.
+        {demoEnabled
+          ? 'Demo workspace uses synthetic data only. No enterprise systems are connected.'
+          : 'Access is scoped to the workspace you belong to. Nothing is shared outside it.'}
       </p>
     </aside>
   );
 }
 
+function CredentialsCard({
+  mode,
+  onModeChange,
+  email,
+  onEmailChange,
+  password,
+  onPasswordChange,
+  name,
+  onNameChange,
+  inviteCode,
+  onInviteCodeChange,
+  onSubmit,
+  pending,
+  disabled,
+}) {
+  const registering = mode === 'register';
+  return (
+    <div className="rounded-xl border border-line bg-white p-4 shadow-card">
+      <div
+        role="tablist"
+        aria-label="Account access"
+        className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1"
+      >
+        {[
+          { id: 'signin', label: 'Sign in' },
+          { id: 'register', label: 'Create account' },
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            aria-selected={mode === tab.id}
+            onClick={() => onModeChange(tab.id)}
+            className={`rounded-md px-3 py-1.5 text-[12px] font-semibold transition ${
+              mode === tab.id
+                ? 'bg-white text-ink shadow-sm ring-1 ring-line'
+                : 'text-ink-muted hover:text-ink'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={onSubmit} className="space-y-2.5">
+        {registering && (
+          <Field label="Full name" htmlFor="auth-name" required>
+            <Input
+              id="auth-name"
+              type="text"
+              required
+              minLength={2}
+              maxLength={80}
+              autoComplete="name"
+              value={name}
+              onChange={(event) => onNameChange(event.target.value)}
+              placeholder="Priya Sharma"
+            />
+          </Field>
+        )}
+        <Field label="Email" htmlFor="auth-email" required>
+          <Input
+            id="auth-email"
+            type="email"
+            required
+            autoComplete={registering ? 'email' : 'username'}
+            value={email}
+            onChange={(event) => onEmailChange(event.target.value)}
+            placeholder="you@company.com"
+          />
+        </Field>
+        <Field
+          label="Password"
+          htmlFor="auth-password"
+          required
+          hint={
+            registering
+              ? 'At least 10 characters, mixing three of: upper case, lower case, numbers, symbols.'
+              : undefined
+          }
+        >
+          <Input
+            id="auth-password"
+            type="password"
+            required
+            minLength={registering ? 10 : undefined}
+            autoComplete={registering ? 'new-password' : 'current-password'}
+            value={password}
+            onChange={(event) => onPasswordChange(event.target.value)}
+          />
+        </Field>
+        {registering && (
+          <Field
+            label="Invite code"
+            htmlFor="auth-invite"
+            hint="Only needed when this deployment is invite-only."
+          >
+            <Input
+              id="auth-invite"
+              type="text"
+              autoComplete="off"
+              value={inviteCode}
+              onChange={(event) => onInviteCodeChange(event.target.value)}
+            />
+          </Field>
+        )}
+        <Button type="submit" size="sm" loading={pending} disabled={disabled}>
+          {registering ? 'Create account' : 'Sign in'}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
 export default function LoginPage() {
-  const { user, login } = useAuth();
+  const { user, login, register } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const [pending, setPending] = useState(null);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState('');
+  const [mode, setMode] = useState('signin');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
   const [credentialPending, setCredentialPending] = useState(false);
   const [health, setHealth] = useState(null);
   const [coldStartOpen, setColdStartOpen] = useState(shouldShowColdStart);
@@ -185,6 +304,11 @@ export default function LoginPage() {
   }, []);
 
   if (user) return <Navigate to={destination} replace />;
+
+  // The persona picker is a demo affordance. It only appears when this API
+  // reports that seeding is enabled, so a real deployment never suggests a
+  // sign-in path that cannot work there.
+  const demoEnabled = health?.demoSeedEnabled === true;
 
   const enterAs = async (persona) => {
     if (pending) return;
@@ -235,8 +359,20 @@ export default function LoginPage() {
     setCredentialPending(true);
     setError('');
     try {
-      const signedIn = await login(email.trim(), password);
-      toast.success(`Signed in as ${signedIn.name}`);
+      const signedIn =
+        mode === 'register'
+          ? await register({
+              name: name.trim(),
+              email: email.trim(),
+              password,
+              inviteCode: inviteCode.trim() || undefined,
+            })
+          : await login(email.trim(), password);
+      toast.success(
+        mode === 'register'
+          ? `Account created — signed in as ${signedIn.name}`
+          : `Signed in as ${signedIn.name}`,
+      );
       navigate(destination, { replace: true });
     } catch (err) {
       setError(errorMessage(err));
@@ -245,11 +381,16 @@ export default function LoginPage() {
     }
   };
 
+  const changeMode = (nextMode) => {
+    setMode(nextMode);
+    setError('');
+  };
+
   const busy = Boolean(pending) || resetting || credentialPending;
 
   return (
     <div className="flex min-h-screen bg-canvas">
-      <BrandPanel />
+      <BrandPanel demoEnabled={demoEnabled} />
 
       <main className="flex min-h-screen w-full flex-col lg:w-[46%]">
         <div className="flex items-center justify-between border-b border-line bg-brand-950 px-5 py-4 text-white lg:hidden">
@@ -263,24 +404,26 @@ export default function LoginPage() {
             </div>
           </div>
           <Badge tone="green" dot className="border-white/20 bg-white/10 text-emerald-200">
-            Synthetic demo
+            {demoEnabled ? 'Synthetic demo' : 'Sign in'}
           </Badge>
         </div>
 
         <div className="flex flex-1 items-start justify-center px-4 py-8 sm:px-8 lg:items-center lg:py-10">
           <div className="w-full max-w-[520px]">
             <div className="mb-5">
-              <p className="eyebrow mb-1.5">Hackathon demo</p>
+              <p className="eyebrow mb-1.5">{demoEnabled ? 'Hackathon demo' : 'Account access'}</p>
               <h1 className="text-[27px] font-semibold leading-tight tracking-[-0.02em]">
-                Choose a profile to enter
+                {demoEnabled ? 'Choose a profile to enter' : 'Sign in to Threadline'}
               </h1>
               <p className="mt-1.5 text-[13px] leading-5 text-ink-muted">
-                Four seeded profiles share one Atlas workspace. One click signs you in — the same
-                project looks different depending on who is reading it.
+                {demoEnabled
+                  ? 'Four seeded profiles share one Atlas workspace. One click signs you in — the same project looks different depending on who is reading it.'
+                  : 'Use the email and password issued for this workspace, or create an account when this deployment allows registration.'}
               </p>
             </div>
 
-            <section aria-labelledby="personas-heading">
+            {demoEnabled && (
+              <section aria-labelledby="personas-heading">
               <div className="mb-2 flex items-center justify-between">
                 <h2 id="personas-heading" className="eyebrow">
                   Demo profiles
@@ -358,40 +501,50 @@ export default function LoginPage() {
                     </button>
                   );
                 })}
-              </div>
-            </section>
+                </div>
+              </section>
+            )}
 
-            <details className="mt-3 rounded-lg border border-line bg-white/70 px-3 py-2.5">
-              <summary className="cursor-pointer text-[11.5px] font-semibold text-ink-muted hover:text-ink">
-                Sign in with email and password instead
-              </summary>
-              <form onSubmit={submitCredentials} className="mt-3 space-y-2.5">
-                <Field label="Email" htmlFor="credential-email">
-                  <Input
-                    id="credential-email"
-                    type="email"
-                    required
-                    autoComplete="username"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    placeholder="you@company.com"
+            {demoEnabled ? (
+              <details className="mt-3 rounded-lg border border-line bg-white/70 px-3 py-2.5">
+                <summary className="cursor-pointer text-[11.5px] font-semibold text-ink-muted hover:text-ink">
+                  Sign in or create an account with email instead
+                </summary>
+                <div className="mt-3">
+                  <CredentialsCard
+                    mode={mode}
+                    onModeChange={changeMode}
+                    email={email}
+                    onEmailChange={setEmail}
+                    password={password}
+                    onPasswordChange={setPassword}
+                    name={name}
+                    onNameChange={setName}
+                    inviteCode={inviteCode}
+                    onInviteCodeChange={setInviteCode}
+                    onSubmit={submitCredentials}
+                    pending={credentialPending}
+                    disabled={Boolean(pending) || resetting}
                   />
-                </Field>
-                <Field label="Password" htmlFor="credential-password">
-                  <Input
-                    id="credential-password"
-                    type="password"
-                    required
-                    autoComplete="current-password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                  />
-                </Field>
-                <Button type="submit" size="sm" loading={credentialPending} disabled={busy}>
-                  Sign in
-                </Button>
-              </form>
-            </details>
+                </div>
+              </details>
+            ) : (
+              <CredentialsCard
+                mode={mode}
+                onModeChange={changeMode}
+                email={email}
+                onEmailChange={setEmail}
+                password={password}
+                onPasswordChange={setPassword}
+                name={name}
+                onNameChange={setName}
+                inviteCode={inviteCode}
+                onInviteCodeChange={setInviteCode}
+                onSubmit={submitCredentials}
+                pending={credentialPending}
+                disabled={Boolean(pending) || resetting}
+              />
+            )}
 
             {error && (
               <p
@@ -420,18 +573,24 @@ export default function LoginPage() {
                     : 'Checking API…'}
               </span>
               <span className="font-mono text-[10px] text-ink-faint">
-                {health?.demoSeedEnabled === false ? 'Demo seeding disabled' : 'Demo accounts · synthetic data'}
+                {demoEnabled
+                  ? 'Demo accounts · synthetic data'
+                  : health
+                    ? 'Email and password sign-in'
+                    : 'Checking sign-in options…'}
               </span>
             </div>
 
-            <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-line bg-white/60 px-3 py-2.5 text-[11px] leading-4 text-ink-muted">
-              <Database className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-faint" aria-hidden="true" />
-              <p>
-                The Atlas demo contains six synthetic source documents. Demo sign-in is applied
-                automatically and only works for these seeded accounts — never for a real
-                workspace.
-              </p>
-            </div>
+            {demoEnabled && (
+              <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-line bg-white/60 px-3 py-2.5 text-[11px] leading-4 text-ink-muted">
+                <Database className="mt-0.5 h-3.5 w-3.5 shrink-0 text-ink-faint" aria-hidden="true" />
+                <p>
+                  The Atlas demo contains six synthetic source documents. Demo sign-in is applied
+                  automatically and only works for these seeded accounts — never for a real
+                  workspace.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       </main>

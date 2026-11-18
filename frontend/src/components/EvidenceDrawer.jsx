@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link2, Copy, FileText, ShieldCheck, Clock3, ExternalLink, RotateCw } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { formatDateTime } from '../lib/format.js';
+import { formatDateTime, safeHttpUrl } from '../lib/format.js';
 import { useToast } from '../context/ToastContext.jsx';
 import { Badge, Button, Drawer, ErrorState, Spinner } from './ui.jsx';
 
@@ -85,6 +85,7 @@ export default function EvidenceDrawer({ projectId, handoverId, evidenceId, open
     ? VALIDATION[state.data.evidence.validation] || VALIDATION.unchecked
     : null;
   const confirmation = state.data?.confirmation || null;
+  const documentUrl = safeHttpUrl(state.data?.document?.url);
 
   return (
     <Drawer
@@ -106,7 +107,10 @@ export default function EvidenceDrawer({ projectId, handoverId, evidenceId, open
               <Button variant="secondary" size="sm" icon={Copy} onClick={copyQuote}>
                 Copy quote
               </Button>
-              {!state.data.redacted && !confirmation && (
+              {!state.data.redacted &&
+                !confirmation &&
+                Boolean(state.data.document?.id) &&
+                state.data.document.available !== false && (
                 <Button
                   size="sm"
                   variant={showDocument ? 'soft' : 'primary'}
@@ -148,11 +152,23 @@ export default function EvidenceDrawer({ projectId, handoverId, evidenceId, open
             {state.data.document.revision > 1 && (
               <Badge tone="navy">Revision {state.data.document.revision}</Badge>
             )}
+            {state.data.snapshot && (
+              <Badge tone="amber" title="Served from the quote stored with the handover because the original evidence record was replaced.">
+                Stored with handover
+              </Badge>
+            )}
             <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-[10.5px] text-ink-muted">
               <Clock3 className="h-3 w-3" aria-hidden="true" />
               {formatDateTime(state.data.document.occurredAt)}
             </span>
           </div>
+
+          {state.data.note && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-900">
+              <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" aria-hidden="true" />
+              <p>{state.data.note}</p>
+            </div>
+          )}
 
           {state.data.redacted && (
             <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-900">
@@ -202,24 +218,34 @@ export default function EvidenceDrawer({ projectId, handoverId, evidenceId, open
                   {state.data.evidence.quote}
                 </blockquote>
                 <p className="mt-2 font-mono text-[10px] text-ink-faint">
-                  chars {state.data.evidence.charStart}–{state.data.evidence.charEnd} · id{' '}
-                  {String(state.data.evidence.id).slice(-8)}
+                  {typeof state.data.evidence.charStart === 'number' &&
+                  typeof state.data.evidence.charEnd === 'number'
+                    ? `chars ${state.data.evidence.charStart}–${state.data.evidence.charEnd} · `
+                    : ''}
+                  id {String(state.data.evidence.id).slice(-8)}
                 </p>
               </section>
 
-              <section>
-                <h3 className="eyebrow mb-2">Surrounding context</h3>
-                <pre className="max-h-[340px] overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-slate-50/80 p-4 font-mono text-[11.5px] leading-6 text-ink-soft">
-                  <Highlighted
-                    text={state.data.context}
-                    start={state.data.highlight?.start}
-                    end={state.data.highlight?.end}
-                  />
-                </pre>
-                <p className="mt-1.5 text-[10.5px] text-ink-muted">
-                  Approximately 600 characters on either side of the cited passage.
+              {state.data.context ? (
+                <section>
+                  <h3 className="eyebrow mb-2">Surrounding context</h3>
+                  <pre className="max-h-[340px] overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-slate-50/80 p-4 font-mono text-[11.5px] leading-6 text-ink-soft">
+                    <Highlighted
+                      text={state.data.context}
+                      start={state.data.highlight?.start}
+                      end={state.data.highlight?.end}
+                    />
+                  </pre>
+                  <p className="mt-1.5 text-[10.5px] text-ink-muted">
+                    Approximately 600 characters on either side of the cited passage.
+                  </p>
+                </section>
+              ) : (
+                <p className="rounded-lg border border-line bg-slate-50/70 px-3.5 py-2.5 text-[10.5px] leading-4 text-ink-muted">
+                  Surrounding context is not available because the passage could not be found in
+                  the current source. The quote above is exactly what the handover cited.
                 </p>
-              </section>
+              )}
             </>
           ) : (
             <section>
@@ -287,9 +313,9 @@ export default function EvidenceDrawer({ projectId, handoverId, evidenceId, open
                 <dd className="mt-0.5 flex items-center gap-1 font-mono text-[10.5px] text-ink-soft">
                   <Link2 className="h-3 w-3" aria-hidden="true" />
                   {String(state.data.document.id).slice(-10)}
-                  {state.data.document.url && (
+                  {documentUrl && (
                     <a
-                      href={state.data.document.url}
+                      href={documentUrl}
                       target="_blank"
                       rel="noreferrer noopener"
                       className="ml-1 inline-flex items-center gap-0.5 text-brand-700 hover:underline"

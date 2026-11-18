@@ -26,12 +26,30 @@ function ageInDays(date, now) {
   return Math.max(0, (now.getTime() - new Date(date).getTime()) / 86_400_000);
 }
 
-function buildReadiness({ unverified, ownershipGaps, conflicts, oldQuestions }) {
+export const DEFAULT_READINESS_WEIGHTS = {
+  unverified: 3,
+  ownershipGap: 8,
+  conflict: 10,
+  oldQuestion: 4,
+};
+
+// Caps keep one category from consuming the whole score. They are part of the
+// documented scale, not per-project settings; the per-item costs above are the
+// tunable knobs.
+const READINESS_CAPS = {
+  unverified: 30,
+  ownershipGap: 24,
+  conflict: 30,
+  oldQuestion: 16,
+};
+
+function buildReadiness({ unverified, ownershipGaps, conflicts, oldQuestions, weights }) {
+  const cost = { ...DEFAULT_READINESS_WEIGHTS, ...(weights || {}) };
   let score = 100;
-  score -= Math.min(30, unverified.length * 3);
-  score -= Math.min(24, ownershipGaps.length * 8);
-  score -= Math.min(30, conflicts.length * 10);
-  score -= Math.min(16, oldQuestions.length * 4);
+  score -= Math.min(READINESS_CAPS.unverified, unverified.length * cost.unverified);
+  score -= Math.min(READINESS_CAPS.ownershipGap, ownershipGaps.length * cost.ownershipGap);
+  score -= Math.min(READINESS_CAPS.conflict, conflicts.length * cost.conflict);
+  score -= Math.min(READINESS_CAPS.oldQuestion, oldQuestions.length * cost.oldQuestion);
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
@@ -61,7 +79,14 @@ function derivePhase({
  * responsible for removing claims the requesting user may not see; this layer
  * only reasons about what is current, missing or contradictory.
  */
-export function reconstructState({ project, claims, staleDays = 30, now = new Date() }) {
+export function reconstructState({
+  project,
+  claims,
+  staleDays = 30,
+  oldQuestionDays = 14,
+  readinessWeights = DEFAULT_READINESS_WEIGHTS,
+  now = new Date(),
+}) {
   const byType = {};
   const byState = {};
   for (const claim of claims) {
@@ -143,7 +168,7 @@ export function reconstructState({ project, claims, staleDays = 30, now = new Da
     (claim) =>
       claim.hasSourceDate !== false &&
       claim.occurredAt &&
-      ageInDays(claim.occurredAt, now) > 14,
+      ageInDays(claim.occurredAt, now) > oldQuestionDays,
   );
 
   const datedClaims = claims.filter(
@@ -154,7 +179,15 @@ export function reconstructState({ project, claims, staleDays = 30, now = new Da
   const endDate = dates.length > 0 ? new Date(Math.max(...dates.map((date) => date.getTime()))) : null;
 
   const readinessScore =
-    claims.length === 0 ? null : buildReadiness({ unverified, ownershipGaps, conflicts, oldQuestions });
+    claims.length === 0
+      ? null
+      : buildReadiness({
+          unverified,
+          ownershipGaps,
+          conflicts,
+          oldQuestions,
+          weights: readinessWeights,
+        });
 
   return {
     counts: {

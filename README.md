@@ -266,7 +266,7 @@ production builds. `VITE_API_PROXY` overrides the local dev proxy target.
 
 ```bash
 cd backend
-npm test               # 138 Vitest + Supertest tests, 18 suites
+npm test               # 278 Vitest + Supertest tests, 30 suites
 npm run eval:quotes    # quote-accuracy report (rules extractor; Gemini when configured)
 
 cd ../frontend
@@ -275,9 +275,9 @@ npm run smoke          # built page mounts, every asset resolves
 npm run e2e            # Playwright: four journeys against a fresh in-memory API
 ```
 
-**18 suites, 138 tests**, each against its own ephemeral MongoDB — no external
-services needed. The permission canary matrix and the Round 3 suite run in CI on
-every push and pull request.
+**30 suites, 278 tests**, each against its own ephemeral MongoDB — no external
+services needed. CI runs every suite on each push and pull request, alongside
+the Playwright journeys, a production-dependency audit and a secret scan.
 
 - **permission-matrix** — seven viewer contexts × every content, handover,
   shared-link and audit surface; five canary strings must never cross a
@@ -313,6 +313,25 @@ every push and pull request.
   fresh drafts exclude superseded versions.
 - **claim-actions** — owner assignment, task closure, question answers,
   mitigation notes, observer rejection.
+- **auth-hardening** — identical answers for unknown addresses and wrong
+  passwords, a breached-password blocklist, invite-only and domain-allow-list
+  modes, lockout after repeated failures, and a strict API content security
+  policy.
+- **ingest-limits** — real DOCX and PDF parsing in a worker process, page and
+  uncompressed-size caps, and magic-byte checks so a renamed binary cannot pass
+  as a document.
+- **ai-privacy** — confidential sources stay local, secrets and identifiers are
+  redacted before text leaves the server, and document text cannot break out of
+  the model's data block.
+- **d-findings**, **findings-h**, **l-findings**, **r-findings** — the fault
+  report's findings as regression tests: Unicode-safe comparison keys, quote
+  verification, permission filtering of versions and counts, source purge across
+  claims and handovers, handover-list scoping, audit fail-closed for critical
+  actions, bulk review, stale-save conflicts, cursor paging and text caps.
+- **connector-refs**, **share-audit**, **upload-cleanup**, **audit-labels**,
+  **redaction-samples** — reference parsing that fails closed, anonymous
+  share-link audit rows, upload file cleanup on every failure path, complete
+  audit action labels, and a corpus of secrets and PII samples.
 - **demo-seed**, **membership**, **llm-fallback** — seed authorization and
   scoped reset, role changes, and Gemini fallback on 404/429/503.
 
@@ -334,8 +353,18 @@ and 35/35 Gemini-extracted claims matched their source verbatim (100% exact,
 ## Security notes
 
 - JWT authentication with bcrypt hashing; login responses never include hashes.
+  Registration and sign-in give identical answers for unknown addresses and
+  wrong passwords, common/breached passwords are refused, and repeated failures
+  pause sign-in for that account.
 - Helmet headers, configurable CORS, rate limiting, JSON body limits, upload
-  extension allow-list and size caps.
+  extension allow-list, magic-byte checks and size/page caps. Documents are
+  parsed in a worker process, and written upload files are deleted on every
+  failure path.
+- The frontend ships a strict CSP, HSTS, `X-Frame-Options`, `nosniff` and a
+  permissions policy from [`frontend/vercel.json`](frontend/vercel.json), and
+  serves its three fonts from `frontend/public/fonts` — no third-party font CDN.
+- Text sent to an external model is redacted first, and confidential sources
+  stay on the local extractor unless the workspace explicitly opts in.
 - Fail-closed source visibility, including for leads who are not named in a
   source's role scope.
 - Share links are recipient-bound, expire after `SHARE_TTL_DAYS`, are stored only
@@ -347,7 +376,11 @@ and 35/35 Gemini-extracted claims matched their source verbatim (100% exact,
   only that member can answer or decline.
 - Audit events record actor, action, target, IP and user agent for project,
   source, document, handover and authentication operations. Targets the reader
-  may not access are redacted.
+  may not access are redacted. Actions that must not proceed without a trace
+  fail closed if their audit row cannot be written; anonymous share-link views
+  and acknowledgements are attributed to an anonymous actor.
+- Purging a source erases its text from claims, handover versions and questions,
+  not just its visibility.
 - Pipeline failures are logged without exposing document text.
 
 The full privacy, security, accessibility and responsible-design statement is
@@ -386,8 +419,9 @@ for backend detail:
   with no retry queue.
 - **Browser automation covers one journey, not every screen.** Playwright runs
   the lead-compose-share-recipient-acknowledge path plus export, feedback and
-  audit CSV; other screens remain covered by the scripted manual journeys. There
-  is no component test suite and the E2E run is not yet part of CI.
+  audit CSV; other screens are covered by the scripted manual journeys and an
+  axe-core pass over 50 page/persona/viewport combinations. There is no
+  component test suite.
 - No embeddings/semantic retrieval; extraction is per chunk by design.
 - No SSO/SCIM, per-document ACLs or hard-erasure API; retention is soft delete
   plus audit history.

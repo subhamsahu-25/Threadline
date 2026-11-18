@@ -137,26 +137,28 @@ export default function ProjectLayout() {
               {departure >= 0 ? `T-${departure}d` : `${Math.abs(departure)}d overdue`}
             </span>
           )}
-          <Link
-            to={`/projects/${project.id}/people`}
-            className="flex -space-x-1.5 rounded-full outline-offset-2"
-            aria-label={`${project.members.length} project members — open People`}
-            title="Project members"
-          >
-            {project.members.slice(0, 4).map((member) => (
-              <Avatar
-                key={member.userId}
-                name={member.name || member.email}
-                size="xs"
-                className="ring-2 ring-white"
-              />
-            ))}
-            {project.members.length > 4 && (
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 font-mono text-[9px] font-semibold text-ink-soft ring-2 ring-white">
-                +{project.members.length - 4}
-              </span>
-            )}
-          </Link>
+          {!incoming && (
+            <Link
+              to={`/projects/${project.id}/people`}
+              className="flex -space-x-1.5 rounded-full outline-offset-2"
+              aria-label={`${project.members.length} project members — open People`}
+              title="Project members"
+            >
+              {project.members.slice(0, 4).map((member) => (
+                <Avatar
+                  key={member.userId}
+                  name={member.name || member.email}
+                  size="xs"
+                  className="ring-2 ring-white"
+                />
+              ))}
+              {project.members.length > 4 && (
+                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-200 font-mono text-[9px] font-semibold text-ink-soft ring-2 ring-white">
+                  +{project.members.length - 4}
+                </span>
+              )}
+            </Link>
+          )}
           {canPrepare && (
             <Button
               size="sm"

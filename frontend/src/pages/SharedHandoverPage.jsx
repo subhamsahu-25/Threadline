@@ -11,6 +11,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { api, downloadFile, errorMessage } from '../lib/api.js';
+import { formatDateTime, formatRelative } from '../lib/format.js';
 import { useAsync } from '../hooks/useAsync.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
@@ -189,6 +190,7 @@ export default function SharedHandoverPage() {
 
   const recipientName =
     data?.recipientName || handover.recipientSnapshot?.name || 'Recipient';
+  const recheckedAt = handover.permissionRecheck?.checkedAt;
 
   return (
     <SharedShell>
@@ -211,9 +213,14 @@ export default function SharedHandoverPage() {
             <FileSignature className="h-3 w-3 text-brand-600" aria-hidden="true" />
             v{handover.version}
           </span>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 font-mono text-[10px] text-ink-muted">
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 font-mono text-[10px] text-ink-muted"
+            title={recheckedAt ? `Permissions rechecked ${formatDateTime(recheckedAt)}` : undefined}
+          >
             <Clock3 className="h-3 w-3" aria-hidden="true" />
-            rechecked {handover.permissionRecheck?.checkedAt ? 'just now' : 'on open'}
+            {recheckedAt
+              ? `rechecked ${formatRelative(recheckedAt)}`
+              : 'recheck time not recorded'}
           </span>
           {user && handover.projectId && (
             <Link

@@ -159,6 +159,14 @@ function ReviewItem({
           </Badge>
         )}
         {edited && <Badge tone="blue">Edited</Badge>}
+        {item.changedSinceReview && (
+          <Badge
+            tone="amber"
+            title="The statement, status, owner or evidence changed after this item was reviewed. Its earlier decision was not carried over."
+          >
+            Changed since your review
+          </Badge>
+        )}
         {item.acceptedWithoutEvidence && <Badge tone="orange">No verified evidence</Badge>}
         {item.topic && (
           <span className="max-w-[180px] truncate font-mono text-[10px] text-ink-faint">
@@ -397,13 +405,38 @@ export default function HandoverReviewPage() {
 
   const update = (next) => setHandover(next);
 
+  // Review calls return only the items that changed plus the new version and
+  // counts, so merge instead of replacing the whole handover (which would also
+  // drop local UI state such as filters and open dialogs).
+  const applyReviewResults = (response) => {
+    const replacements = new Map(
+      (response.items || (response.item ? [response.item] : [])).map((entry) => [
+        String(entry.claimId),
+        entry,
+      ]),
+    );
+    setHandover((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        version: response.version ?? current.version,
+        counts: response.counts ?? current.counts,
+        items: (current.items || []).map((entry) =>
+          replacements.has(String(entry.claimId))
+            ? { ...entry, ...replacements.get(String(entry.claimId)) }
+            : entry,
+        ),
+      };
+    });
+  };
+
   const decide = async (item, decision) => {
     setBusyItem(item.claimId);
     try {
       const response = await api.patch(`/api/handovers/${handoverId}/items/${item.claimId}`, {
         decision,
       });
-      update(response.handover);
+      applyReviewResults(response);
       const labels = { accepted: 'accepted', rejected: 'rejected', pending: 'set to pending' };
       toast.success(`Item ${labels[decision] || decision}`);
     } catch (err) {
@@ -421,11 +454,10 @@ export default function HandoverReviewPage() {
         : 'accepted';
       const body = { decision, shareWithProject: true };
       if (decision === 'edited') body.editedStatement = item.statement;
-      const response = await api.patch(
-        `/api/handovers/${handoverId}/items/${item.claimId}`,
-        body,
-      );
-      update(response.handover);
+      await api.patch(`/api/handovers/${handoverId}/items/${item.claimId}`, body);
+      // Sharing reveals the item's source to the whole project, which can
+      // change withheld lists and alerts beyond this one item.
+      await reload({ quiet: true });
       toast.success('Confirmed answer shared with the project. The recipient can now open it.');
     } catch (err) {
       toast.error(errorMessage(err));
@@ -453,29 +485,20 @@ export default function HandoverReviewPage() {
     }
     setAcceptAllOpen(false);
     setWorking('accept-all');
-    let accepted = 0;
-    const failures = [];
-    for (const item of pending) {
-      try {
-        const response = await api.patch(`/api/handovers/${handoverId}/items/${item.claimId}`, {
-          decision: 'accepted',
-        });
-        update(response.handover);
-        accepted += 1;
-      } catch (err) {
-        failures.push({ item, error: errorMessage(err) });
-      }
-    }
-    setWorking(null);
-    if (accepted > 0) {
+    try {
+      // One request, one recorded version. The previous loop sent one PATCH
+      // per item and wrote one full version snapshot for each.
+      const response = await api.post(`/api/handovers/${handoverId}/items/bulk`, {
+        decisions: pending.map((item) => ({ claimId: item.claimId, decision: 'accepted' })),
+      });
+      applyReviewResults(response);
       toast.success(
-        `${accepted} verified item${accepted === 1 ? '' : 's'} accepted${
-          failures.length ? `; ${failures.length} could not be accepted` : ''
-        }.`,
+        `${pending.length} verified item${pending.length === 1 ? '' : 's'} accepted.`,
       );
-    }
-    if (failures.length > 0) {
-      toast.error(failures[0].error);
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setWorking(null);
     }
   };
 
@@ -498,7 +521,7 @@ export default function HandoverReviewPage() {
         editedStatement: editText.trim(),
         note: editNote.trim() || undefined,
       });
-      update(response.handover);
+      applyReviewResults(response);
       setEditItem(null);
       toast.success('Item updated. A new version was recorded.');
     } catch (err) {
@@ -574,9 +597,17 @@ export default function HandoverReviewPage() {
     setWorking('regenerate');
     try {
       const response = await api.post(`/api/handovers/${handoverId}/regenerate`);
+      const nextId = String(response.handover?.id || '');
+      if (response.createdNew && nextId && nextId !== String(handoverId)) {
+        toast.success(
+          `A new draft was built from the current state: ${response.carried} kept, ${response.added} new, ${response.dropped} dropped, ${response.changed || 0} changed since review. The shared version stays live until you approve and share the replacement.`,
+        );
+        navigate(`/projects/${projectId}/handovers/${nextId}`, { replace: true });
+        return;
+      }
       update(response.handover);
       toast.success(
-        `Rebuilt from the current state: ${response.carried} kept, ${response.added} new, ${response.dropped} dropped. Review and resubmit.`,
+        `Rebuilt from the current state: ${response.carried} kept, ${response.added} new, ${response.dropped} dropped, ${response.changed || 0} changed since review. Review and resubmit.`,
       );
     } catch (err) {
       toast.error(errorMessage(err));

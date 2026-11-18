@@ -1,7 +1,14 @@
+import { AppError } from '../lib/errors.js';
 import { AuditEvent, Claim, Document, Evidence, Source } from '../models/index.js';
 import { logger } from '../lib/logger.js';
 import { claimVisibleTo, sourceVisibleTo } from './access/policy.js';
 
+/**
+ * Writes one audit row. Routine reads and notices may lose their row to a
+ * transient database hiccup, but access changes, approvals, shares and purges
+ * must not: for those the caller passes `critical: true` and an unwritable log
+ * turns into a 503 instead of a silent success.
+ */
 export async function recordAudit({
   projectId,
   actor,
@@ -11,6 +18,7 @@ export async function recordAudit({
   targetLabel,
   meta = {},
   req,
+  critical = false,
 }) {
   const actorId =
     actor?._id ??
@@ -31,8 +39,61 @@ export async function recordAudit({
       userAgent: req?.get?.('user-agent'),
     });
   } catch (error) {
-    logger.error({ action, error: error.message }, 'Failed to write audit event');
+    logger.error({ action, error: error.message, critical }, 'Failed to write audit event');
+    if (critical) {
+      throw new AppError(
+        503,
+        'audit_unavailable',
+        'The action was not confirmed because its audit record could not be written',
+      );
+    }
   }
+}
+
+/**
+ * Document views are evidence opens, not security events. Repeated opens of
+ * the same document by the same person within the window fold into the first
+ * row, so the log stays readable instead of growing with every scroll.
+ */
+export async function recordViewAudit({
+  projectId,
+  actor,
+  action,
+  targetType,
+  targetId,
+  targetLabel,
+  meta = {},
+  req,
+  windowMs = 3_600_000,
+}) {
+  const actorId =
+    actor?._id ??
+    (typeof actor?.id === 'string' ? actor.id : undefined) ??
+    (typeof actor === 'string' ? actor : undefined);
+  const since = new Date(Date.now() - windowMs);
+  const existing = await AuditEvent.findOne({
+    project: projectId,
+    action,
+    targetType,
+    targetId,
+    actor: actorId || null,
+    createdAt: { $gte: since },
+  })
+    .select('_id')
+    .lean();
+  if (existing) return false;
+
+  await recordAudit({
+    projectId,
+    actor,
+    action,
+    targetType,
+    targetId,
+    targetLabel,
+    meta,
+    req,
+  });
+  return true;
 }
 
 /**

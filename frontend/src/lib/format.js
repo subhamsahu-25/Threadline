@@ -1,3 +1,5 @@
+import { OPEN_CLAIM_STATUSES } from './constants.js';
+
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
   month: 'short',
@@ -58,11 +60,12 @@ export function daysUntil(value) {
   return Math.ceil(diff / 86_400_000);
 }
 
-const OPEN_STATUSES = ['open', 'active', 'planned', 'unknown'];
-
 export function expectsOwner(claim) {
   if (!claim) return false;
-  return Boolean(claim.ownerName) || (claim.type === 'task' && OPEN_STATUSES.includes(claim.status));
+  return (
+    Boolean(claim.ownerName) ||
+    (claim.type === 'task' && OPEN_CLAIM_STATUSES.includes(claim.status))
+  );
 }
 
 /**
@@ -156,4 +159,19 @@ export function percent(value) {
 
 export function safeName(value = '') {
   return value.replace(/[^\w.-]+/g, '-');
+}
+
+/**
+ * Evidence links come from connector documents, so they are untrusted. Only
+ * http(s) URLs may reach an href: a javascript: or data: value would run in
+ * the reader's origin when clicked.
+ */
+export function safeHttpUrl(value) {
+  if (!value) return null;
+  try {
+    const url = new URL(String(value));
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
 }

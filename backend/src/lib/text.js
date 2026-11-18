@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 const MARKDOWN_MARKS = /[*_`~]/;
 const CURLY = new Map([
   ['\u2018', "'"],
@@ -23,23 +25,32 @@ export function normalizeWhitespace(value) {
  * can still produce exact character offsets for citations.
  */
 export function normalizeWithMap(input) {
+  const source = String(input ?? '');
   const map = [];
   let out = '';
-  for (let i = 0; i < input.length; i += 1) {
-    const raw = input[i];
-    const ch = CURLY.get(raw) ?? raw;
-    if (MARKDOWN_MARKS.test(ch)) continue;
-    if (/\s/.test(ch)) {
+  let index = 0;
+  // Iterate by code point so astral characters (emoji) stay together, and
+  // push one map entry per UTF-16 unit so offsets always line up with indexOf.
+  for (const char of source) {
+    const ch = CURLY.get(char) ?? char;
+    if (MARKDOWN_MARKS.test(ch)) {
+      index += char.length;
+      continue;
+    }
+    if (/\s/u.test(ch)) {
       if (out.length > 0 && out[out.length - 1] !== ' ') {
         out += ' ';
-        map.push(i);
+        map.push(index);
       }
+      index += char.length;
       continue;
     }
     const lowered = ch.toLowerCase();
-    if (lowered.length !== 1) continue;
-    out += lowered;
-    map.push(i);
+    for (let unit = 0; unit < lowered.length; unit += 1) {
+      out += lowered[unit];
+      map.push(index);
+    }
+    index += char.length;
   }
   return { text: out, map };
 }
@@ -48,11 +59,37 @@ export function normalizeForMatch(value) {
   return normalizeWithMap(String(value ?? '')).text.trim();
 }
 
+/**
+ * Builds a comparison key that works for any script. NFKC folds full-width and
+ * compatibility characters, lowercase folds case, and every letter or number
+ * in any language survives. Emoji-only or punctuation-only text produces an
+ * empty key, which callers replace with `fallbackKey`.
+ */
 export function keyOf(value) {
-  return normalizeForMatch(value)
-    .replace(/[^a-z0-9 ]+/g, ' ')
+  return String(value ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\p{M} ]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Stable key for text whose content has no letters or numbers (for example an
+ * emoji-only statement). Deterministic across runs so re-ingestion still
+ * deduplicates it.
+ */
+export function fallbackKey(value) {
+  const compact = String(value ?? '').normalize('NFKC').trim();
+  return `h${createHash('sha256').update(compact).digest('hex').slice(0, 16)}`;
+}
+
+/**
+ * Returns a comparison key, falling back to a hash when the text contains no
+ * letters or numbers at all. Nothing is ever dropped for lacking a key.
+ */
+export function keyOfOrHash(value) {
+  return keyOf(value) || fallbackKey(value);
 }
 
 export function truncate(value, max) {
@@ -61,15 +98,27 @@ export function truncate(value, max) {
   return `${text.slice(0, Math.max(0, max - 1)).trimEnd()}\u2026`;
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Finds a quote inside a document. Tries an exact substring first, then a
- * normalized match. Returns offsets relative to the haystack.
+ * normalized match that must cover every token of the quote and respect word
+ * boundaries, so a shared prefix can never stand in for an invented tail.
+ * When a `within` range is given, a match inside it is preferred.
  */
-export function locateQuote(haystack, quote) {
+export function locateQuote(haystack, quote, { within } = {}) {
   const needle = String(quote ?? '').trim();
   if (!haystack || !needle) return { ok: false };
 
   const direct = haystack.indexOf(needle);
+  if (within) {
+    const local = haystack.indexOf(needle, within.start);
+    if (local >= 0 && local + needle.length <= within.end) {
+      return { ok: true, start: local, end: local + needle.length, match: 'exact' };
+    }
+  }
   if (direct >= 0) {
     return { ok: true, start: direct, end: direct + needle.length, match: 'exact' };
   }
@@ -78,12 +127,70 @@ export function locateQuote(haystack, quote) {
   const normalizedQuote = normalizeForMatch(needle);
   if (!normalizedQuote) return { ok: false };
 
-  const index = normalizedHaystack.text.indexOf(normalizedQuote);
-  if (index < 0) return { ok: false };
+  const tokens = normalizedQuote.split(' ').filter(Boolean);
+  if (tokens.length === 0) return { ok: false };
 
-  const start = normalizedHaystack.map[index];
-  const end = normalizedHaystack.map[index + normalizedQuote.length - 1] + 1;
-  return { ok: true, start, end, match: 'normalized' };
+  let matcher;
+  try {
+    matcher = new RegExp(
+      `(?<![\\p{L}\\p{N}])${tokens.map(escapeRegExp).join(' ')}(?![\\p{L}\\p{N}])`,
+      'gu',
+    );
+  } catch {
+    return { ok: false };
+  }
+
+  let fallback = null;
+  for (const match of normalizedHaystack.text.matchAll(matcher)) {
+    const start = normalizedHaystack.map[match.index];
+    const end = normalizedHaystack.map[match.index + match[0].length - 1] + 1;
+    if (within && start >= within.start && end <= within.end) {
+      return { ok: true, start, end, match: 'normalized' };
+    }
+    if (!fallback) fallback = { start, end };
+  }
+  if (fallback) return { ok: true, ...fallback, match: 'normalized' };
+  return { ok: false };
+}
+
+const VALUE_TOKEN_RE = new RegExp(
+  [
+    '\\b\\d[\\d.,:/-]*\\b',
+    '[A-Za-z0-9-]*\\d[A-Za-z0-9-]*',
+    '\\b[A-Za-z][A-Za-z0-9-]*[A-Z][A-Za-z0-9-]*\\b',
+    '\\b[A-Z]{2,6}\\b',
+    '"[^"]{2,40}"',
+  ].join('|'),
+  'gu',
+);
+
+const NORMALIZE_TOKEN = /[^\p{L}\p{N}]+/gu;
+
+function tokenWords(text) {
+  return normalizeForMatch(text).replace(NORMALIZE_TOKEN, ' ').trim().split(' ').filter(Boolean);
+}
+
+/**
+ * Pulls out the parts of a statement that carry an unambiguous value: numbers,
+ * product identifiers with internal capitals (MongoDB, PostgreSQL), acronyms
+ * and quoted strings. Used to catch a claim whose statement names something the
+ * cited quote never says.
+ */
+export function valueTokens(text) {
+  const tokens = new Set();
+  for (const match of String(text ?? '').matchAll(VALUE_TOKEN_RE)) {
+    for (const word of tokenWords(match[0])) tokens.add(word);
+  }
+  return [...tokens];
+}
+
+/**
+ * Returns the value tokens of `statement` that do not appear in `quote`. An
+ * empty array means the statement agrees with the passage it cites.
+ */
+export function missingValueTokens(statement, quote) {
+  const quoteWords = new Set(tokenWords(quote));
+  return valueTokens(statement).filter((token) => !quoteWords.has(token));
 }
 
 export function toIsoDate(value) {

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   auth,
   idOf,
+  registerAndLogin,
   request,
   app,
   seed,
@@ -336,11 +337,8 @@ describe('permission-aware handovers', () => {
       })
       .expect(200);
 
-    const updated = edited.body.handover.items.find(
-      (entry) => String(entry.claimId) === String(item.claimId),
-    );
-    expect(updated.statement).toContain('[REDACTED: email]');
-    expect(updated.statement).not.toContain('priya@example.com');
+    expect(edited.body.item.statement).toContain('[REDACTED: email]');
+    expect(edited.body.item.statement).not.toContain('priya@example.com');
   });
 
   it('redacts handover evidence for the recipient and keeps the highlight aligned', async () => {
@@ -393,19 +391,18 @@ describe('permission-aware handovers', () => {
   });
 
   it('rejects handovers created for a non-member', async () => {
-    const registered = await request(app).post('/api/auth/register').send({
-      email: 'outsider@example.test',
-      name: 'Outside Person',
-      password: 'Outside#2026',
-    });
-    expect(registered.status).toBe(201);
+    const outsider = await registerAndLogin(
+      'outsider@example.test',
+      'Outside Person',
+      'Outside#2026',
+    );
 
     const created = await request(app)
       .post('/api/handovers')
       .set(auth(aaravToken))
       .send({
         projectId,
-        recipientId: registered.body.user.id,
+        recipientId: outsider.user.id,
         roleTemplate: 'onboarding',
       });
     expect(created.status).toBe(400);
@@ -413,7 +410,59 @@ describe('permission-aware handovers', () => {
 
     const projectAccess = await request(app)
       .get(`/api/projects/${projectId}`)
-      .set(auth(registered.body.token));
+      .set(auth(outsider.token));
     expect(projectAccess.status).toBe(403);
+  });
+
+  it('hides every handover route from a non-member behind the same 404', async () => {
+    const outsider = await registerAndLogin(
+      'outsider@example.test',
+      'Outside Person',
+      'Outside#2026',
+    );
+    const outsiderToken = outsider.token;
+
+    const draft = await createHandover();
+    expect(draft.status).toBe(201);
+    const draftId = draft.body.handover.id;
+
+    const published = await publishHandover();
+    const randomId = '64b000000000000000000000';
+
+    const routes = [
+      ['get', '', undefined],
+      ['get', '/export', undefined],
+      ['get', '/feedback', undefined],
+      ['post', '/feedback', { message: 'Please check this item' }],
+      ['patch', '/items/000000000000000000000000', { decision: 'accepted', note: 'ok' }],
+      ['post', '/submit', undefined],
+      ['post', '/approve', {}],
+      ['post', '/reject', { note: 'no' }],
+      ['post', '/reopen', undefined],
+      ['get', '/freshness', undefined],
+      ['post', '/regenerate', undefined],
+      ['post', '/share', {}],
+      ['post', '/share/revoke', {}],
+      ['post', '/acknowledge', undefined],
+      ['get', '/versions', undefined],
+      ['get', '/versions/1', undefined],
+      ['get', '/deliveries', undefined],
+    ];
+
+    for (const handoverId of [draftId, published.handoverId]) {
+      for (const [method, suffix, body] of routes) {
+        const real = await request(app)
+          [method](`/api/handovers/${handoverId}${suffix}`)
+          .set(auth(outsiderToken))
+          .send(body);
+        const missing = await request(app)
+          [method](`/api/handovers/${randomId}${suffix}`)
+          .set(auth(outsiderToken))
+          .send(body);
+
+        expect(real.status, `${method.toUpperCase()} ${suffix}`).toBe(404);
+        expect(real.body, `${method.toUpperCase()} ${suffix}`).toEqual(missing.body);
+      }
+    }
   });
 });

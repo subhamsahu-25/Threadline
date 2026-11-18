@@ -12,7 +12,7 @@ import {
   User,
 } from '../models/index.js';
 import { enqueue, whenIdle } from '../services/queue.js';
-import { hashPassword, signToken, verifyPassword } from '../services/auth.js';
+import { hashPassword, issueSession } from '../services/auth.js';
 
 export const DEMO_PASSWORD = 'Threadline#2026';
 export const DEMO_PROJECT_KEY = 'ATLAS';
@@ -120,6 +120,8 @@ function mimeFor(name) {
 }
 
 async function ensureUser(definition, passwordHash) {
+  // Existing demo accounts keep their current password. A public seed call
+  // must never be able to reset credentials that are already in use.
   let user = await User.findOne({ email: definition.email });
   if (!user) {
     user = await User.create({
@@ -127,16 +129,18 @@ async function ensureUser(definition, passwordHash) {
       name: definition.name,
       passwordHash,
     });
-  } else {
-    user.name = definition.name;
-    await user.save();
-    const withHash = await User.findOne({ email: definition.email }).select('+passwordHash');
-    if (!(await verifyPassword(DEMO_PASSWORD, withHash.passwordHash))) {
-      withHash.passwordHash = passwordHash;
-      await withHash.save();
-    }
   }
   return user;
+}
+
+function projectSummary(project) {
+  return {
+    id: String(project._id),
+    key: project.key,
+    name: project.name,
+    description: project.description,
+    isDemo: Boolean(project.isDemo),
+  };
 }
 
 const SEEDED_SOURCE_NAMES = DEMO_DOCUMENTS.map((document) => document.name);
@@ -194,68 +198,56 @@ async function writeDocument(file) {
 }
 
 export async function seedDemo({ reset = true } = {}) {
+  const existing = await Project.findOne({ key: DEMO_PROJECT_KEY });
+
+  // Strictly create-only. An existing workspace is returned untouched: its
+  // members, owner, transition and account passwords belong to whoever
+  // already uses them, and a real project that happens to be keyed ATLAS is
+  // never adopted as the demo.
+  if (existing && (!reset || !existing.isDemo)) {
+    return {
+      alreadySeeded: true,
+      project: projectSummary(existing),
+      hint: existing.isDemo
+        ? 'Pass reset=true to rebuild the seeded sources'
+        : 'That project is not the demo workspace and was left untouched',
+    };
+  }
+
   const passwordHash = await hashPassword(DEMO_PASSWORD);
   const users = {};
   for (const definition of DEMO_USERS) {
     users[definition.key] = await ensureUser(definition, passwordHash);
   }
 
-  const members = DEMO_USERS.map((definition) => ({
-    user: users[definition.key]._id,
-    role: definition.role,
-    incoming: Boolean(definition.incoming),
-  }));
-  const transition = {
-    outgoingUserId: users.rohan._id,
-    outgoingName: 'Rohan Mehta',
-    plannedDepartureAt: new Date(Date.now() + 14 * 86_400_000),
-    context:
-      'Rohan is rotating off Atlas to lead the payments platform team. Ananya joins as their replacement in two weeks.',
-  };
-
-  let project = await Project.findOne({ key: DEMO_PROJECT_KEY });
-  if (project && !reset) {
-    // Older seeds created different demo accounts. Keep the corpus but repair
-    // the identity of the workspace so every persona gets the role it is shown.
-    project.owner = users.subham._id;
-    project.members = members;
-    project.transition = transition;
-    await project.save();
-    return {
-      alreadySeeded: true,
-      reconciled: true,
-      project: { id: String(project._id), key: project.key, name: project.name },
-      hint: 'Pass reset=true to rebuild the seeded sources',
-    };
-  }
-  if (project && reset) {
+  let project = existing;
+  if (project) {
     await removeSeededContent(project);
     await removeStaleDemoUsers();
-  }
-
-  if (!project) {
+  } else {
+    const members = DEMO_USERS.map((definition) => ({
+      user: users[definition.key]._id,
+      role: definition.role,
+      incoming: Boolean(definition.incoming),
+    }));
     project = await Project.create({
       key: DEMO_PROJECT_KEY,
       name: 'Project Atlas - Billing Service Migration',
       description:
         'Migration of the billing ledger and invoice pipeline to a modular service. Used as the Threadline demo project.',
+      isDemo: true,
       owner: users.subham._id,
       members,
-      transition,
+      transition: {
+        outgoingUserId: users.rohan._id,
+        outgoingName: 'Rohan Mehta',
+        plannedDepartureAt: new Date(Date.now() + 14 * 86_400_000),
+        context:
+          'Rohan is rotating off Atlas to lead the payments platform team. Ananya joins as their replacement in two weeks.',
+      },
       startedAt: new Date('2026-08-19'),
       targetDate: new Date('2026-12-15'),
     });
-  } else {
-    project.name = 'Project Atlas - Billing Service Migration';
-    project.description =
-      'Migration of the billing ledger and invoice pipeline to a modular service. Used as the Threadline demo project.';
-    project.owner = users.subham._id;
-    project.members = members;
-    project.transition = transition;
-    project.settings = { requireSeparateApprover: false };
-    project.startedAt = new Date('2026-08-19');
-    project.targetDate = new Date('2026-12-15');
-    await project.save();
   }
 
   const sourceIds = [];
@@ -279,20 +271,18 @@ export async function seedDemo({ reset = true } = {}) {
   await whenIdle({ timeoutMs: 180_000 });
 
   const sources = await Source.find({ _id: { $in: sourceIds } }).lean();
+  const tokens = await Promise.all(
+    DEMO_USERS.map((definition) => issueSession(users[definition.key])),
+  );
   const result = {
-    project: {
-      id: String(project._id),
-      key: project.key,
-      name: project.name,
-      description: project.description,
-    },
-    users: DEMO_USERS.map((definition) => ({
+    project: projectSummary(project),
+    users: DEMO_USERS.map((definition, index) => ({
       id: String(users[definition.key]._id),
       name: definition.name,
       email: definition.email,
       role: definition.role,
       password: DEMO_PASSWORD,
-      token: signToken(users[definition.key]),
+      token: tokens[index],
     })),
     sources: sources.map((source) => ({
       id: String(source._id),
@@ -324,11 +314,22 @@ export async function seedDemo({ reset = true } = {}) {
 
 /**
  * Repairs an existing demo workspace after a deploy without touching its
- * sources, claims or handovers. A missing workspace is left alone so a fresh
- * database still starts empty until someone explicitly loads the demo.
+ * sources, claims, members or passwords. Only the flag is added, and only
+ * when the workspace is provably the seeded one (an @threadline.demo owner).
+ * A missing workspace is left alone so a fresh database still starts empty
+ * until someone explicitly loads the demo.
  */
 export async function reconcileDemoWorkspace() {
-  const existing = await Project.exists({ key: DEMO_PROJECT_KEY });
+  const existing = await Project.findOne({ key: DEMO_PROJECT_KEY });
   if (!existing) return null;
-  return seedDemo({ reset: false });
+  if (existing.isDemo) {
+    return { alreadySeeded: true, project: projectSummary(existing) };
+  }
+
+  const owner = await User.findById(existing.owner).select('email').lean();
+  if (!owner?.email?.endsWith('@threadline.demo')) return null;
+
+  existing.isDemo = true;
+  await existing.save();
+  return { alreadySeeded: true, adopted: true, project: projectSummary(existing) };
 }

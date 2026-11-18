@@ -72,7 +72,7 @@ export default function ClaimCard({
   const certainty = evidenceStatus(claim);
 
   return (
-    <Card className={`${compact ? 'p-3.5' : 'p-4'} ${superseded ? 'opacity-80' : ''} ${className}`}>
+    <Card className={`${compact ? 'p-3.5' : 'p-4'} ${superseded ? 'border-dashed' : ''} ${className}`}>
       <div className="flex flex-wrap items-center gap-1.5">
         <TypeBadge type={claim.type} />
         <StateBadge state={claim.state} />

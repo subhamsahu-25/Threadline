@@ -226,10 +226,13 @@ describe('clarifications for departing members', () => {
     const resultClaimId = answered.body.resultClaimId;
 
     const handover = await createLiveHandover();
-    const item = handover.items.find((entry) => entry.claimId === resultClaimId);
-    expect(item).toBeTruthy();
-    expect(item.origin).toBe('person_confirmed');
-    expect(item.restrictedToRecipient).toBe(true);
+    // The answer is withheld until a lead shares it, so the draft contains no
+    // item row for it and the reviewer sees a counted "needs sharing" note.
+    expect(handover.items.some((entry) => entry.claimId === resultClaimId)).toBe(false);
+    expect(handover.withheld.byReason.permissions).toBeGreaterThan(0);
+    expect(
+      handover.alerts.some((alert) => alert.code === 'confirmed_answers_unshared'),
+    ).toBe(true);
 
     const sharePath = await shareHandover(handover.id, resultClaimId);
     const token = sharePath.split('/').pop();

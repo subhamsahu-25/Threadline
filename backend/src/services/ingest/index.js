@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import mongoose from 'mongoose';
 import { env } from '../../config/env.js';
 import { AppError } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
@@ -32,11 +33,35 @@ async function collectUploadDocuments(source) {
     try {
       buffer = await fs.readFile(filePath);
     } catch {
-      throw new AppError(
-        422,
-        'file_missing',
-        `Stored upload "${file.originalName}" is no longer available; re-upload it`,
-      );
+      // The upload directory is ephemeral on some hosts. The extracted text is
+      // already in the database, so re-ingest re-chunks that instead of asking
+      // the user to upload the file again.
+      const stored = await Document.findOne({
+        source: source._id,
+        retiredAt: null,
+        $or: [{ path: file.originalName }, { title: file.originalName }],
+      })
+        .sort({ revision: -1 })
+        .lean();
+      if (!stored?.rawText) {
+        throw new AppError(
+          422,
+          'file_missing',
+          `Stored upload "${file.originalName}" is no longer available; re-upload it`,
+        );
+      }
+      documents.push({
+        kind: 'upload',
+        title: stored.title || file.originalName,
+        path: stored.path || file.originalName,
+        mime: stored.mime || file.mime || 'text/plain',
+        size: stored.size || stored.rawText.length,
+        rawText: stored.rawText,
+        parseWarnings: stored.parseWarnings || [],
+        locator: stored.locator || { path: file.originalName },
+        meta: stored.meta || {},
+      });
+      continue;
     }
     const parsed = await parseFile({ buffer, filename: file.originalName });
     documents.push({
@@ -54,9 +79,43 @@ async function collectUploadDocuments(source) {
   return documents;
 }
 
+/** Stored documents for a connector section GitHub answered "not modified". */
+async function loadConnectorDocuments(source, kinds) {
+  const rows = await Document.find({
+    source: source._id,
+    retiredAt: null,
+    kind: { $in: kinds },
+  })
+    .sort({ title: 1 })
+    .lean();
+  return rows.map((row) => ({
+    kind: row.kind,
+    title: row.title,
+    path: row.path,
+    mime: row.mime,
+    size: row.size,
+    author: row.author,
+    occurredAt: row.occurredAt,
+    locator: row.locator,
+    rawText: row.rawText,
+    parseWarnings: row.parseWarnings || [],
+    meta: row.meta || {},
+  }));
+}
+
 async function collectDocuments(source) {
   if (source.kind === 'upload') return collectUploadDocuments(source);
-  if (source.kind === 'github') return collectGithubDocuments(source.externalRef);
+  if (source.kind === 'github') {
+    // ETags live on the source cursor so an unchanged repository costs a few
+    // conditional requests and no re-download.
+    source.sync.cursor = source.sync.cursor || {};
+    const cache = source.sync.cursor.httpCache || {};
+    source.sync.cursor.httpCache = cache;
+    return collectGithubDocuments(source.externalRef, {
+      cache,
+      loadPrevious: (kinds) => loadConnectorDocuments(source, kinds),
+    });
+  }
   if (source.kind === 'drive') return collectDriveDocuments(source.externalRef);
   throw new AppError(400, 'unknown_source', `Unsupported source kind: ${source.kind}`);
 }
@@ -82,29 +141,33 @@ async function syncSourceJob(sourceId) {
   try {
     documents = await collectDocuments(source);
   } catch (error) {
+    const retryAt = error.retryAt instanceof Date ? error.retryAt : null;
     await Source.updateOne(
       { _id: source._id },
       {
         $set: {
           'sync.lastCheckedAt': new Date(),
           'sync.lastError': truncate(error.message || 'Sync check failed', 300),
+          ...(retryAt ? { 'sync.nextAttemptAt': retryAt } : {}),
         },
       },
     );
     logger.warn(
-      { source: String(source._id), error: error.message },
+      { source: String(source._id), error: error.message, retryAt },
       'Source sync check failed; previous knowledge kept',
     );
-    return { changed: false, error: error.message };
+    return { changed: false, error: error.message, retryAt };
   }
 
   const checksum = documentsChecksum(documents);
   const checkedAt = new Date();
+  const httpCache = source.sync?.cursor?.httpCache;
+  const cacheUpdate = httpCache ? { 'sync.cursor.httpCache': httpCache } : {};
   const previousChecksum = source.sync?.cursor?.checksum;
   if (previousChecksum && previousChecksum === checksum) {
     await Source.updateOne(
       { _id: source._id },
-      { $set: { 'sync.lastCheckedAt': checkedAt, 'sync.lastError': null } },
+      { $set: { 'sync.lastCheckedAt': checkedAt, 'sync.lastError': null, ...cacheUpdate } },
     );
     return { changed: false };
   }
@@ -118,12 +181,13 @@ async function syncSourceJob(sourceId) {
         statusMessage: 'Source changed; refreshing knowledge',
         'sync.lastCheckedAt': checkedAt,
         'sync.lastError': null,
+        ...cacheUpdate,
       },
     },
   );
   await ingestSourceJob({
     name: 'ingest_source',
-    payload: { sourceId: String(source._id) },
+    payload: { sourceId: String(source._id), documents },
     attempts: 1,
   });
   return { changed: true };
@@ -136,11 +200,22 @@ async function persistDocuments({ source, documents }) {
   const created = [];
 
   for (const input of documents) {
-    const rawText = normalizeWhitespace(input.rawText);
-    if (rawText.length < 20) {
+    const normalized = normalizeWhitespace(input.rawText);
+    if (normalized.length < 20) {
       logger.warn({ source: String(source._id), title: input.title }, 'Skipped empty document');
       continue;
     }
+    const parseWarnings = [...(input.parseWarnings || [])];
+    const truncatedText = normalized.length > env.maxDocumentChars;
+    const rawText = truncatedText ? normalized.slice(0, env.maxDocumentChars) : normalized;
+    if (truncatedText) {
+      parseWarnings.push(
+        `Stored the first ${env.maxDocumentChars.toLocaleString('en-US')} of ${normalized.length.toLocaleString(
+          'en-US',
+        )} characters; the remainder was not analysed`,
+      );
+    }
+
     const checksum = checksumOf(rawText);
     if (seen.has(checksum)) {
       logger.info({ source: String(source._id), title: input.title }, 'Skipped duplicate document');
@@ -152,7 +227,6 @@ async function persistDocuments({ source, documents }) {
     const chunks = plan.chunks;
     if (chunks.length === 0) continue;
 
-    const parseWarnings = [...(input.parseWarnings || [])];
     if (plan.droppedSections > 0) {
       parseWarnings.push(
         `Processed ${chunks.length} of ${plan.totalSections} text sections (${plan.keptChars.toLocaleString(
@@ -177,7 +251,7 @@ async function persistDocuments({ source, documents }) {
       title: input.title,
       path: input.path || input.title,
       mime: input.mime || 'text/markdown',
-      size: input.size || rawText.length,
+      size: input.size || normalized.length,
       checksum,
       author: input.author,
       occurredAt: input.occurredAt || null,
@@ -229,21 +303,29 @@ async function rollbackRun({ source, documentIds, snapshotClaims }) {
   await Document.deleteMany({ _id: { $in: documentIds } });
 
   if (snapshotClaims.length > 0) {
-    const byId = new Map(snapshotClaims.map((claim) => [String(claim._id), claim]));
-    const survivors = await Claim.find({ _id: { $in: [...byId.keys()] } });
-    for (const claim of survivors) {
-      const snapshot = byId.get(String(claim._id));
-      claim.ownerName = snapshot.ownerName;
-      claim.ownerUser = snapshot.ownerUser;
-      claim.dueAt = snapshot.dueAt;
-      claim.occurredAt = snapshot.occurredAt;
-      claim.sensitivity = snapshot.sensitivity;
-      claim.flags = snapshot.flags;
-      claim.document = snapshot.document;
-      claim.retiredAt = snapshot.retiredAt;
-      await claim.save();
+    // Restore the complete prior row. Field-by-field repair used to leave the
+    // status, confidence, state and derived counts at their half-merged values.
+    for (const snapshot of snapshotClaims) {
+      await Claim.replaceOne({ _id: snapshot._id }, snapshot.toObject()).catch(() => {});
     }
+    const survivors = await Claim.find({ _id: { $in: previousIds } });
     await refreshClaims(survivors);
+  }
+}
+
+async function withOptionalTransaction(work) {
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => work(session));
+    return true;
+  } catch (error) {
+    if (/Transaction numbers are only allowed|does not support transactions|replica set/i.test(error.message)) {
+      await work(null);
+      return false;
+    }
+    throw error;
+  } finally {
+    await session.endSession();
   }
 }
 
@@ -285,51 +367,112 @@ async function ingestSourceJob(job) {
 
   let createdDocumentIds = [];
   let snapshotClaims = [];
+  let resumeActive = false;
+  // Tracks the in-flight progress write so the catch block can wait for it
+  // before saving the failure state.
+  let progressSave = Promise.resolve();
 
   try {
-    const documentInputs = await collectDocuments(source);
+    const precollected = Array.isArray(job.payload?.documents) ? job.payload.documents : null;
+    // A sync already fetched the provider's documents to fingerprint them.
+    // Reusing that set avoids paying for every GitHub/Drive call twice.
+    const documentInputs = precollected || (await collectDocuments(source));
     if (documentInputs.length === 0) {
       throw new AppError(422, 'no_documents', 'No readable documents were found for this source');
     }
 
-    const previousDocuments = await Document.find({ source: source._id }).select('_id').lean();
+    const contentChecksum = documentsChecksum(documentInputs);
+    const cursor = source.extractionCursor || {};
+    const cursorDocumentIds = (cursor.documentIds || []).map(String);
+
+    // A previous run that stopped on the time budget left its documents and
+    // its last finished chunk behind. When the content is byte-identical,
+    // continue from that chunk instead of discarding the work.
+    let documents = [];
+    if (
+      cursor.checksum === contentChecksum &&
+      cursor.chunkId &&
+      cursorDocumentIds.length > 0
+    ) {
+      const resumed = await Document.find({
+        _id: { $in: cursorDocumentIds },
+        source: source._id,
+      });
+      if (resumed.length === cursorDocumentIds.length) {
+        const byId = new Map(resumed.map((doc) => [String(doc._id), doc]));
+        documents = cursorDocumentIds.map((id) => byId.get(id)).filter(Boolean);
+        resumeActive = true;
+        logger.info(
+          { source: String(source._id), chunk: String(cursor.chunkId) },
+          'Resuming partially extracted source from its saved cursor',
+        );
+      }
+    }
+
+    const previousDocuments = await Document.find({
+      source: source._id,
+      _id: { $nin: resumeActive ? cursorDocumentIds : [] },
+    })
+      .select('_id')
+      .lean();
     const previousDocumentIds = previousDocuments.map((doc) => doc._id);
     snapshotClaims = await Claim.find({ source: source._id, retiredAt: null });
 
-    const documents = await persistDocuments({ source, documents: documentInputs });
-    createdDocumentIds = documents.map((doc) => doc._id);
-    if (documents.length === 0) {
-      throw new AppError(422, 'no_documents', 'No readable documents were found for this source');
+    if (!resumeActive) {
+      documents = await persistDocuments({ source, documents: documentInputs });
+      if (documents.length === 0) {
+        throw new AppError(422, 'no_documents', 'No readable documents were found for this source');
+      }
     }
+    createdDocumentIds = documents.map((doc) => doc._id);
 
     let lastProgressSave = 0;
     const extraction = await extractClaimsForDocuments({
       project,
       source,
       documents,
+      resume: resumeActive ? { chunkId: cursor.chunkId } : null,
       onProgress: ({ chunksProcessed, chunksTotal }) => {
         if (chunksProcessed - lastProgressSave < 15) return;
         lastProgressSave = chunksProcessed;
         source.statusMessage = `Extracting knowledge (${chunksProcessed}/${chunksTotal} chunks)`;
-        source.save().catch(() => {});
+        // Serialise progress writes. Two concurrent source.save() calls made
+        // Mongoose throw ParallelSaveError and lose the later update.
+        progressSave = progressSave.then(() => source.save()).catch(() => {});
       },
     });
 
     if (extraction.partial) {
-      await rollbackRun({
-        source,
-        documentIds: createdDocumentIds,
-        snapshotClaims,
-      });
-      createdDocumentIds = [];
+      const now = new Date();
+      // Progress is kept: the documents stay, the previous revision is retired,
+      // and unseen claims are not touched until a run reaches the last chunk.
+      await Document.updateMany(
+        { _id: { $in: previousDocumentIds }, retiredAt: null },
+        { $set: { retiredAt: now } },
+      );
       await refreshSourceStats(source);
       applyExtractionStats(source, extraction);
+      source.extractionCursor = {
+        checksum: contentChecksum,
+        documentIds: createdDocumentIds,
+        chunkId: extraction.lastProcessedChunkId || undefined,
+        chunksProcessed: extraction.chunksProcessed,
+        chunksTotal: extraction.chunksTotal,
+        stoppedBy: extraction.stoppedBy || 'time_budget',
+        updatedAt: now,
+      };
       source.status = 'partial';
       source.statusMessage = truncate(
-        `Extraction stopped after ${extraction.chunksProcessed}/${extraction.chunksTotal} chunks (${extraction.stoppedBy}). Previous content was kept; re-ingest when the backend has more time.`,
+        `Stopped after ${extraction.chunksProcessed}/${extraction.chunksTotal} chunks (${
+          extraction.stoppedBy || 'time_budget'
+        }). Progress is saved — continue ingestion to finish the remaining chunks.`,
         400,
       );
-      source.lastIngestedAt = new Date();
+      source.parseWarnings = [
+        ...new Set([...summarizeWarnings(documents), ...(extraction.warnings || [])]),
+      ].slice(0, 10);
+      source.lastIngestedAt = now;
+      await progressSave;
       await source.save();
 
       await recordAudit({
@@ -343,31 +486,79 @@ async function ingestSourceJob(job) {
           chunksProcessed: extraction.chunksProcessed,
           chunksTotal: extraction.chunksTotal,
           stoppedBy: extraction.stoppedBy,
+          resumed: resumeActive,
+          resumable: Boolean(extraction.lastProcessedChunkId),
         },
       });
+
+      await refreshOutdatedHandovers({ projectId: project._id }).catch(() => {});
       return;
     }
 
     // Commit: the new revision becomes current. Claims that were not seen in
     // this run are retired, and prior evidence for carried-over claims is
-    // removed so citations resolve against the fresh documents.
+    // removed so citations resolve against the fresh documents. A resumed run
+    // also counts the claims written by the earlier segment of the same run.
     const now = new Date();
-    await Claim.updateMany(
-      { source: source._id, retiredAt: null, _id: { $nin: extraction.claimIds } },
-      { $set: { retiredAt: now } },
-    );
-    await Document.updateMany(
-      { _id: { $in: previousDocumentIds }, retiredAt: null },
-      { $set: { retiredAt: now } },
-    );
-    if (extraction.claimIds.length > 0) {
-      await Evidence.deleteMany({
-        claim: { $in: extraction.claimIds },
-        document: { $nin: createdDocumentIds },
-      });
-    }
+    const runClaims =
+      createdDocumentIds.length > 0
+        ? await Claim.find({
+            source: source._id,
+            retiredAt: null,
+            document: { $in: createdDocumentIds },
+          })
+        : [];
+    const keepClaimIds = new Set([
+      ...extraction.claimIds.map(String),
+      ...runClaims.map((claim) => String(claim._id)),
+    ]);
 
-    await refreshClaims(extraction.claims);
+    // Retiring claims and documents, dropping stale evidence and deleting the
+    // old revisions are one logical commit. On a replica set they run in a
+    // transaction; on a standalone server the same steps run sequentially.
+    await withOptionalTransaction(async (session) => {
+      const use = (query) => (session ? query.session(session) : query);
+      await use(
+        Claim.updateMany(
+          {
+            source: source._id,
+            retiredAt: null,
+            _id: { $nin: [...keepClaimIds] },
+          },
+          { $set: { retiredAt: now } },
+        ),
+      );
+      await use(
+        Document.updateMany(
+          { _id: { $in: previousDocumentIds }, retiredAt: null },
+          { $set: { retiredAt: now } },
+        ),
+      );
+      // Evidence attached to the old revision can no longer resolve; handover
+      // items keep their own snapshot of the quote (D6).
+      const sourceClaimsQuery = Claim.find({ source: source._id }).select('_id').lean();
+      const sourceClaims = await (session ? sourceClaimsQuery.session(session) : sourceClaimsQuery);
+      const sourceClaimIds = sourceClaims.map((claim) => claim._id);
+      await use(
+        Evidence.deleteMany({
+          claim: { $in: sourceClaimIds },
+          document: { $nin: createdDocumentIds },
+        }),
+      );
+      // Retired revisions were never removed before, so full old texts
+      // accumulated forever.
+      await use(
+        Document.deleteMany({
+          source: source._id,
+          retiredAt: { $ne: null },
+          _id: { $nin: createdDocumentIds },
+        }),
+      );
+    });
+
+    await refreshClaims([...extraction.claims, ...runClaims.filter(
+      (claim) => !extraction.claims.some((entry) => String(entry._id) === String(claim._id)),
+    )]);
     const stats = await refreshSourceStats(source);
     applyExtractionStats(source, extraction);
 
@@ -381,8 +572,9 @@ async function ingestSourceJob(job) {
       );
     }
 
-    const warnings = summarizeWarnings(documents);
-    const contentChecksum = documentsChecksum(documentInputs);
+    const warnings = [
+      ...new Set([...summarizeWarnings(documents), ...(extraction.warnings || [])]),
+    ].slice(0, 10);
     const previousChecksum = source.sync?.cursor?.checksum;
     const connectorChanged =
       source.kind !== 'upload' && Boolean(previousChecksum) && previousChecksum !== contentChecksum;
@@ -400,7 +592,20 @@ async function ingestSourceJob(job) {
     );
     source.parseWarnings = warnings;
     source.lastIngestedAt = new Date();
+    source.extractionCursor = undefined;
+    await progressSave;
     await source.save();
+
+    // Uploaded originals are not needed after a successful ingest: the text is
+    // stored with the document and re-ingest reuses it. This keeps
+    // confidential files from lingering on an ephemeral disk.
+    if (source.kind === 'upload') {
+      await Promise.all(
+        (source.files || []).map((file) =>
+          fs.rm(path.join(env.uploadDir, path.basename(file.storedName)), { force: true }).catch(() => {}),
+        ),
+      );
+    }
 
     await recordAudit({
       projectId: project._id,
@@ -419,6 +624,8 @@ async function ingestSourceJob(job) {
         llmChunks: extraction.llmChunks,
         heuristicChunks: extraction.heuristicChunks,
         superseded,
+        resumed: resumeActive,
+        keyFallbacks: extraction.keyFallbacks || 0,
         parseWarnings: warnings,
       },
     });
@@ -431,35 +638,39 @@ async function ingestSourceJob(job) {
         method: extraction.method,
         llmChunks: extraction.llmChunks,
         heuristicChunks: extraction.heuristicChunks,
+        resumed: resumeActive,
       },
       'Source ingested',
     );
 
-    if (source.kind !== 'upload') {
-      try {
-        const marked = await refreshOutdatedHandovers({ projectId: project._id });
-        if (marked > 0) {
-          logger.info(
-            { project: String(project._id), handovers: marked },
-            'Marked live handovers outdated after a connected source changed',
-          );
-        }
-      } catch (error) {
-        logger.warn(
-          { project: String(project._id), error: error.message },
-          'Could not refresh handover freshness after a source change',
+    try {
+      const marked = await refreshOutdatedHandovers({ projectId: project._id });
+      if (marked > 0) {
+        logger.info(
+          { project: String(project._id), handovers: marked },
+          'Marked live handovers outdated after a source change',
         );
       }
+    } catch (error) {
+      logger.warn(
+        { project: String(project._id), error: error.message },
+        'Could not refresh handover freshness after a source change',
+      );
     }
   } catch (error) {
-    await rollbackRun({
-      source,
-      documentIds: createdDocumentIds,
-      snapshotClaims,
-    });
+    // A resumed run already committed earlier chunks; deleting its documents
+    // would throw that work away and break its saved cursor.
+    if (!resumeActive) {
+      await rollbackRun({
+        source,
+        documentIds: createdDocumentIds,
+        snapshotClaims,
+      });
+    }
 
     source.status = 'failed';
     source.statusMessage = truncate(error.message || 'Ingestion failed', 400);
+    await progressSave;
     await source.save();
 
     await recordAudit({
@@ -469,7 +680,10 @@ async function ingestSourceJob(job) {
       targetType: 'source',
       targetId: source._id,
       targetLabel: source.name,
-      meta: { message: truncate(error.message || 'Ingestion failed', 300) },
+      meta: {
+        message: truncate(error.message || 'Ingestion failed', 300),
+        resumed: resumeActive,
+      },
     });
 
     throw error;

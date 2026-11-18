@@ -98,19 +98,36 @@ All variables are optional in development.
 | `GITHUB_TOKEN` | empty | GitHub connector (public repos work without it) |
 | `GITHUB_ALLOWED_REPOS` | empty (none allowed) | Comma-separated `owner/repo` allow-list |
 | `GOOGLE_DRIVE_ACCESS_TOKEN` | empty | Google Drive connector (OAuth access token) |
+| `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REFRESH_TOKEN` | empty | Optional OAuth refresh flow so the one-hour access token renews automatically |
 | `DRIVE_ALLOWED_FOLDERS` | empty (none allowed) | Comma-separated Drive folder allow-list |
+| `MAX_CONNECTOR_SOURCES` | `10` | Connector sources allowed per project |
 | `UPLOAD_DIR` | `backend/storage/uploads` | Uploaded file storage |
 | `MAX_UPLOAD_MB` | `15` | Per-file upload limit |
 | `MAX_FILES_PER_UPLOAD` | `20` | Files per source |
+| `MAX_DOCUMENT_CHARS` | `1000000` | Parsed text kept per document; anything beyond is dropped with a visible warning |
+| `UPLOAD_JANITOR_ENABLED` | `true` | Removes upload files no source references (runs on boot and every `UPLOAD_JANITOR_INTERVAL_HOURS`) |
+| `UPLOAD_JANITOR_INTERVAL_HOURS` | `6` | Janitor interval |
+| `UPLOAD_ORPHAN_HOURS` | `24` | Age before an unreferenced upload is deleted |
+| `REGISTRATION_MODE` | `open` (dev/demo), `invite` (production) | `open`, `invite` or `closed` |
+| `REGISTRATION_INVITE_CODES` | empty | Comma-separated codes accepted in invite mode |
+| `REGISTRATION_EMAIL_DOMAINS` | empty | Comma-separated domains allowed to register |
+| `LOGIN_MAX_ATTEMPTS` | `5` | Failed sign-ins before a temporary lockout (minimum 3) |
+| `LOGIN_LOCKOUT_MINUTES` | `15` | Lockout duration |
 | `EXTRACT_CONCURRENCY` | `3` | Parallel extraction calls |
 | `EXTRACT_TIME_BUDGET_MS` | `120000` | Time budget for one extraction pass |
 | `STALE_DAYS` | `30` | Age before an open item is flagged stale |
+| `OLD_QUESTION_DAYS` | `14` | Open questions older than this count against readiness |
+| `READINESS_PENALTY_UNVERIFIED` | `3` | Points off the 100-point readiness score per category (caps apply) |
+| `READINESS_PENALTY_OWNERSHIP_GAP` | `8` | Ownership-gap penalty |
+| `READINESS_PENALTY_CONFLICT` | `10` | Conflict penalty |
+| `READINESS_PENALTY_OLD_QUESTION` | `4` | Old-question penalty |
 | `SHARE_TTL_DAYS` | `7` | Share-link lifetime |
 | `OUTBOUND_WEBHOOK_URL` | empty | Optional webhook for share, acknowledgement, clarification and reminder delivery; when empty every delivery is recorded as `skipped`, never as sent |
 | `OUTBOUND_WEBHOOK_TIMEOUT_MS` | `5000` | Webhook request timeout |
 | `HANDOVER_REMINDER_ENABLED` | `true` | Sends one in-app notice and one outbound delivery for a shared handover that is still unacknowledged |
 | `HANDOVER_REMINDER_DAYS` | `3` | Days after sharing before the reminder fires |
 | `ALLOW_DEMO_SEED` | `true` | Enables `POST /api/demo/seed`; creating a missing workspace is public, rebuilding requires the Atlas lead |
+| `DEMO_MODE` | `false` | Production additionally requires this flag before the demo seed is allowed |
 | `INGEST_CONCURRENCY` | `2` | Background ingestion workers |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 
@@ -269,8 +286,10 @@ require `Authorization: Bearer <token>`.
 
 | Method | Path | Body / notes |
 | --- | --- | --- |
-| POST | `/auth/register` | `{ email, name, password }` → `{ token, user }` |
-| POST | `/auth/login` | `{ email, password }` → `{ token, user }` |
+| POST | `/auth/register` | `{ email, name, password, inviteCode? }` → `{ registered, message }`; uniform for new and existing addresses and does not start a session |
+| POST | `/auth/login` | `{ email, password }` → `{ token, user }`; identical failures for unknown addresses and wrong passwords, temporary lockout after repeated failures |
+| POST | `/auth/logout` | ends the current session only |
+| POST | `/auth/logout-all` | revokes every session for the account |
 | GET | `/auth/me` | current user |
 
 ### Projects
@@ -378,7 +397,7 @@ silently rewriting history.
 ## 8. Tests
 
 ```bash
-npm test          # 124 Vitest + Supertest tests across 17 suites
+npm test          # 278 Vitest + Supertest tests across 30 suites
 npm run test:watch
 npm run eval:quotes   # quote-accuracy report
 ```
@@ -417,6 +436,21 @@ Suites:
 - `tests/demo-seed.test.js`, `tests/membership.test.js`,
   `tests/llm-fallback.test.js` — seed authorization and scoped reset, role
   changes, Gemini fallback.
+- `tests/findings-h.test.js`, `tests/l-findings.test.js`,
+  `tests/d-findings.test.js`, `tests/r-findings.test.js` — the fault-report
+  findings H1–H12 (permission), L1–L12 (API consistency), D1–D10 (data
+  correctness) and R1–R8 (reliability) kept as regression tests.
+- `tests/auth-hardening.test.js`, `tests/ingest-limits.test.js`,
+  `tests/ai-privacy.test.js` — login enumeration, lockout, password policy,
+  invite and domain modes; DOCX/PDF parsing caps and magic-byte checks; local
+  processing for confidential sources and redaction before external model calls.
+- `tests/connector-refs.test.js`, `tests/share-audit.test.js`,
+  `tests/upload-cleanup.test.js`, `tests/audit-labels.test.js`,
+  `tests/redaction-samples.test.js` — connector reference parsing, anonymous
+  share-link audit rows, upload cleanup, complete audit labels, and 36 secret/PII
+  samples.
+- `tests/notifications.test.js`, `tests/handover-extras.test.js` — notices,
+  exports, feedback, delivery rows and reminders.
 
 Each suite boots its own ephemeral MongoDB, so no external services are needed.
 CI runs the same command on every push and pull request

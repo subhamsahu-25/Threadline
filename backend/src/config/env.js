@@ -25,9 +25,15 @@ function list(name) {
 }
 
 const DEV_JWT_SECRET = 'dev-only-insecure-secret-change-me';
+const nodeEnv = process.env.NODE_ENV || 'development';
+const productionEnv = nodeEnv === 'production';
+
+// Public demo seeding is opt-in. A production deployment needs DEMO_MODE=true
+// explicitly; ALLOW_DEMO_SEED alone can never switch it on there.
+const demoMode = bool('DEMO_MODE', false);
 
 export const env = {
-  nodeEnv: process.env.NODE_ENV || 'development',
+  nodeEnv,
   port: int('PORT', 4000),
   mongoUri: process.env.MONGODB_URI || '',
   dbName: process.env.DB_NAME || '',
@@ -40,11 +46,38 @@ export const env = {
   githubToken: process.env.GITHUB_TOKEN || '',
   githubAllowedRepos: list('GITHUB_ALLOWED_REPOS').map((ref) => ref.toLowerCase()),
   googleDriveToken: process.env.GOOGLE_DRIVE_ACCESS_TOKEN || '',
+  // A static access token expires after an hour. When the OAuth client and a
+  // refresh token are configured, the connector renews itself instead of
+  // failing every hour.
+  googleDriveClientId: process.env.GOOGLE_DRIVE_CLIENT_ID || '',
+  googleDriveClientSecret: process.env.GOOGLE_DRIVE_CLIENT_SECRET || '',
+  googleDriveRefreshToken: process.env.GOOGLE_DRIVE_REFRESH_TOKEN || '',
   driveAllowedFolders: list('DRIVE_ALLOWED_FOLDERS'),
   uploadDir: process.env.UPLOAD_DIR || path.join(rootDir, 'storage', 'uploads'),
   maxUploadMb: int('MAX_UPLOAD_MB', 15),
   maxFilesPerUpload: int('MAX_FILES_PER_UPLOAD', 20),
+  // Stored text is capped well below MongoDB's 16 MB document limit. Only the
+  // first 250 chunks (about 500k characters) are ever analysed, so keeping
+  // more raw text would cost storage without adding usable evidence.
+  maxDocumentChars: Math.max(100_000, int('MAX_DOCUMENT_CHARS', 1_000_000)),
+  uploadJanitorEnabled: bool('UPLOAD_JANITOR_ENABLED', true),
+  uploadJanitorIntervalHours: Math.max(1, int('UPLOAD_JANITOR_INTERVAL_HOURS', 6)),
+  uploadOrphanHours: Math.max(1, int('UPLOAD_ORPHAN_HOURS', 24)),
   staleDays: int('STALE_DAYS', 30),
+  // An open question older than this is counted as an old question in the
+  // readiness score. Separate from the staleness window because an unanswered
+  // question costs more than a stale task.
+  oldQuestionDays: Math.max(1, int('OLD_QUESTION_DAYS', 14)),
+  // Readiness starts at 100 and subtracts a bounded penalty per finding. The
+  // penalty is what one item costs; the cap stops a single category from
+  // taking the whole score, so the number still ranks projects against each
+  // other. Both are operator-tunable; the defaults are documented here.
+  readinessWeights: {
+    unverified: Math.max(0, int('READINESS_PENALTY_UNVERIFIED', 3)),
+    ownershipGap: Math.max(0, int('READINESS_PENALTY_OWNERSHIP_GAP', 8)),
+    conflict: Math.max(0, int('READINESS_PENALTY_CONFLICT', 10)),
+    oldQuestion: Math.max(0, int('READINESS_PENALTY_OLD_QUESTION', 4)),
+  },
   shareTtlDays: int('SHARE_TTL_DAYS', 7),
   // Outbound delivery is optional. Without a webhook the product still records
   // a "skipped" delivery row; it never pretends a message was sent.
@@ -53,15 +86,33 @@ export const env = {
   handoverReminderEnabled: bool('HANDOVER_REMINDER_ENABLED', true),
   handoverReminderDays: Math.max(1, int('HANDOVER_REMINDER_DAYS', 3)),
   extractConcurrency: Math.max(1, int('EXTRACT_CONCURRENCY', 3)),
+  // Parsed here so a malformed value falls back to a sane number instead of
+  // NaN, which used to stop the queue pump entirely.
+  ingestConcurrency: Math.max(1, int('INGEST_CONCURRENCY', 2)),
   extractTimeBudgetMs: Math.max(5_000, int('EXTRACT_TIME_BUDGET_MS', 120_000)),
-  // The demo workspace must be loadable on the public evaluation deployment.
-  // Creating it is safe: an existing workspace is only reconciled (membership),
-  // while a rebuild still requires the Atlas lead (see demo.routes.js).
-  allowDemoSeed: bool('ALLOW_DEMO_SEED', true),
+  // The demo workspace is opt-in. In production only DEMO_MODE=true enables
+  // it; elsewhere ALLOW_DEMO_SEED must also be set explicitly.
+  allowDemoSeed: demoMode || (!productionEnv && bool('ALLOW_DEMO_SEED', false)),
+  // Connector sources are capped so one project cannot exhaust the shared
+  // provider token's quota or fill the database with external copies.
+  maxConnectorSources: Math.max(1, int('MAX_CONNECTOR_SOURCES', 10)),
+  // Open registration is a demo affordance. A non-demo production deployment
+  // defaults to invite-only unless the operator opts in explicitly.
+  registrationMode: ['open', 'invite', 'closed'].includes(process.env.REGISTRATION_MODE)
+    ? process.env.REGISTRATION_MODE
+    : productionEnv && !demoMode
+      ? 'invite'
+      : 'open',
+  registrationInviteCodes: list('REGISTRATION_INVITE_CODES'),
+  registrationEmailDomains: list('REGISTRATION_EMAIL_DOMAINS').map((domain) =>
+    domain.toLowerCase().replace(/^@/, ''),
+  ),
+  loginMaxAttempts: Math.max(3, int('LOGIN_MAX_ATTEMPTS', 5)),
+  loginLockoutMinutes: Math.max(1, int('LOGIN_LOCKOUT_MINUTES', 15)),
   rootDir,
 };
 
-export const isProd = env.nodeEnv === 'production';
+export const isProd = productionEnv;
 export const isTest = env.nodeEnv === 'test';
 
 if (isProd && env.jwtSecret === DEV_JWT_SECRET) {

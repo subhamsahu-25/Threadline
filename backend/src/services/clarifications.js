@@ -11,36 +11,74 @@ import {
   Source,
   User,
 } from '../models/index.js';
+import { canContribute } from './access/policy.js';
 import { recordAudit } from './audit.js';
 import { deliverOutbound } from './delivery.js';
 import { leadIds, notify } from './notifications.js';
 import { buildStateForUser, loadVisibleClaims } from './projectState.js';
 
 const ANSWER_MAX = 1200;
+const RESTRICTED_LABEL = 'Restricted item';
 
 export function serializeClarification(clarification, extras = {}) {
   const data =
     typeof clarification.toObject === 'function' ? clarification.toObject() : clarification;
-  return {
+  const base = {
     id: String(data._id),
     projectId: String(data.project),
     projectName: extras.projectName,
-    claimId: data.claim ? String(data.claim) : null,
     kind: data.kind,
-    prompt: data.prompt,
     status: data.status,
     askedBy: data.askedBy ? String(data.askedBy) : null,
     askedByName: data.askedByName || null,
     askedOf: data.askedOf ? String(data.askedOf) : null,
     askedOfName: data.askedOfName || null,
+    createdAt: data.createdAt,
+  };
+
+  // The prompt, conflict options and answer quote the underlying claim. When
+  // the viewer may no longer read that claim's evidence they get a stub, not
+  // the text that used to accompany it.
+  if (extras.restricted) {
+    return {
+      ...base,
+      claimId: null,
+      prompt: RESTRICTED_LABEL,
+      answerOptions: [],
+      answer: null,
+      answeredAt: data.answeredAt || null,
+      declinedAt: data.declinedAt || null,
+      declineNote: null,
+      resultClaimId: null,
+      restricted: true,
+    };
+  }
+
+  return {
+    ...base,
+    claimId: data.claim ? String(data.claim) : null,
+    prompt: data.prompt,
     answerOptions: data.answerOptions || [],
     answer: data.answer || null,
     answeredAt: data.answeredAt || null,
     declinedAt: data.declinedAt || null,
     declineNote: data.declineNote || null,
     resultClaimId: data.resultClaim ? String(data.resultClaim) : null,
-    createdAt: data.createdAt,
+    restricted: false,
   };
+}
+
+async function visibleClaimIds({ project, userId, claimIds }) {
+  const requested = new Set(claimIds.filter(Boolean).map(String));
+  if (requested.size === 0) return requested;
+  const { claims } = await loadVisibleClaims({ project, userId });
+  return new Set(
+    claims.map((claim) => String(claim._id)).filter((id) => requested.has(id)),
+  );
+}
+
+function isRestricted(record, visibleIds) {
+  return Boolean(record.claim) && !visibleIds.has(String(record.claim));
 }
 
 async function loadOutgoingMember(project) {
@@ -69,8 +107,14 @@ async function loadMembers(project) {
 }
 
 function ownerOptions(project, members, outgoingId) {
+  // The offered names must be the same set the answer is checked against:
+  // only leads and contributors can take on ownership.
   return members
-    .filter((member) => String(member.id) !== String(outgoingId))
+    .filter(
+      (member) =>
+        String(member.id) !== String(outgoingId) &&
+        ['lead', 'contributor'].includes(member.role),
+    )
     .map((member) => member.name);
 }
 
@@ -226,6 +270,7 @@ async function createClarificationRecord({ project, actor, outgoing, candidate, 
       askedOf: String(outgoing.id),
       askedOfName: outgoing.name,
     },
+    critical: true,
   });
 
   await notify({
@@ -324,8 +369,10 @@ export async function askClarifications({
 }
 
 function sanitizeAnswer(value) {
+  // Answers are stored and displayed as plain text; React escapes on render.
+  // Stripping angle brackets used to mangle legitimate text such as
+  // "x < y and y > z", so only whitespace is normalised and the length capped.
   return String(value ?? '')
-    .replace(/<[^>]*>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, ANSWER_MAX);
@@ -333,26 +380,37 @@ function sanitizeAnswer(value) {
 
 function resolveOwner(answer, members, outgoingId) {
   const needle = answer.trim().toLowerCase();
-  const eligible = members.filter((member) => String(member.id) !== String(outgoingId));
+  // Only people who can actually act on the work may own it: leads and
+  // contributors. An observer assigned a task would be stuck with it.
+  const eligible = members.filter(
+    (member) =>
+      String(member.id) !== String(outgoingId) &&
+      ['lead', 'contributor'].includes(member.role),
+  );
   const exact = eligible.filter(
     (member) =>
       member.name.toLowerCase() === needle || member.email.toLowerCase() === needle,
   );
   if (exact.length === 1) return exact[0];
+  // A unique first name is an intentional shorthand. Substring matching was
+  // not: typing "an" could silently pick any one name containing it.
   const firstNames = eligible.filter(
     (member) => member.name.split(/\s+/)[0]?.toLowerCase() === needle,
   );
   if (firstNames.length === 1) return firstNames[0];
-  const partial = eligible.filter(
-    (member) =>
-      member.name.toLowerCase().includes(needle) || member.email.toLowerCase().includes(needle),
-  );
-  if (partial.length === 1) return partial[0];
   return null;
 }
 
 function checksumOf(text) {
   return createHash('sha256').update(text).digest('hex');
+}
+
+async function deleteConfirmation(created) {
+  if (!created) return;
+  await Evidence.deleteMany({ claim: created.resultClaim._id }).catch(() => {});
+  await Claim.deleteOne({ _id: created.resultClaim._id }).catch(() => {});
+  await Document.deleteOne({ _id: created.document._id }).catch(() => {});
+  await Source.deleteOne({ _id: created.source._id }).catch(() => {});
 }
 
 async function createConfirmation({
@@ -362,7 +420,10 @@ async function createConfirmation({
   answer,
   type,
   statement,
+  context,
   topic,
+  ownerName,
+  ownerUserId,
 }) {
   const now = new Date();
   const leads = (project.members || [])
@@ -370,88 +431,112 @@ async function createConfirmation({
     .map((member) => String(member.user?._id ?? member.user));
   const users = [...new Set([String(actor._id), ...leads])];
 
-  const source = await Source.create({
-    project: project._id,
-    kind: 'confirmation',
-    name: `Confirmed answer: ${truncate(clarification.prompt, 90)}`,
-    externalRef: String(clarification._id),
-    visibility: { scope: 'users', roles: [], users },
-    sensitivity: 'internal',
-    status: 'ready',
-    createdBy: clarification.askedBy,
-    lastIngestedAt: now,
-    stats: { documents: 1, claims: 1, unverifiedClaims: 0 },
-  });
+  let source;
+  let document;
+  let resultClaim;
+  try {
+    source = await Source.create({
+      project: project._id,
+      kind: 'confirmation',
+      // The source name is shown to every lead. It must not repeat the
+      // question, which may quote a claim restricted to other people.
+      name: 'Confirmed answer',
+      externalRef: String(clarification._id),
+      visibility: { scope: 'users', roles: [], users },
+      sensitivity: 'internal',
+      status: 'ready',
+      createdBy: clarification.askedBy,
+      lastIngestedAt: now,
+      stats: { documents: 1, claims: 1, unverifiedClaims: 0 },
+    });
 
-  const document = await Document.create({
-    project: project._id,
-    source: source._id,
-    kind: 'confirmation',
-    title: `Answer from ${actor.name}`,
-    path: `clarification-${clarification._id}`,
-    mime: 'text/plain',
-    size: answer.length,
-    checksum: checksumOf(answer),
-    author: actor.name,
-    occurredAt: now,
-    locator: { externalId: String(clarification._id) },
-    rawText: answer,
-    chunks: [
-      {
-        index: 0,
-        text: answer,
-        start: 0,
-        end: answer.length,
-      },
-    ],
-    revision: 1,
-    parseWarnings: [],
-    meta: { clarificationId: String(clarification._id), personConfirmed: true },
-  });
+    document = await Document.create({
+      project: project._id,
+      source: source._id,
+      kind: 'confirmation',
+      title: `Answer from ${actor.name}`,
+      path: `clarification-${clarification._id}`,
+      mime: 'text/plain',
+      size: answer.length,
+      checksum: checksumOf(answer),
+      author: actor.name,
+      occurredAt: now,
+      locator: { externalId: String(clarification._id) },
+      rawText: answer,
+      chunks: [
+        {
+          index: 0,
+          text: answer,
+          start: 0,
+          end: answer.length,
+        },
+      ],
+      revision: 1,
+      parseWarnings: [],
+      meta: { clarificationId: String(clarification._id), personConfirmed: true },
+    });
 
-  const resultClaim = await Claim.create({
-    project: project._id,
-    source: source._id,
-    document: document._id,
-    type,
-    statement: truncate(statement, 800),
-    statementKey: keyOf(statement),
-    topic: truncate(topic || '', 160),
-    topicKey: keyOf(topic || ''),
-    status: 'active',
-    state: 'confirmed',
-    confidence: 1,
-    sensitivity: 'internal',
-    origin: 'person_confirmed',
-    confirmedBy: actor._id,
-    confirmedByName: actor.name,
-    confirmedAt: now,
-    occurredAt: now,
-    hasSourceDate: true,
-    evidenceCount: 1,
-    verifiedEvidenceCount: 0,
-    flags: ['person_confirmed'],
-    extraction: { method: 'heuristic', model: 'person-confirmation' },
-  });
+    resultClaim = await Claim.create({
+      project: project._id,
+      source: source._id,
+      document: document._id,
+      type,
+      // The answer is the statement; the question it settles is context with
+      // its own field and its own limit, so a long question can never cut the
+      // answer in half.
+      statement: truncate(statement, ANSWER_MAX),
+      context: context ? truncate(context, 2000) : undefined,
+      statementKey: keyOf(statement),
+      topic: truncate(topic || '', 160),
+      topicKey: keyOf(topic || ''),
+      status: 'active',
+      state: 'confirmed',
+      confidence: 1,
+      sensitivity: 'internal',
+      ownerName,
+      ownerUser: ownerUserId,
+      origin: 'person_confirmed',
+      confirmedBy: actor._id,
+      confirmedByName: actor.name,
+      confirmedAt: now,
+      occurredAt: now,
+      hasSourceDate: true,
+      evidenceCount: 1,
+      verifiedEvidenceCount: 0,
+      flags: ['person_confirmed'],
+      extraction: { method: 'heuristic', model: 'person-confirmation' },
+    });
 
-  await Evidence.create({
-    project: project._id,
-    claim: resultClaim._id,
-    source: source._id,
-    document: document._id,
-    chunkId: document.chunks[0]?._id,
-    quote: answer,
-    charStart: 0,
-    charEnd: answer.length,
-    locale: { path: document.path, title: document.title },
-    validation: 'person_confirmed',
-    confirmedBy: actor._id,
-    confirmedByName: actor.name,
-    confirmedAt: now,
-    answerRef: clarification._id,
-  });
+    await Evidence.create({
+      project: project._id,
+      claim: resultClaim._id,
+      source: source._id,
+      document: document._id,
+      chunkId: document.chunks[0]?._id,
+      quote: answer,
+      charStart: 0,
+      charEnd: answer.length,
+      locale: { path: document.path, title: document.title },
+      validation: 'person_confirmed',
+      confirmedBy: actor._id,
+      confirmedByName: actor.name,
+      confirmedAt: now,
+      answerRef: clarification._id,
+    });
 
-  return { source, document, resultClaim };
+    return { source, document, resultClaim };
+  } catch (error) {
+    // A half-written confirmation would otherwise survive the failed answer
+    // and pollute the project's claims.
+    if (resultClaim && source && document) {
+      await deleteConfirmation({ source, document, resultClaim });
+    } else {
+      if (resultClaim) await Claim.deleteOne({ _id: resultClaim._id }).catch(() => {});
+      if (document) await Document.deleteOne({ _id: document._id }).catch(() => {});
+      if (source) await Source.deleteOne({ _id: source._id }).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 async function loadProjectForClarification(clarification) {
@@ -460,122 +545,209 @@ async function loadProjectForClarification(clarification) {
   return project;
 }
 
-export async function answerClarification({ clarificationId, actor, answer, req }) {
-  const clarification = await Clarification.findById(clarificationId);
-  if (!clarification) throw notFound('Clarification not found');
+function restoreClaimState(claimId, previous) {
+  const $set = { status: previous.status };
+  const $unset = {};
+  for (const field of ['ownerName', 'ownerUser', 'resolution', 'flags']) {
+    if (previous[field] === undefined) $unset[field] = '';
+    else $set[field] = previous[field];
+  }
+  const update = { $set };
+  if (Object.keys($unset).length > 0) update.$unset = $unset;
+  return Claim.updateOne({ _id: claimId }, update);
+}
 
-  if (String(clarification.askedOf) !== String(actor._id)) {
+async function releaseClarification(clarificationId) {
+  await Clarification.updateOne(
+    { _id: clarificationId, status: 'answering' },
+    { $set: { status: 'open' } },
+  ).catch(() => {});
+}
+
+export async function answerClarification({ clarificationId, actor, answer, req }) {
+  const existing = await Clarification.findById(clarificationId);
+  if (!existing) throw notFound('Clarification not found');
+
+  if (String(existing.askedOf) !== String(actor._id)) {
     throw forbidden('Only the person this question was addressed to can answer it');
   }
-  if (clarification.status !== 'open') {
-    throw conflict(`This question is already ${clarification.status}`);
+
+  const project = await loadProjectForClarification(existing);
+  // A member removed (or demoted to observer) since the question was asked
+  // must not keep writing into the project.
+  if (!canContribute(project, actor)) {
+    throw forbidden('Only current contributors can answer this question');
+  }
+  if (existing.status !== 'open') {
+    throw conflict(`This question is already ${existing.status}`);
   }
 
-  const project = await loadProjectForClarification(clarification);
   const safeAnswer = sanitizeAnswer(answer);
   if (!safeAnswer) throw badRequest('An answer is required');
 
-  const claim = clarification.claim
-    ? await Claim.findOne({
-        _id: clarification.claim,
-        project: project._id,
-        retiredAt: null,
-      })
-    : null;
-  if (!claim) throw notFound('The item this question refers to no longer exists');
-
-  let created;
-  if (clarification.kind === 'missing_owner') {
-    const members = await loadMembers(project);
-    const owner = resolveOwner(safeAnswer, members, clarification.askedOf);
-    if (!owner) {
-      throw badRequest('Choose one of the project members listed for this question', {
-        options: ownerOptions(project, members, clarification.askedOf),
-      });
-    }
-    claim.ownerName = owner.name;
-    claim.ownerUser = owner.id;
-    await claim.save();
-
-    await recordAudit({
-      projectId: project._id,
-      actor,
-      action: 'claim.owner_assigned',
-      targetType: 'claim',
-      targetId: claim._id,
-      targetLabel: claim.statement.slice(0, 120),
-      meta: { ownerName: owner.name, via: 'clarification', clarificationId: String(clarification._id) },
-      req,
-    });
-
-    created = await createConfirmation({
-      project,
-      clarification,
-      actor,
-      answer: safeAnswer,
-      type: 'responsibility',
-      statement: `${owner.name} owns ${claim.statement}`,
-      topic: claim.topic || claim.statement,
-    });
-  } else if (clarification.kind === 'conflict') {
-    created = await createConfirmation({
-      project,
-      clarification,
-      actor,
-      answer: safeAnswer,
-      type: 'decision',
-      statement: safeAnswer,
-      topic: claim.topic || claim.statement,
-    });
-
-    await recordAudit({
-      projectId: project._id,
-      actor,
-      action: 'claim.conflict_answer_received',
-      targetType: 'claim',
-      targetId: claim._id,
-      targetLabel: `Conflict answer: ${truncate(claim.topic || claim.statement, 100)}`,
-      meta: { clarificationId: String(clarification._id), answer: truncate(safeAnswer, 200) },
-      req,
-    });
-  } else {
-    claim.status = 'resolved';
-    claim.resolution = {
-      note: safeAnswer,
-      by: actor._id,
-      byName: actor.name,
-      at: new Date(),
-    };
-    claim.flags = [...new Set([...(claim.flags || []), 'answered_by_clarification'])];
-    await claim.save();
-
-    await recordAudit({
-      projectId: project._id,
-      actor,
-      action: 'claim.resolved',
-      targetType: 'claim',
-      targetId: claim._id,
-      targetLabel: claim.statement.slice(0, 120),
-      meta: { status: 'resolved', via: 'clarification', clarificationId: String(clarification._id) },
-      req,
-    });
-
-    created = await createConfirmation({
-      project,
-      clarification,
-      actor,
-      answer: safeAnswer,
-      type: 'decision',
-      statement: `${claim.statement} — ${safeAnswer}`,
-      topic: claim.topic || claim.statement,
-    });
+  // Atomically move the question out of "open" before any dependent write, so
+  // a double submission cannot create two confirmations or orphan records.
+  const clarification = await Clarification.findOneAndUpdate(
+    { _id: existing._id, status: 'open' },
+    { $set: { status: 'answering' } },
+    { new: true },
+  );
+  if (!clarification) {
+    throw conflict('This question has already been answered or declined');
   }
 
-  clarification.status = 'answered';
-  clarification.answer = redactText(safeAnswer).text;
-  clarification.answeredAt = new Date();
-  clarification.resultClaim = created.resultClaim._id;
-  await clarification.save();
+  let claim = null;
+  let previousClaim = null;
+  let created = null;
+
+  try {
+    claim = clarification.claim
+      ? await Claim.findOne({
+          _id: clarification.claim,
+          project: project._id,
+          retiredAt: null,
+        })
+      : null;
+    if (!claim) throw notFound('The item this question refers to no longer exists');
+
+    // Access may have been revoked between asking and answering.
+    const readable = await visibleClaimIds({
+      project,
+      userId: actor._id,
+      claimIds: [claim._id],
+    });
+    if (!readable.has(String(claim._id))) {
+      throw forbidden('You can no longer read the item this question refers to');
+    }
+
+    previousClaim = {
+      ownerName: claim.ownerName,
+      ownerUser: claim.ownerUser,
+      status: claim.status,
+      resolution: claim.resolution,
+      flags: claim.flags,
+    };
+
+    if (clarification.kind === 'missing_owner') {
+      const members = await loadMembers(project);
+      const owner = resolveOwner(safeAnswer, members, clarification.askedOf);
+      if (!owner) {
+        throw badRequest('Choose one of the project members listed for this question', {
+          options: ownerOptions(project, members, clarification.askedOf),
+        });
+      }
+
+      created = await createConfirmation({
+        project,
+        clarification,
+        actor,
+        answer: safeAnswer,
+        type: 'responsibility',
+        statement: `${owner.name} owns ${claim.statement}`,
+        context: claim.statement,
+        topic: claim.topic || claim.statement,
+        ownerName: owner.name,
+        ownerUserId: owner.id,
+      });
+
+      claim.ownerName = owner.name;
+      claim.ownerUser = owner.id;
+      await claim.save();
+
+      await recordAudit({
+        projectId: project._id,
+        actor,
+        action: 'claim.owner_assigned',
+        targetType: 'claim',
+        targetId: claim._id,
+        targetLabel: claim.statement.slice(0, 120),
+        meta: {
+          ownerName: owner.name,
+          via: 'clarification',
+          clarificationId: String(clarification._id),
+        },
+        req,
+        critical: true,
+      });
+    } else if (clarification.kind === 'conflict') {
+      created = await createConfirmation({
+        project,
+        clarification,
+        actor,
+        answer: safeAnswer,
+        type: 'decision',
+        statement: safeAnswer,
+        context: claim.statement,
+        topic: claim.topic || claim.statement,
+      });
+
+      await recordAudit({
+        projectId: project._id,
+        actor,
+        action: 'claim.conflict_answer_received',
+        targetType: 'claim',
+        targetId: claim._id,
+        targetLabel: `Conflict answer: ${truncate(claim.topic || claim.statement, 100)}`,
+        meta: { clarificationId: String(clarification._id), answer: truncate(safeAnswer, 200) },
+        req,
+        critical: true,
+      });
+    } else {
+      created = await createConfirmation({
+        project,
+        clarification,
+        actor,
+        answer: safeAnswer,
+        type: 'decision',
+        // Answer first. The question lives in context so it cannot crowd the
+        // answer out of the statement limit.
+        statement: safeAnswer,
+        context: claim.statement,
+        topic: claim.topic || claim.statement,
+      });
+
+      claim.status = 'resolved';
+      claim.resolution = {
+        note: safeAnswer,
+        by: actor._id,
+        byName: actor.name,
+        at: new Date(),
+      };
+      claim.flags = [...new Set([...(claim.flags || []), 'answered_by_clarification'])];
+      await claim.save();
+
+      await recordAudit({
+        projectId: project._id,
+        actor,
+        action: 'claim.resolved',
+        targetType: 'claim',
+        targetId: claim._id,
+        targetLabel: claim.statement.slice(0, 120),
+        meta: {
+          status: 'resolved',
+          via: 'clarification',
+          clarificationId: String(clarification._id),
+        },
+        req,
+        critical: true,
+      });
+    }
+
+    clarification.status = 'answered';
+    clarification.answer = redactText(safeAnswer).text;
+    clarification.answeredAt = new Date();
+    clarification.resultClaim = created.resultClaim._id;
+    await clarification.save();
+  } catch (error) {
+    // Leave no confirmation, no claim mutation and no stuck "answering" row
+    // behind, so a retry starts from a clean open question.
+    if (created) await deleteConfirmation(created);
+    if (claim && previousClaim) {
+      await restoreClaimState(claim._id, previousClaim).catch(() => {});
+    }
+    await releaseClarification(clarification._id);
+    throw error;
+  }
 
   await recordAudit({
     projectId: project._id,
@@ -590,6 +762,7 @@ export async function answerClarification({ clarificationId, actor, answer, req 
       resultClaimId: String(created.resultClaim._id),
     },
     req,
+    critical: true,
   });
 
   await notify({
@@ -601,6 +774,15 @@ export async function answerClarification({ clarificationId, actor, answer, req 
     actor,
   });
 
+  // A confirmed answer can change a claim's status and add a new person-
+  // confirmed item, which makes released handovers older than the record.
+  try {
+    const { refreshOutdatedHandovers } = await import('./handover/workflow.js');
+    await refreshOutdatedHandovers({ projectId: project._id, req });
+  } catch {
+    // Freshness refresh must never fail the answer itself.
+  }
+
   return {
     clarification: serializeClarification(clarification),
     resultClaimId: String(created.resultClaim._id),
@@ -609,23 +791,38 @@ export async function answerClarification({ clarificationId, actor, answer, req 
 }
 
 export async function declineClarification({ clarificationId, actor, note, req }) {
-  const clarification = await Clarification.findById(clarificationId);
-  if (!clarification) throw notFound('Clarification not found');
+  const existing = await Clarification.findById(clarificationId);
+  if (!existing) throw notFound('Clarification not found');
 
-  if (String(clarification.askedOf) !== String(actor._id)) {
+  if (String(existing.askedOf) !== String(actor._id)) {
     throw forbidden('Only the person this question was addressed to can decline it');
   }
-  if (clarification.status !== 'open') {
-    throw conflict(`This question is already ${clarification.status}`);
+
+  const project = await loadProjectForClarification(existing);
+  if (!canContribute(project, actor)) {
+    throw forbidden('Only current contributors can decline this question');
+  }
+  if (existing.status !== 'open') {
+    throw conflict(`This question is already ${existing.status}`);
   }
 
-  const project = await loadProjectForClarification(clarification);
   const safeNote = redactText(String(note || '').trim().slice(0, 600)).text;
-
-  clarification.status = 'declined';
-  clarification.declinedAt = new Date();
-  clarification.declineNote = safeNote || undefined;
-  await clarification.save();
+  // Atomic with the answer path: exactly one of "answered" and "declined"
+  // can win, even when both are submitted at once.
+  const clarification = await Clarification.findOneAndUpdate(
+    { _id: existing._id, status: 'open' },
+    {
+      $set: {
+        status: 'declined',
+        declinedAt: new Date(),
+        ...(safeNote ? { declineNote: safeNote } : {}),
+      },
+    },
+    { new: true },
+  );
+  if (!clarification) {
+    throw conflict('This question has already been answered or declined');
+  }
 
   const claim = clarification.claim
     ? await Claim.findOne({ _id: clarification.claim, project: project._id, retiredAt: null })
@@ -648,6 +845,7 @@ export async function declineClarification({ clarificationId, actor, note, req }
       note: safeNote || null,
     },
     req,
+    critical: true,
   });
 
   await notify({
@@ -662,10 +860,58 @@ export async function declineClarification({ clarificationId, actor, note, req }
   return { clarification: serializeClarification(clarification) };
 }
 
+/**
+ * Called when a member is removed. Questions still waiting for them would
+ * otherwise stay open forever, so they are closed and the asker is told.
+ */
+export async function closeOpenClarificationsForMember({ project, userId, actor, req }) {
+  const open = await Clarification.find({
+    project: project._id,
+    askedOf: userId,
+    status: 'open',
+  });
+  if (open.length === 0) return 0;
+
+  await Clarification.updateMany(
+    { _id: { $in: open.map((record) => record._id) }, status: 'open' },
+    { $set: { status: 'closed' } },
+  );
+
+  for (const record of open) {
+    await recordAudit({
+      projectId: project._id,
+      actor,
+      action: 'clarification.closed',
+      targetType: 'clarification',
+      targetId: record._id,
+      targetLabel: truncate(record.prompt, 120),
+      meta: {
+        kind: record.kind,
+        claimId: record.claim ? String(record.claim) : null,
+        reason: 'member_removed',
+      },
+      req,
+      critical: true,
+    });
+
+    if (record.askedBy) {
+      await notify({
+        project,
+        recipients: [record.askedBy],
+        type: 'clarification.closed',
+        entityType: 'clarification',
+        entityId: record._id,
+        actor,
+      });
+    }
+  }
+  return open.length;
+}
+
 export async function listMyClarifications({ user, status }) {
-  const projects = await Project.find({ 'members.user': user._id }).select('_id name').lean();
+  const projects = await Project.find({ 'members.user': user._id }).lean();
   const projectIds = projects.map((project) => project._id);
-  const nameById = new Map(projects.map((project) => [String(project._id), project.name]));
+  const projectById = new Map(projects.map((project) => [String(project._id), project]));
 
   const query = { askedOf: user._id, project: { $in: projectIds } };
   if (status) query.status = status;
@@ -677,10 +923,31 @@ export async function listMyClarifications({ user, status }) {
     .lean();
   const claimById = new Map(claims.map((claim) => [String(claim._id), claim]));
 
+  // Access may have changed since the question was asked, so visibility is
+  // evaluated now, once per project.
+  const visibleByProject = new Map();
+  for (const projectId of new Set(records.map((record) => String(record.project)))) {
+    const project = projectById.get(projectId);
+    if (!project) continue;
+    const requested = records
+      .filter((record) => String(record.project) === projectId && record.claim)
+      .map((record) => record.claim);
+    visibleByProject.set(
+      projectId,
+      await visibleClaimIds({ project, userId: user._id, claimIds: requested }),
+    );
+  }
+
   return records.map((record) => {
-    const claim = record.claim ? claimById.get(String(record.claim)) : null;
+    const project = projectById.get(String(record.project));
+    if (!project) return null;
+    const restricted = isRestricted(
+      record,
+      visibleByProject.get(String(record.project)) || new Set(),
+    );
+    const claim = !restricted && record.claim ? claimById.get(String(record.claim)) : null;
     return {
-      ...serializeClarification(record, { projectName: nameById.get(String(record.project)) }),
+      ...serializeClarification(record, { projectName: project.name, restricted }),
       claim: claim
         ? {
             id: String(claim._id),
@@ -692,13 +959,26 @@ export async function listMyClarifications({ user, status }) {
           }
         : null,
     };
-  });
+  }).filter(Boolean);
 }
 
-export async function listProjectClarifications({ project }) {
+export async function listProjectClarifications({ project, viewer }) {
   const records = await Clarification.find({ project: project._id })
     .sort({ createdAt: -1 })
     .limit(100)
     .lean();
-  return records.map((record) => serializeClarification(record, { projectName: project.name }));
+  if (!viewer) {
+    throw forbidden('A viewer is required to read clarifications');
+  }
+  const visibleIds = await visibleClaimIds({
+    project,
+    userId: viewer._id,
+    claimIds: records.filter((record) => record.claim).map((record) => record.claim),
+  });
+  return records.map((record) =>
+    serializeClarification(record, {
+      projectName: project.name,
+      restricted: isRestricted(record, visibleIds),
+    }),
+  );
 }

@@ -43,3 +43,6 @@ Thumbs.db
 .cache/
 .temp/
 tmp/
+
+# Word tooling locks
+.qoder-office-docx-locks/

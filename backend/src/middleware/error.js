@@ -55,6 +55,15 @@ export function errorHandler(error, req, res, next) {
     });
   }
 
+  if (error?.name === 'VersionError' || error?.name === 'ParallelSaveError') {
+    return res.status(409).json({
+      error: {
+        code: 'version_conflict',
+        message: 'This handover changed in another session. Reload it and try again.',
+      },
+    });
+  }
+
   const status = error?.status && error.status >= 400 ? error.status : 500;
   if (status >= 500) {
     logger.error(

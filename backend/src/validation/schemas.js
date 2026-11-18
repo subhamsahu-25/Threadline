@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { passwordProblem } from '../services/passwordPolicy.js';
 
 export const objectId = z.string().regex(/^[a-f\d]{24}$/i, 'Expected a 24-character id');
 export const emailField = z.string().trim().toLowerCase().email('Enter a valid email address');
@@ -28,11 +29,22 @@ export const visibilitySchema = z
     }
   });
 
-export const registerSchema = z.object({
-  email: emailField,
-  name: z.string().trim().min(2).max(80),
-  password: z.string().min(8, 'Use at least 8 characters').max(128),
-});
+export const registerSchema = z
+  .object({
+    email: emailField,
+    name: z.string().trim().min(2).max(80),
+    password: z.string().min(10, 'Use at least 10 characters').max(128),
+    inviteCode: z.string().trim().max(200).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const problem = passwordProblem(value.password, {
+      email: value.email,
+      name: value.name,
+    });
+    if (problem) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['password'], message: problem });
+    }
+  });
 
 export const loginSchema = z.object({
   email: emailField,
@@ -72,6 +84,11 @@ export const updateProjectSchema = z.object({
   description: z.string().trim().max(2000).optional(),
   status: z.enum(['active', 'paused', 'completed']).optional(),
   transition: transitionSchema.optional(),
+  settings: z
+    .object({
+      requireSeparateApprover: z.boolean().optional(),
+    })
+    .optional(),
   startedAt: z.coerce.date().optional(),
   targetDate: z.coerce.date().optional(),
 });
@@ -96,6 +113,7 @@ export const createSourceSchema = z.object({
   externalRef: z.string().trim().min(1).max(500),
   visibility: visibilitySchema.optional(),
   sensitivity: sensitivityField.optional(),
+  aiPolicy: z.object({ allowExternal: z.boolean() }).optional(),
 });
 
 export const updateSourceSchema = z.object({
@@ -103,6 +121,7 @@ export const updateSourceSchema = z.object({
   visibility: visibilitySchema.optional(),
   sensitivity: sensitivityField.optional(),
   hidden: z.boolean().optional(),
+  aiPolicy: z.object({ allowExternal: z.boolean() }).optional(),
 });
 
 export const syncSourceSchema = z
@@ -127,10 +146,29 @@ export const reviewItemSchema = z.object({
   shareWithProject: z.boolean().optional(),
 });
 
-export const resolveConflictSchema = z.object({
-  topicKey: z.string().trim().min(1).max(200),
-  keepClaimId: objectId,
+export const bulkReviewSchema = z.object({
+  decisions: z
+    .array(
+      z.object({
+        claimId: objectId,
+        decision: z.enum(['accepted', 'rejected', 'edited', 'pending']),
+        editedStatement: z.string().trim().max(1200).optional(),
+        note: z.string().trim().max(600).optional(),
+      }),
+    )
+    .min(1)
+    .max(200),
 });
+
+export const resolveConflictSchema = z
+  .object({
+    claimIds: z.array(objectId).min(2).max(50),
+    keepClaimId: objectId,
+  })
+  .refine(
+    (value) => value.claimIds.some((id) => String(id) === String(value.keepClaimId)),
+    { message: 'keepClaimId must be one of the claimIds in the conflict', path: ['keepClaimId'] },
+  );
 
 export const askClarificationsSchema = z
   .object({
@@ -159,8 +197,8 @@ export const resolveClaimSchema = z
     note: z.string().trim().max(600).optional(),
     status: z.enum(['done', 'resolved']).optional(),
   })
-  .refine((value) => value.ownerName || value.status, {
-    message: 'Provide an ownerName, or a status with an optional note',
+  .refine((value) => value.ownerName || value.status || value.note, {
+    message: 'Provide an ownerName, a status, or a note',
   });
 
 export const noteSchema = z.object({
@@ -183,6 +221,8 @@ export const resolveFeedbackSchema = z.object({
 export const listHandoversQuerySchema = z.object({
   projectId: objectId.optional(),
   scope: z.enum(['all', 'created', 'received']).default('all'),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
+  cursor: objectId.optional(),
 });
 
 export const listClaimsQuerySchema = z.object({
@@ -199,6 +239,12 @@ export const listClaimsQuerySchema = z.object({
     ])
     .optional(),
   limit: z.coerce.number().int().min(1).max(500).default(200),
+  cursor: z.string().trim().max(200).optional(),
+});
+
+export const listVersionsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: z.coerce.number().int().min(1).optional(),
 });
 
 export const auditQuerySchema = z.object({

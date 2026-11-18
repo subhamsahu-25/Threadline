@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Clarification, Handover, Notification, Project } from '../models/index.js';
 import { canManageProject, roleOf } from './access/policy.js';
 import { logger } from '../lib/logger.js';
@@ -61,6 +62,28 @@ export async function notify({ project, recipients, type, entityType, entityId, 
     }
   }
   return results.length - failures.length;
+}
+
+/**
+ * Account-level notice that does not belong to a project. Each lockout is its
+ * own row so the person can see that it happened; the body is rebuilt at read
+ * time and never includes an IP address or the attempted password.
+ */
+export async function notifyAccountLockout({ user }) {
+  if (!user?._id) return 0;
+  try {
+    await Notification.create({
+      recipient: user._id,
+      type: 'account.lockout',
+      entityType: 'user',
+      entityId: user._id,
+      dedupeKey: `account.lockout:${randomUUID()}`,
+    });
+    return 1;
+  } catch (error) {
+    logger.warn({ error: error.message }, 'Could not write an account security notice');
+    return 0;
+  }
 }
 
 function handoverNotice({ type, handover, project, viewer, isLead, isAuthor }) {
@@ -127,6 +150,14 @@ function handoverNotice({ type, handover, project, viewer, isLead, isAuthor }) {
         detail: `A connected source changed · ${recipientName} · ${project.name}`,
         href,
       };
+    case 'handover.member_left':
+      // Only leads act on this; they need to pick a new author or recipient.
+      if (!isLead) return null;
+      return {
+        title: 'A handover lost a participant',
+        detail: `Someone connected to this handover left ${project.name}. Check the link and owner.`,
+        href,
+      };
     default:
       return null;
   }
@@ -158,6 +189,15 @@ function clarificationNotice({ type, clarification, project, viewer, isLead }) {
       if (!isAsker && !isLead) return null;
       return {
         title: isAsker ? 'Your question was declined' : 'A question was declined',
+        detail: `${kind} · ${project.name}`,
+        href,
+      };
+    case 'clarification.closed':
+      if (!isAsker && !isLead) return null;
+      return {
+        title: isAsker
+          ? 'Your question was closed because the person left the project'
+          : 'A question was closed after a member left',
         detail: `${kind} · ${project.name}`,
         href,
       };
@@ -196,7 +236,7 @@ export async function listNotifications({ user, limit = 50 }) {
     .limit(limit)
     .lean();
 
-  const projectIds = [...new Set(rows.map((row) => String(row.project)))];
+  const projectIds = [...new Set(rows.map((row) => row.project).filter(Boolean).map(String))];
   const projects = await Project.find({ _id: { $in: projectIds } }).lean();
   const projectById = new Map(projects.map((project) => [String(project._id), project]));
 
@@ -229,6 +269,26 @@ export async function listNotifications({ user, limit = 50 }) {
   const notifications = [];
 
   for (const row of rows) {
+    if (!row.project) {
+      if (row.type === 'account.lockout' && String(row.entityId) === String(user._id)) {
+        notifications.push({
+          id: String(row._id),
+          type: row.type,
+          projectId: null,
+          projectName: '',
+          projectKey: '',
+          createdAt: row.createdAt,
+          readAt: row.readAt || null,
+          title: 'Repeated sign-in attempts on your account',
+          detail: 'Sign-in was paused for a short time. If this was not you, change your password.',
+          href: '/',
+        });
+        continue;
+      }
+      stale.push(row._id);
+      continue;
+    }
+
     const project = projectById.get(String(row.project));
     const role = project ? roleOf(project, user._id) : null;
     if (!project || !role) {

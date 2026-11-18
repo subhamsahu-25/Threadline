@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { app, auth, idOf, request, seed, startDb, stopDb, tokenOf } from './helpers.js';
+import { app, auth, idOf, registerAndLogin, request, seed, startDb, stopDb, tokenOf } from './helpers.js';
 
 const LEAD = 'subham@threadline.demo';
 const OUTGOING = 'rohan@threadline.demo';
@@ -91,12 +91,9 @@ describe('project membership management', () => {
     const invalidRole = await changeRole(outgoingId, 'admin');
     expect(invalidRole.status).toBe(400);
 
-    const registered = await request(app)
-      .post('/api/auth/register')
-      .send({ name: 'Outsider Account', email: 'outsider@example.com', password: 'Threadline#2026' })
-      .expect(201);
+    const registered = await registerAndLogin('outsider@example.com', 'Outsider Account');
 
-    const notMember = await changeRole(registered.body.user.id, 'observer');
+    const notMember = await changeRole(registered.user.id, 'observer');
     expect(notMember.status).toBe(404);
 
     const eventsBefore = (await auditEvents()).filter(
@@ -122,10 +119,7 @@ describe('project membership management', () => {
       .send({ email: 'nobody@example.com', role: 'observer' });
     expect(unknown.status).toBe(404);
 
-    const registered = await request(app)
-      .post('/api/auth/register')
-      .send({ name: 'New Joiner', email: 'joiner@example.com', password: 'Threadline#2026' })
-      .expect(201);
+    const registered = await registerAndLogin('joiner@example.com', 'New Joiner');
 
     const added = await request(app)
       .post(`/api/projects/${projectId}/members`)
@@ -134,13 +128,13 @@ describe('project membership management', () => {
       .expect(201);
     expect(
       added.body.project.members.some(
-        (entry) => entry.userId === registered.body.user.id && entry.role === 'observer',
+        (entry) => entry.userId === registered.user.id && entry.role === 'observer',
       ),
     ).toBe(true);
 
     await request(app)
       .get(`/api/projects/${projectId}/state`)
-      .set(auth(registered.body.token))
+      .set(auth(registered.token))
       .expect(200);
 
     const contributorAttempt = await request(app)
@@ -150,7 +144,7 @@ describe('project membership management', () => {
     expect(contributorAttempt.status).toBe(403);
 
     const event = (await auditEvents()).find(
-      (entry) => entry.action === 'member.added' && entry.targetId === registered.body.user.id,
+      (entry) => entry.action === 'member.added' && entry.targetId === registered.user.id,
     );
     expect(event).toBeTruthy();
     expect(event.meta.role).toBe('observer');

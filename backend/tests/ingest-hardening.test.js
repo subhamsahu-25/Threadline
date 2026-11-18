@@ -2,21 +2,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { env } from '../src/config/env.js';
-import { Claim, Source } from '../src/models/index.js';
+import { Claim, Document, Source } from '../src/models/index.js';
 import { containsInstructions, normalizeItem } from '../src/services/ai/extract.js';
 import { chunkTextWithMeta } from '../src/services/ingest/chunker.js';
-import { app, auth, request, startDb, stopDb, whenIdle } from './helpers.js';
+import { app, auth, registerAndLogin, request, startDb, stopDb, whenIdle } from './helpers.js';
 
 const OBSERVER_EMAIL = 'observer@hardening.test';
 
 async function register(email, name) {
-  const response = await request(app).post('/api/auth/register').send({
-    email,
-    name,
-    password: 'Threadline#2026',
-  });
-  expect(response.status).toBe(201);
-  return response.body;
+  return registerAndLogin(email, name);
 }
 
 describe('extraction hardening units', () => {
@@ -288,12 +282,20 @@ describe('ingestion hardening over the API', () => {
       .expect(200);
 
     expect(source.body.source.status).toBe('ready');
-    expect(source.body.source.parseWarnings.join(' ')).toMatch(/Processed 250 of \d+ text sections/);
+    const warnings = source.body.source.parseWarnings.join(' ');
+    expect(warnings).toMatch(/Truncated from [\d,]+ to 200,000 characters/);
   });
 
   it('keeps previous content when a re-ingest fails', async () => {
     const stored = await Source.findById(sourceId).lean();
-    await fs.unlink(path.join(env.uploadDir, path.basename(stored.files[0].storedName)));
+    // The file is deleted after a successful ingest, so this only matters when
+    // an earlier run left it behind.
+    await fs.rm(path.join(env.uploadDir, path.basename(stored.files[0].storedName)), {
+      force: true,
+    });
+    // Losing the file alone is recoverable: the stored text is re-chunked. A
+    // truly unrecoverable re-ingest also has no text left to fall back on.
+    await Document.updateMany({ source: sourceId }, { $set: { rawText: '' } });
 
     const before = await Claim.find({ source: sourceId, retiredAt: null }).lean();
     expect(before.length).toBeGreaterThan(0);

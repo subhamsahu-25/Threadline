@@ -332,7 +332,11 @@ export default function SourcesPage() {
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef(null);
   const [accessSource, setAccessSource] = useState(null);
-  const [accessForm, setAccessForm] = useState({ sensitivity: 'internal', visibility: EMPTY_VISIBILITY });
+  const [accessForm, setAccessForm] = useState({
+    sensitivity: 'internal',
+    visibility: EMPTY_VISIBILITY,
+    allowExternal: true,
+  });
   const [accessSaving, setAccessSaving] = useState(false);
   const [deleteSource, setDeleteSource] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -454,6 +458,7 @@ export default function SourcesPage() {
         roles: source.visibility?.roles || [],
         users: source.visibility?.users || [],
       },
+      allowExternal: source.aiPolicy?.allowExternal ?? true,
     });
   };
 
@@ -461,7 +466,11 @@ export default function SourcesPage() {
     if (!accessSource) return;
     setAccessSaving(true);
     try {
-      await api.patch(`/api/projects/${projectId}/sources/${accessSource.id}`, accessForm);
+      await api.patch(`/api/projects/${projectId}/sources/${accessSource.id}`, {
+        sensitivity: accessForm.sensitivity,
+        visibility: accessForm.visibility,
+        aiPolicy: { allowExternal: accessForm.allowExternal },
+      });
       toast.success('Source access updated. Shared handovers will re-check permissions at read time.');
       setAccessSource(null);
       await reload({ quiet: true });
@@ -676,6 +685,14 @@ export default function SourcesPage() {
                       <h2 className="text-[13.5px] font-semibold leading-5">{source.name}</h2>
                       <SourceStatusBadge status={source.status} />
                       <SensitivityBadge sensitivity={source.sensitivity} />
+                      {source.aiPolicy?.allowExternal === false && (
+                        <Badge
+                          tone="slate"
+                          title="Document text is processed by the local extractor and is not sent to the external AI model."
+                        >
+                          Local AI only
+                        </Badge>
+                      )}
                       {source.hidden && <Badge tone="slate">Hidden</Badge>}
                     </div>
                     <p className="mt-0.5 font-mono text-[10px] text-ink-muted">
@@ -755,7 +772,7 @@ export default function SourcesPage() {
                       loading={busyId === source.id}
                       onClick={() => reingest(source)}
                     >
-                      Re-ingest
+                      {source.status === 'partial' ? 'Continue' : 'Re-ingest'}
                     </Button>
                   )}
                   {canManage && (
@@ -1105,7 +1122,16 @@ export default function SourcesPage() {
                 id="access-sensitivity"
                 value={accessForm.sensitivity}
                 onChange={(event) =>
-                  setAccessForm({ ...accessForm, sensitivity: event.target.value })
+                  setAccessForm({
+                    ...accessForm,
+                    sensitivity: event.target.value,
+                    // Confidential sources do not go to the external model
+                    // unless the lead re-checks the box on purpose.
+                    allowExternal:
+                      event.target.value === 'confidential'
+                        ? false
+                        : accessForm.allowExternal,
+                  })
                 }
               >
                 {Object.entries(SENSITIVITY).map(([value, meta]) => (
@@ -1120,6 +1146,25 @@ export default function SourcesPage() {
               onChange={(visibility) => setAccessForm({ ...accessForm, visibility })}
               members={project.members}
             />
+            <label className="flex cursor-pointer items-start gap-2 rounded-md border border-line bg-white px-3 py-2">
+              <input
+                type="checkbox"
+                checked={accessForm.allowExternal}
+                onChange={(event) =>
+                  setAccessForm({ ...accessForm, allowExternal: event.target.checked })
+                }
+                className="mt-0.5 h-3.5 w-3.5 rounded border-line-strong text-brand-700 focus:ring-brand-200"
+              />
+              <span className="text-[11.5px] leading-5 text-ink-soft">
+                <span className="font-semibold text-ink">
+                  Send document text to the external AI model
+                </span>
+                <br />
+                Off by default for confidential sources, which are then processed by the local
+                extractor. Secret and personal values are redacted before any request. A change
+                applies the next time this source is ingested, so use Re-ingest to apply it now.
+              </span>
+            </label>
           </div>
         )}
       </Modal>

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   auth,
   idOf,
+  registerAndLogin,
   request,
   app,
   seed,
@@ -119,11 +120,7 @@ describe('permission canary matrix', () => {
   });
 
   async function register(email, name) {
-    const res = await request(app)
-      .post('/api/auth/register')
-      .send({ email, name, password: 'Matrix#2026' });
-    expect(res.status).toBe(201);
-    return res.body;
+    return registerAndLogin(email, name, 'Matrix#2026');
   }
 
   async function addMember(email, role) {
@@ -290,7 +287,7 @@ describe('permission canary matrix', () => {
     await request(app)
       .post(`/api/projects/${projectId}/conflicts/resolve`)
       .set(auth(tokens.lead))
-      .send({ topicKey: conflict.topicKey, keepClaimId: keep.claimId })
+      .send({ claimIds: conflict.claimIds.map(String), keepClaimId: keep.claimId })
       .expect(200);
   }
 
@@ -449,7 +446,7 @@ describe('permission canary matrix', () => {
       (source) => !source.deletedAt && sourceVisibleTo(source, facts.project, userId),
     ).length;
     expect(projectRes.body.stats.sources).toBe(readableSourceCount);
-    expect(projectRes.body.stats.totalSources).toBe(readableSourceCount);
+    expect(projectRes.body.stats.totalSources).toBeUndefined();
     assertAbsent(projectRes.body, all);
 
     const visibleClaims = visibleClaimIds(facts, userId);

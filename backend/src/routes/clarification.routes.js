@@ -33,7 +33,9 @@ router.get(
       if (!canContribute(project, req.user)) {
         throw forbidden('Only the outgoing team can see the project clarification list');
       }
-      return res.json({ clarifications: await listProjectClarifications({ project }) });
+      return res.json({
+        clarifications: await listProjectClarifications({ project, viewer: req.user }),
+      });
     }
     const clarifications = await listMyClarifications({ user: req.user, status });
     return res.json({ clarifications });

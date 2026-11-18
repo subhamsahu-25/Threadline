@@ -157,21 +157,26 @@ describe('round 3 hardenings', () => {
       .post(`/api/handovers/${handover.id}/regenerate`)
       .set(auth(leadToken))
       .expect(200);
+    // The recipient keeps the shared version until the replacement is
+    // approved; regeneration must not replace or revoke it in place.
+    expect(regenerated.body.createdNew).toBe(true);
+    expect(regenerated.body.handover.id).not.toBe(handover.id);
     expect(regenerated.body.handover.status).toBe('draft');
     expect(regenerated.body.carried).toBeGreaterThan(0);
 
-    const staleLink = await request(app)
+    const liveLink = await request(app)
       .get(`/api/handovers/shared/${token}`)
       .set(auth(incomingToken));
-    expect(staleLink.status).toBe(404);
+    expect(liveLink.status).toBe(200);
+    expect(liveLink.body.handover.id).toBe(handover.id);
 
     const versions = await request(app)
-      .get(`/api/handovers/${handover.id}/versions`)
+      .get(`/api/handovers/${regenerated.body.handover.id}/versions`)
       .set(auth(leadToken))
       .expect(200);
     expect(
       versions.body.versions.some((version) =>
-        version.reason.startsWith('regenerated from current state'),
+        version.reason.startsWith('regenerated from'),
       ),
     ).toBe(true);
   });
@@ -285,9 +290,7 @@ describe('round 3 hardenings', () => {
       .set(auth(leadToken))
       .send({ decision: 'accepted', note: 'Confirmed verbally with the outgoing owner.' })
       .expect(200);
-    const updated = accepted.body.handover.items.find(
-      (entry) => entry.claimId === item.claimId,
-    );
+    const updated = accepted.body.item;
     expect(updated.acceptedWithoutEvidence).toBe(true);
   });
 
@@ -324,16 +327,24 @@ describe('round 3 hardenings', () => {
       .expect(200);
   });
 
-  it('revokes every token for a user on logout', async () => {
-    const login = await request(app)
+  it('revokes only the signing-out session, and logout-all ends every session', async () => {
+    const first = await request(app)
       .post('/api/auth/login')
       .send({ email: INCOMING, password: 'Threadline#2026' })
       .expect(200);
-    const token = login.body.token;
+    const second = await request(app)
+      .post('/api/auth/login')
+      .send({ email: INCOMING, password: 'Threadline#2026' })
+      .expect(200);
 
-    await request(app).get('/api/auth/me').set(auth(token)).expect(200);
-    await request(app).post('/api/auth/logout').set(auth(token)).expect(200);
-    await request(app).get('/api/auth/me').set(auth(token)).expect(401);
+    await request(app).get('/api/auth/me').set(auth(first.body.token)).expect(200);
+    await request(app).post('/api/auth/logout').set(auth(first.body.token)).expect(200);
+    await request(app).get('/api/auth/me').set(auth(first.body.token)).expect(401);
+    await request(app).get('/api/auth/me').set(auth(second.body.token)).expect(200);
+
+    await request(app).post('/api/auth/logout-all').set(auth(second.body.token)).expect(200);
+    await request(app).get('/api/auth/me').set(auth(second.body.token)).expect(401);
+    await request(app).get('/api/auth/me').set(auth(incomingToken)).expect(401);
   });
 
   it('gives executive and audit handovers distinct scopes', async () => {

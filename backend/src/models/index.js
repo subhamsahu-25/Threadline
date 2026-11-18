@@ -59,12 +59,31 @@ const userSchema = new Schema(
     passwordHash: { type: String, required: true, select: false },
     platformRole: { type: String, enum: ['admin', 'user'], default: 'user' },
     tokenVersion: { type: Number, default: 0 },
+    failedLoginAttempts: { type: Number, default: 0 },
+    lockedUntil: Date,
     lastLoginAt: Date,
   },
   { timestamps: true, toJSON: jsonOptions },
 );
 
 export const User = mongoose.model('User', userSchema);
+
+const sessionSchema = new Schema({
+  jti: { type: String, required: true, unique: true },
+  user: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  userAgent: { type: String, default: '' },
+  ip: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now },
+  lastSeenAt: Date,
+  expiresAt: { type: Date, required: true },
+  revokedAt: Date,
+});
+
+// Expired sessions are removed by MongoDB itself; revoked rows are kept until
+// then so an audit trail of the session's end still exists.
+sessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
+export const Session = mongoose.model('Session', sessionSchema);
 
 const membershipSchema = new Schema(
   {
@@ -81,6 +100,9 @@ const projectSchema = new Schema(
     key: { type: String, required: true, unique: true, uppercase: true, trim: true },
     name: { type: String, required: true, trim: true },
     description: { type: String, default: '', trim: true },
+    // Set only by the demo seed. Public share links and demo resets key off
+    // this flag, never off the (user-chosen) project key.
+    isDemo: { type: Boolean, default: false },
     status: { type: String, enum: ['active', 'paused', 'completed'], default: 'active' },
     owner: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     members: { type: [membershipSchema], default: [] },
@@ -152,13 +174,42 @@ const sourceSchema = new Schema(
     hiddenAt: Date,
     sync: {
       enabled: { type: Boolean, default: false },
-      intervalMinutes: { type: Number, default: 5 },
+      intervalMinutes: { type: Number, default: 15 },
       lastCheckedAt: Date,
       lastChangedAt: Date,
+      // Reserved when a sync is enqueued. A queued or slow job can no longer
+      // be enqueued again every scheduler tick.
+      nextAttemptAt: Date,
       lastError: String,
       cursor: { type: Schema.Types.Mixed, default: {} },
     },
     parseWarnings: { type: [String], default: [] },
+    // A run that stops on the time budget leaves the documents it was reading
+    // and the last finished chunk here. A matching checksum resumes exactly
+    // where it stopped instead of redoing or discarding the work.
+    extractionCursor: {
+      type: new Schema(
+        {
+          checksum: String,
+          documentIds: { type: [Schema.Types.ObjectId], ref: 'Document', default: [] },
+          chunkId: { type: Schema.Types.ObjectId },
+          chunksProcessed: Number,
+          chunksTotal: Number,
+          stoppedBy: String,
+          updatedAt: Date,
+        },
+        { _id: false },
+      ),
+      default: undefined,
+    },
+    // External AI is opt-out for ordinary sources and opt-in for confidential
+    // ones. Leaving the flag unset keeps that default; the policy helper is the
+    // single place that decides, so old sources behave safely.
+    aiPolicy: {
+      allowExternal: { type: Boolean },
+      updatedAt: Date,
+      updatedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    },
     stats: {
       documents: { type: Number, default: 0 },
       claims: { type: Number, default: 0 },
@@ -173,6 +224,12 @@ const sourceSchema = new Schema(
 );
 
 sourceSchema.index({ project: 1, deletedAt: 1 });
+// Uploads and confirmations carry an empty externalRef; a partial index keeps
+// one live connection per provider reference inside a project.
+sourceSchema.index(
+  { project: 1, kind: 1, externalRef: 1 },
+  { unique: true, partialFilterExpression: { externalRef: { $gt: '' } } },
+);
 
 export const Source = mongoose.model('Source', sourceSchema);
 
@@ -224,6 +281,10 @@ const claimSchema = new Schema(
     document: { type: Schema.Types.ObjectId, ref: 'Document' },
     type: { type: String, enum: CLAIM_TYPES, required: true },
     statement: { type: String, required: true },
+    // Person-confirmed answers keep the statement (the answer) and the
+    // question it settles in separate fields, so a long question can never
+    // crowd out the answer.
+    context: String,
     statementKey: { type: String, required: true },
     topic: { type: String, default: '' },
     topicKey: { type: String, default: '' },
@@ -244,6 +305,9 @@ const claimSchema = new Schema(
     evidenceCount: { type: Number, default: 0 },
     verifiedEvidenceCount: { type: Number, default: 0 },
     supersededBy: { type: Schema.Types.ObjectId, ref: 'Claim' },
+    // Set when the automatic pass supersedes this claim, so a later run can
+    // restore the status the claim had before (planned, done, and so on).
+    supersededPriorStatus: { type: String, enum: CLAIM_STATUSES },
     resolution: {
       note: String,
       by: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -261,7 +325,13 @@ const claimSchema = new Schema(
 
 claimSchema.index({ project: 1, retiredAt: 1, type: 1 });
 claimSchema.index({ project: 1, topicKey: 1 });
-claimSchema.index({ source: 1, statementKey: 1, type: 1 });
+// The extraction pass keys claims by exactly these fields, so a duplicate
+// active row can only come from two runs racing on the same source. The
+// partial index makes that race fail loudly instead of duplicating claims.
+claimSchema.index(
+  { source: 1, topicKey: 1, statementKey: 1, type: 1 },
+  { unique: true, partialFilterExpression: { retiredAt: null } },
+);
 
 export const Claim = mongoose.model('Claim', claimSchema);
 
@@ -273,6 +343,11 @@ const evidenceSchema = new Schema(
     document: { type: Schema.Types.ObjectId, ref: 'Document', required: true },
     chunkId: { type: Schema.Types.ObjectId },
     quote: { type: String, required: true },
+    // Connector fields such as an issue's title and state come from the
+    // provider API, not from prose the author wrote. They are still checkable
+    // against the document text, but are labelled so a reader can tell them
+    // apart from a verbatim quote of the author's words.
+    kind: { type: String, enum: ['quote', 'metadata'], default: 'quote' },
     charStart: { type: Number, required: true },
     charEnd: { type: Number, required: true },
     locale: {
@@ -327,6 +402,7 @@ const handoverItemSchema = new Schema(
     confidence: Number,
     sensitivity: { type: String, enum: SENSITIVITIES },
     ownerName: String,
+    ownerUser: { type: Schema.Types.ObjectId, ref: 'User' },
     dueAt: Date,
     occurredAt: Date,
     origin: { type: String, enum: CLAIM_ORIGINS, default: 'document' },
@@ -345,9 +421,16 @@ const handoverItemSchema = new Schema(
     restrictedToRecipient: { type: Boolean, default: false },
     editedStatement: String,
     reviewerNote: String,
+    previousDecision: {
+      type: String,
+      enum: ['pending', 'accepted', 'rejected', 'edited'],
+    },
     resolutionNote: String,
     resolutionByName: String,
     acceptedWithoutEvidence: { type: Boolean, default: false },
+    contentHash: String,
+    reviewedHash: String,
+    changedSinceReview: { type: Boolean, default: false },
   },
   { _id: false },
 );
@@ -399,6 +482,9 @@ const handoverSchema = new Schema(
     },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     createdBySnapshot: { name: String, email: String },
+    // A regeneration of a live handover creates a new draft record instead of
+    // mutating the one the recipient is holding; this points at the original.
+    regeneratedFrom: { type: Schema.Types.ObjectId, ref: 'Handover' },
     reviewer: { type: Schema.Types.ObjectId, ref: 'User' },
     approvedAt: Date,
     approvedBySnapshot: { name: String, email: String },
@@ -483,7 +569,10 @@ const handoverSchema = new Schema(
     permissionsCheckedAt: Date,
     lastAccessedAt: Date,
   },
-  { timestamps: true, toJSON: jsonOptions },
+  // A reviewer and a lead can act on the same handover at once. The version
+  // guard turns a lost update into a 409 instead of silently overwriting the
+  // other person's decision.
+  { timestamps: true, toJSON: jsonOptions, optimisticConcurrency: true },
 );
 
 handoverSchema.index({ project: 1, recipient: 1, status: 1 });
@@ -507,6 +596,34 @@ handoverVersionSchema.index({ handover: 1, version: 1 }, { unique: true });
 
 export const HandoverVersion = mongoose.model('HandoverVersion', handoverVersionSchema);
 
+/**
+ * A durable record of queued background work. The queue itself runs in the
+ * process, but this collection lets a restart pick up jobs that were queued or
+ * running when the previous process exited instead of losing them.
+ */
+const jobSchema = new Schema(
+  {
+    _id: { type: String },
+    name: { type: String, required: true, index: true },
+    key: { type: String, index: true },
+    payload: { type: Schema.Types.Mixed, default: {} },
+    status: {
+      type: String,
+      enum: ['queued', 'running', 'failed'],
+      default: 'queued',
+      index: true,
+    },
+    attempts: { type: Number, default: 0 },
+    maxAttempts: { type: Number, default: 2 },
+    availableAt: Date,
+    leaseUntil: Date,
+    lastError: String,
+  },
+  { timestamps: true, toJSON: jsonOptions },
+);
+
+export const Job = mongoose.model('Job', jobSchema);
+
 const auditEventSchema = new Schema(
   {
     project: { type: Schema.Types.ObjectId, ref: 'Project', index: true },
@@ -527,7 +644,7 @@ auditEventSchema.index({ project: 1, createdAt: -1 });
 
 export const AuditEvent = mongoose.model('AuditEvent', auditEventSchema);
 
-export const CLARIFICATION_STATUSES = ['open', 'answered', 'declined', 'closed'];
+export const CLARIFICATION_STATUSES = ['open', 'answering', 'answered', 'declined', 'closed'];
 export const CLARIFICATION_KINDS = ['missing_owner', 'open_question', 'conflict'];
 
 const clarificationSchema = new Schema(
@@ -575,8 +692,10 @@ export const NOTIFICATION_TYPES = [
   'clarification.asked',
   'clarification.answered',
   'clarification.declined',
+  'clarification.closed',
   'member.added',
   'member.role_changed',
+  'account.lockout',
 ];
 
 /**
@@ -588,7 +707,8 @@ export const NOTIFICATION_TYPES = [
  */
 const notificationSchema = new Schema(
   {
-    project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
+    // Account-level notices (such as a sign-in lockout) have no project.
+    project: { type: Schema.Types.ObjectId, ref: 'Project', index: true },
     recipient: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     type: { type: String, enum: NOTIFICATION_TYPES, required: true },
     entityType: { type: String, enum: ['handover', 'clarification', 'user'], required: true },

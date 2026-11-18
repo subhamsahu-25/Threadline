@@ -4,6 +4,7 @@ import { truncate } from '../../lib/text.js';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../../lib/errors.js';
 import { redactText } from '../../lib/redaction.js';
 import {
+  AuditEvent,
   Claim,
   Delivery,
   Evidence,
@@ -20,7 +21,13 @@ import { deliverOutbound } from '../delivery.js';
 import { leadIds, notify } from '../notifications.js';
 import { loadVisibleClaims } from '../projectState.js';
 import { reconstructState, summarizeCounts } from '../reconstruction/state.js';
-import { TEMPLATES, buildComposition, templateIncludes } from './compose.js';
+import {
+  TEMPLATES,
+  buildComposition,
+  buildItemForClaim,
+  itemContentHash,
+  templateIncludes,
+} from './compose.js';
 
 export async function loadSourceMap(projectId) {
   const sources = await Source.find({ project: projectId }).lean();
@@ -57,7 +64,7 @@ export function handoverAccess({ handover, project, user }) {
   };
 }
 
-function renderItem(item, { recipient }) {
+export function renderItem(item, { recipient }) {
   // Redaction also runs at read time so drafts created before the hardening
   // pass, and reviewer-written text, cannot bypass it.
   const statement = redactText(
@@ -76,6 +83,7 @@ function renderItem(item, { recipient }) {
     confidence: item.confidence,
     sensitivity: item.sensitivity,
     ownerName: item.ownerName,
+    ownerUserId: item.ownerUser ? String(item.ownerUser) : null,
     dueAt: item.dueAt,
     occurredAt: item.occurredAt,
     origin: item.origin || 'document',
@@ -89,6 +97,8 @@ function renderItem(item, { recipient }) {
     resolutionNote: item.resolutionNote ? redactText(item.resolutionNote).text : null,
     resolutionByName: item.resolutionByName || null,
     decision: item.decision,
+    changedSinceReview: Boolean(item.changedSinceReview),
+    previousDecision: item.previousDecision || undefined,
     acceptedWithoutEvidence: Boolean(item.acceptedWithoutEvidence),
     reviewerNote: recipient ? undefined : item.reviewerNote,
     citations: (item.citations || []).map((citation) => ({
@@ -99,6 +109,8 @@ function renderItem(item, { recipient }) {
       sourceKind: citation.sourceKind,
       docTitle: citation.docTitle,
       quote: redactText(citation.quote || '').text,
+      charStart: citation.charStart,
+      charEnd: citation.charEnd,
       validation: citation.validation,
       locator: citation.locator,
       occurredAt: citation.occurredAt,
@@ -176,11 +188,49 @@ async function withheldForViewer({ handover, project, sourceById, userId }) {
 }
 
 /**
+ * Freshness changes are stored from the pipeline's view. Filter them against
+ * the requesting reviewer so a stored change can never quote a claim whose
+ * source that reviewer may not open.
+ */
+async function freshnessForViewer({ handover, project, sourceById, userId }) {
+  const stored = handover.freshness || { status: 'current' };
+  const changes = stored.changes || [];
+  if (changes.length === 0) return { ...stored, changes: [] };
+
+  const claimIds = [...new Set(changes.map((change) => String(change.claimId || '')))].filter(
+    (id) => id && id !== 'undefined',
+  );
+  const visibility = await claimVisibilityFor({ project, sourceById, userId, claimIds });
+
+  const filtered = [];
+  for (const change of changes) {
+    if (visibility.get(String(change.claimId)) !== true) continue;
+    filtered.push({
+      claimId: change.claimId,
+      type: change.type,
+      statement: redactText(change.statement || '').text,
+      change: change.change,
+      reason: change.reason,
+      fields: (change.fields || []).map((field) => ({
+        field: field.field,
+        from:
+          field.from == null ? field.from : redactText(String(field.from)).text,
+        to: field.to == null ? field.to : redactText(String(field.to)).text,
+      })),
+    });
+  }
+  return { ...stored, changes: filtered };
+}
+
+/**
  * Reviewer view. The author and every lead see only the items, alerts and
  * recommendations whose evidence sources they may read themselves. Counts are
  * recomputed over that filtered set so they never describe hidden content.
  */
 export async function buildReviewerView({ handover, project, user }) {
+  if (!roleOf(project, user._id)) {
+    throw forbidden('You do not have access to this handover');
+  }
   const sourceById = await loadSourceMap(project._id);
   const allItems = handover.items || [];
   const visibleItems = allItems.filter((item) =>
@@ -222,13 +272,24 @@ export async function buildReviewerView({ handover, project, user }) {
     .filter(referencesVisible)
     .map((alert) => {
       const plain = typeof alert.toObject === 'function' ? alert.toObject() : alert;
-      if (plain.code !== 'restricted_items_excluded') return plain;
-      const count = withheld.byReason.permissions + withheld.byReason.author_permissions;
-      if (count === 0) return null;
-      return {
-        ...plain,
-        message: `${count} item(s) in this handover were excluded because the author or the recipient is not authorized to read their source. Details are intentionally not shown.`,
-      };
+      if (plain.code === 'restricted_items_excluded') {
+        const count = withheld.byReason.permissions + withheld.byReason.author_permissions;
+        if (count === 0) return null;
+        return {
+          ...plain,
+          message: `${count} item(s) in this handover were excluded because the author or the recipient is not authorized to read their source. Details are intentionally not shown.`,
+        };
+      }
+      if (plain.code === 'confirmed_answers_unshared') {
+        // The stored count came from the author's view; keep the reminder but
+        // never repeat a number this reviewer cannot verify.
+        return {
+          ...plain,
+          message:
+            'Some confirmed answers are withheld until a lead shares them with the project. Use the share action on the matching item.',
+        };
+      }
+      return plain;
     })
     .filter(Boolean);
 
@@ -236,6 +297,36 @@ export async function buildReviewerView({ handover, project, user }) {
     HandoverFeedback.find({ handover: handover._id }).sort({ createdAt: -1 }).limit(50).lean(),
     Delivery.find({ handover: handover._id }).sort({ createdAt: -1 }).limit(10).lean(),
   ]);
+
+  // The stored snapshot was captured from the author's view. Recompute every
+  // aggregate from claims this reviewer may read so no number or sentence
+  // describes a source they cannot open.
+  const { claims: reviewerClaims } = await loadVisibleClaims({
+    project,
+    userId: user._id,
+  });
+  const reviewerState = reconstructState({
+    project,
+    claims: reviewerClaims,
+    staleDays: env.staleDays,
+  });
+  const reviewerSnapshot = {
+    ...handover.snapshot,
+    counts: reviewerState.counts,
+    phase: reviewerState.phase,
+    readinessScore: reviewerState.readinessScore,
+    lastActivityAt: reviewerState.lastActivityAt,
+    activityWindow: reviewerState.activityWindow,
+    generatedSummary: `Handover for ${
+      handover.recipientSnapshot?.name || 'the recipient'
+    }: ${summarizeCounts(reviewerState)}`,
+  };
+  const freshness = await freshnessForViewer({
+    handover,
+    project,
+    sourceById,
+    userId: user._id,
+  });
 
   return {
     id: handover._id,
@@ -302,16 +393,16 @@ export async function buildReviewerView({ handover, project, user }) {
       count: handover.redactions?.count || 0,
       kinds: handover.redactions?.kinds || [],
     },
-    snapshot: handover.snapshot,
+    snapshot: reviewerSnapshot,
     generation: handover.generation,
     permissionsCheckedAt: handover.permissionsCheckedAt,
     lastAccessedAt: handover.lastAccessedAt,
-    freshness: handover.freshness || { status: 'current' },
+    freshness,
     counts: summarizeReview({ items: visibleItems }),
   };
 }
 
-function summarizeReview(handover) {
+export function summarizeReview(handover) {
   const items = handover.items || [];
   return {
     total: items.length,
@@ -333,13 +424,74 @@ function itemSourceRemoved(item, sourceById) {
 }
 
 /**
+ * The stored freshness diff was captured from the author's view, so it may
+ * quote statements whose source the recipient can no longer open. Re-check
+ * each changed claim against the recipient's live permissions and drop the
+ * text of anything they are not entitled to read.
+ */
+async function recipientFreshness({ handover, sourceById, project, userId }) {
+  const freshness = handover.freshness || { status: 'current' };
+  const changes = freshness.changes || [];
+  const base = {
+    status: freshness.status,
+    checkedAt: freshness.checkedAt,
+    outdatedAt: freshness.outdatedAt,
+  };
+  if (changes.length === 0) return { ...base, changes: [] };
+
+  const claimIds = [
+    ...new Set(changes.map((entry) => entry.claimId).filter(Boolean).map(String)),
+  ];
+  const claims = await Claim.find({ _id: { $in: claimIds }, project: project._id })
+    .select('_id status')
+    .lean();
+  const evidence = await Evidence.find({ claim: { $in: claims.map((claim) => claim._id) } }).lean();
+  const evidenceByClaim = new Map();
+  for (const entry of evidence) {
+    const key = String(entry.claim);
+    if (!evidenceByClaim.has(key)) evidenceByClaim.set(key, []);
+    evidenceByClaim.get(key).push(entry);
+  }
+  const visibleById = new Map(
+    claims.map((claim) => [
+      String(claim._id),
+      claim.status !== 'superseded' &&
+        claimVisibleTo({
+          evidence: evidenceByClaim.get(String(claim._id)) || [],
+          sourceById,
+          project,
+          userId,
+        }),
+    ]),
+  );
+
+  return {
+    ...base,
+    changes: changes.map((entry) => {
+      if (visibleById.get(String(entry.claimId)) === true) return { ...entry };
+      return {
+        claimId: entry.claimId,
+        type: entry.type,
+        change: entry.change,
+        reason: entry.reason,
+        statement: null,
+        withheld: true,
+      };
+    }),
+  };
+}
+
+/**
  * Recipient view. Permissions are re-evaluated at read time, not trusted from
  * the moment the handover was generated: a source that became restricted (or a
  * recipient removed from the project) immediately removes the linked items.
  * Item statuses and owners are also refreshed from the live claims so the
  * recipient never acts on a snapshot the project has already moved past.
  */
-export async function buildRecipientView({ handover, project, user, req }) {
+export async function buildRecipientView({ handover, project, user, req, auditActor }) {
+  if (!roleOf(project, user._id)) {
+    throw forbidden('You do not have access to this handover');
+  }
   const sourceById = await loadSourceMap(project._id);
   const items = [];
   let revoked = 0;
@@ -356,7 +508,7 @@ export async function buildRecipientView({ handover, project, user, req }) {
     .map((item) => item.claimId)
     .filter(Boolean);
   const liveClaims = await Claim.find({ _id: { $in: itemClaimIds }, project: project._id })
-    .select('_id status ownerName retiredAt')
+    .select('_id status ownerName ownerUser retiredAt')
     .lean();
   const liveById = new Map(
     liveClaims.map((claim) => [
@@ -364,6 +516,7 @@ export async function buildRecipientView({ handover, project, user, req }) {
       {
         status: claim.status,
         ownerName: claim.ownerName || null,
+        ownerUserId: claim.ownerUser ? String(claim.ownerUser) : null,
         retired: Boolean(claim.retiredAt),
       },
     ]),
@@ -406,13 +559,17 @@ export async function buildRecipientView({ handover, project, user, req }) {
 
     const rendered = renderItem(item, { recipient: true });
     const statusChanged = live.status !== item.status;
-    const ownerChanged = live.ownerName !== (item.ownerName || null);
+    const ownerNameChanged = live.ownerName !== (item.ownerName || null);
+    const ownerIdChanged =
+      live.ownerUserId !== (item.ownerUser ? String(item.ownerUser) : null);
+    const ownerChanged = ownerNameChanged || ownerIdChanged;
     if (statusChanged || ownerChanged) changedItemCount += 1;
     rendered.status = live.status;
     rendered.ownerName = live.ownerName;
+    rendered.ownerUserId = live.ownerUserId;
     rendered.changedSinceApproval = statusChanged || ownerChanged;
     rendered.previousStatus = statusChanged ? item.status : undefined;
-    rendered.previousOwnerName = ownerChanged ? item.ownerName || null : undefined;
+    rendered.previousOwnerName = ownerNameChanged ? item.ownerName || null : undefined;
     items.push(rendered);
   }
 
@@ -501,19 +658,27 @@ export async function buildRecipientView({ handover, project, user, req }) {
   const recipientName = String(handover.recipientSnapshot?.name || user.name || '')
     .trim()
     .toLowerCase();
+  const recipientId = String(user._id);
   const mini = (item) => ({
     claimId: item.claimId,
     type: item.type,
     statement: item.statement,
     status: item.status,
     ownerName: item.ownerName,
+    ownerUserId: item.ownerUser ? String(item.ownerUser) : null,
     dueAt: item.dueAt,
     changedSinceApproval: Boolean(item.changedSinceApproval),
   });
   const firstWeek = {
     windowDays: 7,
+    // Items imported before owner accounts were linked only carry a name, so
+    // the fallback keeps their "you own this" board working until re-ingest.
     youOwn: items
-      .filter((item) => item.ownerName && item.ownerName.trim().toLowerCase() === recipientName)
+      .filter((item) =>
+        item.ownerUser
+          ? String(item.ownerUser) === recipientId
+          : Boolean(item.ownerName) && item.ownerName.trim().toLowerCase() === recipientName,
+      )
       .map(mini),
     blocked: items.filter((item) => item.status === 'blocked').map(mini),
     doFirst: recommendations.slice(0, 3).map((entry) => ({
@@ -528,22 +693,25 @@ export async function buildRecipientView({ handover, project, user, req }) {
 
   await Handover.updateOne({ _id: handover._id }, { $set: { lastAccessedAt: checkedAt } });
 
-  await recordAudit({
-    projectId: project._id,
-    actor: user,
+  // One audit row per recipient per hour: a recipient reloading the page is
+  // normal use, not a new event. Anonymous demo visitors share that window
+  // and are never attributed to the recipient's account.
+  const auditViewer = auditActor === undefined ? user : auditActor;
+  const auditWindowStart = new Date(checkedAt.getTime() - 3_600_000);
+  const recentView = await AuditEvent.findOne({
+    project: project._id,
     action: 'handover.recipient_viewed',
-    targetType: 'handover',
     targetId: handover._id,
-    targetLabel: `Handover v${handover.version}`,
-    meta: { revokedItems: revoked, supersededItems, changedItemCount },
-    req,
-  });
+    createdAt: { $gte: auditWindowStart },
+  })
+    .select('_id')
+    .lean();
 
-  if (revoked > 0 || supersededItems > 0 || changedItemCount > 0) {
+  if (!recentView) {
     await recordAudit({
       projectId: project._id,
-      actor: { name: 'threadline-permissions' },
-      action: 'handover.permissions_rechecked',
+      actor: auditViewer || { name: 'Anonymous share-link visitor' },
+      action: 'handover.recipient_viewed',
       targetType: 'handover',
       targetId: handover._id,
       targetLabel: `Handover v${handover.version}`,
@@ -551,12 +719,67 @@ export async function buildRecipientView({ handover, project, user, req }) {
         revokedItems: revoked,
         supersededItems,
         changedItemCount,
-        removed,
-        reason: 'Access re-evaluated when the recipient opened the handover',
+        anonymous: !auditViewer,
       },
       req,
     });
   }
+
+  if (revoked > 0 || supersededItems > 0 || changedItemCount > 0) {
+    const recentCheck = await AuditEvent.findOne({
+      project: project._id,
+      action: 'handover.permissions_rechecked',
+      targetId: handover._id,
+      createdAt: { $gte: auditWindowStart },
+    })
+      .select('_id')
+      .lean();
+
+    if (recentCheck) {
+      // Fold repeated rechecks into the hour's row instead of writing one
+      // event per open; the latest counts stay accurate.
+      await AuditEvent.updateOne(
+        { _id: recentCheck._id },
+        {
+          $inc: { 'meta.rechecks': 1 },
+          $set: {
+            'meta.revokedItems': revoked,
+            'meta.supersededItems': supersededItems,
+            'meta.changedItemCount': changedItemCount,
+            'meta.removed': removed,
+            'meta.lastCheckedAt': checkedAt,
+          },
+        },
+      );
+    } else {
+      await recordAudit({
+        projectId: project._id,
+        actor: { name: 'threadline-permissions' },
+        action: 'handover.permissions_rechecked',
+        targetType: 'handover',
+        targetId: handover._id,
+        targetLabel: `Handover v${handover.version}`,
+        meta: {
+          revokedItems: revoked,
+          supersededItems,
+          changedItemCount,
+          removed,
+          rechecks: 1,
+          firstCheckedAt: checkedAt,
+          lastCheckedAt: checkedAt,
+          reason: 'Access re-evaluated when the recipient opened the handover',
+        },
+        req,
+      });
+    }
+  }
+
+  const freshness = await recipientFreshness({
+    handover,
+    sourceById,
+    project,
+    userId: user._id,
+  });
 
   return {
     id: handover._id,
@@ -578,7 +801,7 @@ export async function buildRecipientView({ handover, project, user, req }) {
       kinds: handover.redactions?.kinds || [],
     },
     snapshot: recipientSnapshot,
-    freshness: handover.freshness || { status: 'current' },
+    freshness,
     // The acknowledgement record belongs to the recipient, but its revoked
     // list names items they may no longer read. Keep only what they saw and
     // the integrity hashes of those statements.
@@ -614,16 +837,12 @@ export async function refreshOutdatedHandovers({ projectId, req } = {}) {
 
   const handovers = await Handover.find({
     project: project._id,
-    status: { $in: ['approved', 'shared', 'acknowledged'] },
+    status: { $in: ['draft', 'in_review', 'approved', 'shared', 'acknowledged'] },
   });
 
   let transitioned = 0;
   for (const handover of handovers) {
-    const comparison = await compareHandover({
-      handover,
-      project,
-      actor: { _id: handover.recipient },
-    });
+    const comparison = await compareHandover({ handover, project });
     const wasOutdated = handover.freshness?.status === 'outdated';
 
     if (!comparison.changed) {
@@ -655,30 +874,58 @@ export async function refreshOutdatedHandovers({ projectId, req } = {}) {
         req,
       });
 
-      await notify({
-        project,
-        recipients: [...leadIds(project), String(handover.createdBy)],
-        type: 'handover.outdated',
-        entityType: 'handover',
-        entityId: handover._id,
-      });
+      // A draft nobody has seen yet does not need a notification; only a
+      // handover that is in review or already released to the recipient does.
+      if (handover.status !== 'draft') {
+        await notify({
+          project,
+          recipients: [...leadIds(project), String(handover.createdBy)],
+          type: 'handover.outdated',
+          entityType: 'handover',
+          entityId: handover._id,
+        });
+      }
     }
   }
   return transitioned;
 }
 
-export async function saveVersion(handover, actor, reason) {
+export async function saveVersion(handover, actor, reason, { changedClaimIds } = {}) {
   handover.version = (handover.version || 0) + 1;
   await handover.save();
-  await HandoverVersion.create({
+
+  // Only per-item review actions ask for a diff. A diff stores the changed
+  // items instead of repeating all N items (and their quotes) in every row;
+  // versionDiff rebuilds the full list by walking the chain.
+  let snapshot = handover.toObject();
+  if (Array.isArray(changedClaimIds)) {
+    const changed = new Set(changedClaimIds.map(String));
+    snapshot = {
+      ...snapshot,
+      items: (snapshot.items || []).filter((item) => changed.has(String(item.claimId))),
+      diff: true,
+    };
+  }
+
+  const row = {
     handover: handover._id,
     project: handover.project,
     version: handover.version,
     reason,
     actor: actor._id,
     actorName: actor.name,
-    snapshot: handover.toObject(),
-  });
+    snapshot,
+  };
+  try {
+    await HandoverVersion.create(row);
+  } catch (error) {
+    // Two saves that raced past the read produced the same version number.
+    // Move this write to the next free number instead of losing its history.
+    if (error?.code !== 11000) throw error;
+    handover.version += 1;
+    await handover.save();
+    await HandoverVersion.create({ ...row, version: handover.version });
+  }
 }
 
 export function findItem(handover, claimId) {
@@ -686,6 +933,77 @@ export function findItem(handover, claimId) {
     (entry) => String(entry.claimId) === String(claimId),
   );
   if (!item) throw notFound('That item is not part of this handover');
+  return item;
+}
+
+/**
+ * A recipient-ineligible confirmed answer is withheld from the draft, so it
+ * has no item row to review. This is the explicit lead action that shares its
+ * source with the project and then adds the item back for review.
+ */
+async function shareWithheldConfirmation({ handover, project, actor, claimId }) {
+  if (!canManageProject(project, actor)) {
+    throw forbidden('Only a project lead can share a confirmed answer with the whole project');
+  }
+  const claim = await Claim.findOne({
+    _id: claimId,
+    project: project._id,
+    retiredAt: null,
+  });
+  if (!claim || claim.origin !== 'person_confirmed') {
+    throw notFound('That item is not part of this handover');
+  }
+
+  const evidence = await Evidence.find({ claim: claim._id }).select('source').lean();
+  const sourceIds = [...new Set(evidence.map((entry) => String(entry.source)))];
+  const confirmationSources = await Source.find({
+    _id: { $in: sourceIds },
+    project: project._id,
+    kind: 'confirmation',
+    deletedAt: null,
+  });
+  if (confirmationSources.length === 0) {
+    throw badRequest('This item is not backed by a confirmed answer');
+  }
+
+  await Source.updateMany(
+    { _id: { $in: confirmationSources.map((source) => source._id) } },
+    { $set: { visibility: { scope: 'project', roles: [], users: [] } } },
+  );
+
+  const item = await buildItemForClaim({ project, claimId: claim._id });
+  if (!item) throw notFound('That item is not part of this handover');
+  item.restrictedToRecipient = false;
+  handover.items.push(item);
+
+  const entries = (handover.withheld?.entries || []).filter(
+    (entry) => String(entry.claimId) !== String(claim._id),
+  );
+  if (handover.withheld) {
+    const byType = {};
+    const byReason = { permissions: 0, author_permissions: 0, template: 0, unverified: 0 };
+    for (const entry of entries) {
+      byType[entry.claimType] = (byType[entry.claimType] || 0) + 1;
+      if (entry.reason in byReason) byReason[entry.reason] += 1;
+    }
+    handover.withheld.entries = entries;
+    handover.withheld.total = entries.length;
+    handover.withheld.byType = byType;
+    handover.withheld.byReason = byReason;
+    handover.alerts = (handover.alerts || []).filter(
+      (alert) => alert.code !== 'confirmed_answers_unshared',
+    );
+    if (byReason.permissions > 0) {
+      handover.alerts.push({
+        code: 'confirmed_answers_unshared',
+        severity: 'info',
+        message:
+          'Some answers are withheld until a lead shares them with the project.',
+        audience: 'reviewer',
+      });
+    }
+  }
+
   return item;
 }
 
@@ -699,15 +1017,23 @@ export async function reviewItem({
   note,
   shareWithProject = false,
   req,
+  persist = true,
 }) {
   if (!['draft', 'in_review'].includes(handover.status)) {
     throw badRequest(`Cannot review items while the handover is ${handover.status}`);
   }
 
-  const item = findItem(handover, claimId);
   const options = ['accepted', 'rejected', 'edited', 'pending'];
   if (!options.includes(decision)) {
     throw badRequest(`decision must be one of: ${options.join(', ')}`);
+  }
+
+  let item = (handover.items || []).find(
+    (entry) => String(entry.claimId) === String(claimId),
+  );
+  if (!item) {
+    if (!shareWithProject) throw notFound('That item is not part of this handover');
+    item = await shareWithheldConfirmation({ handover, project, actor, claimId });
   }
 
   const sourceById = await loadSourceMap(project._id);
@@ -756,6 +1082,13 @@ export async function reviewItem({
   }
 
   item.reviewerNote = note ? String(note).slice(0, 600) : undefined;
+  // Remembers exactly what was reviewed, so a regenerated draft can carry this
+  // decision only while the statement, status, owner and evidence are unchanged.
+  if (decision === 'pending') {
+    item.reviewedHash = undefined;
+  } else {
+    item.reviewedHash = itemContentHash(item);
+  }
 
   if (shareWithProject) {
     if (!['accepted', 'edited'].includes(item.decision)) {
@@ -790,27 +1123,108 @@ export async function reviewItem({
       targetLabel: truncate(item.statement || '', 120),
       meta: { sourceIds },
       req,
+      critical: true,
     });
   }
 
-  const label = truncate((decision === 'edited' ? item.editedStatement : item.statement) || '', 80);
-  await saveVersion(handover, actor, `${decision} "${label}"`);
+  // Versions are readable by anyone who can see this handover, including
+  // people who cannot read this item's source. The reason names the decision
+  // and claim only; the statement is rendered at read time through the
+  // viewer's visibility filter. A bulk call writes one diff version for all
+  // the decisions it applied instead of one per item.
+  if (persist) {
+    await saveVersion(handover, actor, `${decision} item ${claimId}`, {
+      changedClaimIds: [claimId],
+    });
 
-  await recordAudit({
-    projectId: project._id,
-    actor,
-    action: 'handover.item_reviewed',
-    targetType: 'handover',
-    targetId: handover._id,
-    targetLabel: `Handover v${handover.version}`,
-    meta: { claimId: String(claimId), decision },
-    req,
-  });
+    await recordAudit({
+      projectId: project._id,
+      actor,
+      action: 'handover.item_reviewed',
+      targetType: 'handover',
+      targetId: handover._id,
+      targetLabel: `Handover v${handover.version}`,
+      meta: { claimId: String(claimId), decision },
+      req,
+      critical: true,
+    });
+  }
 
   return item;
 }
 
+/**
+ * Applies many decisions in one request and records one history row. The
+ * "accept all" action used to send one PATCH per item, which cost N round
+ * trips, N full reviewer responses and N full snapshots.
+ */
+export async function reviewItems({ handover, project, actor, decisions, req }) {
+  if (!['draft', 'in_review'].includes(handover.status)) {
+    throw badRequest(`Cannot review items while the handover is ${handover.status}`);
+  }
+  if (!Array.isArray(decisions) || decisions.length === 0) {
+    throw badRequest('Provide at least one decision');
+  }
+  if (decisions.length > 200) {
+    throw badRequest('A bulk review can apply at most 200 decisions');
+  }
+
+  const applied = [];
+  for (const entry of decisions) {
+    const item = await reviewItem({
+      handover,
+      project,
+      actor,
+      claimId: entry.claimId,
+      decision: entry.decision,
+      editedStatement: entry.editedStatement,
+      note: entry.note,
+      shareWithProject: false,
+      req,
+      // The whole batch is saved together below; a failed decision must not
+      // leave earlier ones half-written.
+      persist: false,
+    });
+    applied.push(item);
+  }
+
+  await saveVersion(
+    handover,
+    actor,
+    `bulk review: ${applied.length} item(s)`,
+    { changedClaimIds: applied.map((item) => item.claimId) },
+  );
+
+  await recordAudit({
+    projectId: project._id,
+    actor,
+    action: 'handover.items_reviewed',
+    targetType: 'handover',
+    targetId: handover._id,
+    targetLabel: `Handover v${handover.version}`,
+    meta: {
+      count: applied.length,
+      decisions: applied.map((item) => ({
+        claimId: String(item.claimId),
+        decision: item.decision,
+      })),
+    },
+    req,
+    critical: true,
+  });
+
+  return applied;
+}
+
 export async function submitForReview({ handover, project, actor, req }) {
+  // Authorization comes before every state or idempotency check so a caller
+  // who cannot act on this handover learns nothing about its current status.
+  if (
+    !canContribute(project, actor) ||
+    (!canManageProject(project, actor) && String(handover.createdBy) !== String(actor._id))
+  ) {
+    throw forbidden('Only the author or a project lead can submit this handover');
+  }
   // Repeating a transition the handover already reached is a no-op, so a
   // double-click or retried request cannot create a second version.
   if (handover.status === 'in_review') return { idempotent: true };
@@ -840,6 +1254,7 @@ export async function submitForReview({ handover, project, actor, req }) {
     targetLabel: `Handover v${handover.version}`,
     meta: { acceptedItems: decided.length },
     req,
+    critical: true,
   });
 
   await notify({
@@ -853,15 +1268,17 @@ export async function submitForReview({ handover, project, actor, req }) {
 }
 
 export async function approveHandover({ handover, project, actor, note, req }) {
-  if (handover.status === 'approved') return { idempotent: true };
-  if (handover.status !== 'in_review') {
-    throw badRequest(`Only a handover in review can be approved (current: ${handover.status})`);
-  }
+  // Identity and role first: the idempotent shortcut must not answer a caller
+  // who is not allowed to approve anything.
   if (String(handover.recipient) === String(actor._id)) {
     throw forbidden('The recipient of a handover cannot approve it');
   }
   if (!canManageProject(project, actor)) {
     throw forbidden('Only a project lead can approve a handover');
+  }
+  if (handover.status === 'approved') return { idempotent: true };
+  if (handover.status !== 'in_review') {
+    throw badRequest(`Only a handover in review can be approved (current: ${handover.status})`);
   }
   if (
     project.settings?.requireSeparateApprover &&
@@ -908,7 +1325,7 @@ export async function approveHandover({ handover, project, actor, note, req }) {
   await saveVersion(
     handover,
     actor,
-    `approved by ${actor.name} with ${approvedItems.length} item(s)${note ? ` — ${truncate(note, 80)}` : ''}`,
+    `approved by ${actor.name} with ${approvedItems.length} item(s)`,
   );
 
   await recordAudit({
@@ -920,6 +1337,7 @@ export async function approveHandover({ handover, project, actor, note, req }) {
     targetLabel: `Handover v${handover.version}`,
     meta: { acceptedItems: approvedItems.length, note: note || null },
     req,
+    critical: true,
   });
 
   await notify({
@@ -946,7 +1364,9 @@ export async function rejectHandover({ handover, project, actor, note, req }) {
   handover.status = 'rejected';
   handover.rejectedAt = new Date();
   handover.rejectionNote = reason.slice(0, 600);
-  await saveVersion(handover, actor, `rejected — ${truncate(reason, 100)}`);
+  // The note stays on the handover for the author and leads; the version
+  // reason is world-readable within the handover and must not embed it.
+  await saveVersion(handover, actor, 'rejected');
 
   await recordAudit({
     projectId: project._id,
@@ -957,6 +1377,7 @@ export async function rejectHandover({ handover, project, actor, note, req }) {
     targetLabel: `Handover v${handover.version}`,
     meta: { note: reason },
     req,
+    critical: true,
   });
 
   await notify({
@@ -994,6 +1415,7 @@ export async function reopenHandover({ handover, project, actor, req }) {
     targetLabel: `Handover v${handover.version}`,
     meta: { rejectionNote: handover.rejectionNote || null },
     req,
+    critical: true,
   });
 }
 
@@ -1008,11 +1430,6 @@ export async function shareHandover({
   confirmRotation = false,
   req,
 }) {
-  if (!['approved', 'shared'].includes(handover.status)) {
-    throw badRequest(
-      `Only an approved handover can be shared (current: ${handover.status})`,
-    );
-  }
   if (String(handover.recipient) === String(actor._id)) {
     throw forbidden('The recipient cannot share their own handover');
   }
@@ -1021,6 +1438,11 @@ export async function shareHandover({
   }
   if (!canManageProject(project, actor) && String(handover.createdBy) !== String(actor._id)) {
     throw forbidden('Only the author or a project lead can share this handover');
+  }
+  if (!['approved', 'shared'].includes(handover.status)) {
+    throw badRequest(
+      `Only an approved handover can be shared (current: ${handover.status})`,
+    );
   }
 
   const rotating = Boolean(handover.shareTokenHash);
@@ -1063,6 +1485,7 @@ export async function shareHandover({
     targetLabel: `Handover v${handover.version}`,
     meta: { shareExpiresAt: handover.shareExpiresAt },
     req,
+    critical: true,
   });
 
   await notify({
@@ -1096,11 +1519,7 @@ export async function revokeShare({ handover, project, actor, reason, req }) {
   handover.shareExpiresAt = undefined;
   handover.revokedAt = new Date();
   handover.revokedReason = String(reason || 'Revoked by the author').slice(0, 600);
-  await saveVersion(
-    handover,
-    actor,
-    `share link revoked — ${truncate(handover.revokedReason, 90)}`,
-  );
+  await saveVersion(handover, actor, 'share link revoked');
 
   await recordAudit({
     projectId: project._id,
@@ -1111,6 +1530,7 @@ export async function revokeShare({ handover, project, actor, reason, req }) {
     targetLabel: `Handover v${handover.version}`,
     meta: { reason: handover.revokedReason },
     req,
+    critical: true,
   });
 
   await notify({
@@ -1125,7 +1545,76 @@ export async function revokeShare({ handover, project, actor, reason, req }) {
   return { idempotent: false };
 }
 
-export async function acknowledgeHandover({ handover, project, actor, req, channel }) {
+/**
+ * Called when a member leaves. A share addressed to them can never open
+ * again, and an author who left can no longer finish a draft. Both are
+ * closed here and the leads are told which handovers still need a person,
+ * instead of leaving a live-looking link or an orphaned draft behind.
+ */
+export async function detachMemberFromHandovers({ project, userId, actor, req }) {
+  const affected = await Handover.find({
+    project: project._id,
+    $or: [{ recipient: userId }, { createdBy: userId }],
+  });
+  const leads = leadIds(project);
+  let revoked = 0;
+
+  for (const handover of affected) {
+    const isRecipient = String(handover.recipient) === String(userId);
+    if (isRecipient && handover.shareTokenHash) {
+      handover.shareToken = undefined;
+      handover.shareTokenHash = undefined;
+      handover.shareExpiresAt = undefined;
+      handover.revokedAt = new Date();
+      handover.revokedReason = 'The recipient was removed from the project';
+      await saveVersion(
+        handover,
+        actor,
+        'share link revoked because the recipient left the project',
+      );
+      revoked += 1;
+
+      await recordAudit({
+        projectId: project._id,
+        actor,
+        action: 'handover.share_revoked',
+        targetType: 'handover',
+        targetId: handover._id,
+        targetLabel: `Handover v${handover.version}`,
+        meta: { reason: 'recipient_removed' },
+        req,
+        critical: true,
+      });
+    }
+
+    if (['draft', 'in_review', 'approved', 'shared'].includes(handover.status)) {
+      await notify({
+        project,
+        recipients: leads,
+        type: 'handover.member_left',
+        entityType: 'handover',
+        entityId: handover._id,
+        actor,
+      });
+    }
+  }
+
+  return { affected: affected.length, revoked };
+}
+
+export async function acknowledgeHandover({
+  handover,
+  project,
+  actor,
+  req,
+  channel,
+  auditActor,
+}) {
+  // The recipient check runs before status and idempotency checks: nobody else
+  // may learn whether this handover is shared, acknowledged or expired.
+  if (String(handover.recipient) !== String(actor._id)) {
+    throw forbidden('Only the recipient can acknowledge this handover');
+  }
   if (!shareIsActive(handover)) {
     throw forbidden('This share link is no longer active');
   }
@@ -1134,9 +1623,6 @@ export async function acknowledgeHandover({ handover, project, actor, req, chann
   }
   if (handover.status !== 'shared') {
     throw badRequest(`Only a shared handover can be acknowledged (current: ${handover.status})`);
-  }
-  if (String(handover.recipient) !== String(actor._id)) {
-    throw forbidden('Only the recipient can acknowledge this handover');
   }
 
   const sourceById = await loadSourceMap(project._id);
@@ -1209,9 +1695,10 @@ export async function acknowledgeHandover({ handover, project, actor, req, chann
     `acknowledged by ${actor.name}: ${shownItemIds.length} item(s), ${revokedItems.length} changed since approval`,
   );
 
+  const auditViewer = auditActor === undefined ? actor : auditActor;
   await recordAudit({
     projectId: project._id,
-    actor,
+    actor: auditViewer || { name: 'Anonymous share-link visitor' },
     action: 'handover.acknowledged',
     targetType: 'handover',
     targetId: handover._id,
@@ -1220,21 +1707,26 @@ export async function acknowledgeHandover({ handover, project, actor, req, chann
       shownItems: shownItemIds.length,
       revokedItems: revokedItems.length,
       acknowledgedVersion,
+      anonymous: !auditViewer,
       ...(channel ? { channel } : {}),
     },
     req,
+    critical: true,
   });
 }
 
 /**
- * Read-only comparison between an approved handover and the current project
- * state. Only claims both the author and the recipient may read are compared,
- * so the diff can never reveal restricted content.
+ * Read-only comparison between a handover and the current project state. The
+ * eligibility test mirrors composition exactly: the template, sensitivity and
+ * the same author/recipient visibility, with superseded claims ignored. The
+ * stored diff is rendered from the recipient's visibility so it never reveals
+ * a source they cannot open.
  */
-export async function compareHandover({ handover, project, actor }) {
+export async function compareHandover({ handover, project }) {
   const sourceById = await loadSourceMap(project._id);
   const template = TEMPLATES[handover.roleTemplate] || TEMPLATES.onboarding;
   const recipientId = handover.recipient;
+  const authorId = handover.createdBy;
 
   const claims = await Claim.find({ project: project._id, retiredAt: null }).lean();
   const evidence = await Evidence.find({
@@ -1259,13 +1751,13 @@ export async function compareHandover({ handover, project, actor }) {
       project,
       userId: recipientId,
     });
-    const readableByRequestor = claimVisibleTo({
+    const readableByAuthor = claimVisibleTo({
       evidence: claimEvidence,
       sourceById,
       project,
-      userId: actor._id,
+      userId: authorId,
     });
-    if (!readableByRecipient || !readableByRequestor) continue;
+    if (!readableByRecipient || !readableByAuthor) continue;
     current.set(String(claim._id), claim);
   }
 
@@ -1325,9 +1817,16 @@ export async function compareHandover({ handover, project, actor }) {
 }
 
 /**
- * Rebuilds an approved/shared/acknowledged handover from current state. Review
- * decisions are carried over per claim where the claim still exists; anything
- * new starts pending so a person confirms it before the recipient sees it.
+ * Rebuilds a released handover from current state without mutating what the
+ * recipient currently holds. Review decisions are carried over only when the
+ * hash of statement, status, owner and evidence quotes still matches what the
+ * reviewer actually saw; anything else returns to pending and is marked as
+ * changed since review, so a stale approval can never ship silently.
+ *
+ * A shared or acknowledged handover stays live until the replacement is
+ * approved: regeneration creates a new draft and copies the acknowledgement
+ * record. An approved handover has not been released yet, so it is rebuilt in
+ * place.
  */
 export async function regenerateHandover({ handover, project, actor, req }) {
   if (!['approved', 'shared', 'acknowledged'].includes(handover.status)) {
@@ -1342,11 +1841,15 @@ export async function regenerateHandover({ handover, project, actor, req }) {
   const recipient = await User.findById(handover.recipient);
   if (!recipient) throw notFound('The recipient account no longer exists');
 
+  // The regenerator may not be able to read everything the original author
+  // could. Composing with the union keeps the draft complete instead of
+  // silently dropping items the regenerator cannot open.
   const composition = await buildComposition({
     project,
     recipient,
     actor,
     roleTemplate: handover.roleTemplate,
+    permissionUserIds: [String(handover.createdBy)],
   });
 
   const previousById = new Map(
@@ -1354,80 +1857,231 @@ export async function regenerateHandover({ handover, project, actor, req }) {
   );
   let carried = 0;
   let added = 0;
+  let changed = 0;
   for (const item of composition.items) {
     const previous = previousById.get(String(item.claimId));
     previousById.delete(String(item.claimId));
     if (!previous) {
       added += 1;
+      // Composition auto-accepts items with a verified citation for a fresh
+      // handover, but nothing here was reviewed yet. A regenerated draft must
+      // send new items through review instead of shipping them approved.
+      item.decision = 'pending';
+      item.reviewedHash = undefined;
       continue;
     }
-    if (['accepted', 'edited'].includes(previous.decision)) {
-      item.decision = previous.decision;
-      if (previous.decision === 'edited') item.editedStatement = previous.editedStatement;
-      item.reviewerNote = previous.reviewerNote;
-      item.acceptedWithoutEvidence = previous.acceptedWithoutEvidence;
-      carried += 1;
+    const reviewedHash = previous.reviewedHash || null;
+    if (!reviewedHash || reviewedHash !== item.contentHash) {
+      if (previous.decision && previous.decision !== 'pending') {
+        changed += 1;
+        item.changedSinceReview = true;
+        item.previousDecision = previous.decision;
+      }
+      item.decision = 'pending';
+      item.reviewedHash = undefined;
+      item.editedStatement = undefined;
+      item.acceptedWithoutEvidence = false;
+      continue;
     }
+    item.decision = previous.decision;
+    item.reviewedHash = reviewedHash;
+    if (previous.decision === 'edited') item.editedStatement = previous.editedStatement;
+    item.reviewerNote = previous.reviewerNote;
+    item.acceptedWithoutEvidence = previous.acceptedWithoutEvidence;
+    carried += 1;
   }
   const dropped = previousById.size;
 
-  handover.items = composition.items;
-  handover.alerts = composition.alerts;
-  handover.recommendations = composition.recommendations;
-  handover.withheld = composition.withheld;
-  handover.redactions = composition.redactions;
-  handover.snapshot = composition.snapshot;
-  handover.generation = composition.generation;
-  handover.status = 'draft';
-  handover.reviewer = undefined;
-  handover.approvedAt = undefined;
-  handover.approvedBySnapshot = undefined;
-  handover.rejectedAt = undefined;
-  handover.rejectionNote = undefined;
-  handover.reopenedAt = undefined;
-  handover.reviewNote = undefined;
-  handover.sharedAt = undefined;
-  handover.acknowledgedAt = undefined;
-  handover.shareToken = undefined;
-  handover.shareTokenHash = undefined;
-  handover.shareExpiresAt = undefined;
-  handover.revokedAt = undefined;
-  handover.revokedReason = undefined;
-  handover.acknowledgement = { shownItemIds: [], revokedItems: [], statementHashes: {} };
-  handover.freshness = { status: 'current', checkedAt: new Date(), changes: [] };
+  const released = ['shared', 'acknowledged'].includes(handover.status);
+  let target = handover;
 
-  await saveVersion(
-    handover,
-    actor,
-    `regenerated from current state (${carried} kept, ${added} new, ${dropped} dropped)`,
-  );
+  if (released) {
+    target = await Handover.create({
+      project: handover.project,
+      recipient: handover.recipient,
+      recipientSnapshot: handover.recipientSnapshot,
+      roleTemplate: handover.roleTemplate,
+      status: 'draft',
+      createdBy: actor._id,
+      createdBySnapshot: { name: actor.name, email: actor.email },
+      items: composition.items,
+      alerts: composition.alerts,
+      recommendations: composition.recommendations,
+      withheld: composition.withheld,
+      redactions: composition.redactions,
+      snapshot: composition.snapshot,
+      version: 1,
+      generation: composition.generation,
+      regeneratedFrom: handover._id,
+      // The recipient acknowledged a version of this handover; the record
+      // travels with the replacement so the approval history stays complete.
+      acknowledgement: handover.acknowledgement || undefined,
+      acknowledgedAt: handover.acknowledgedAt || undefined,
+      freshness: { status: 'current', checkedAt: new Date(), changes: [] },
+    });
+
+    await HandoverVersion.create({
+      handover: target._id,
+      project: project._id,
+      version: 1,
+      reason: `regenerated from v${handover.version} (${carried} kept, ${added} new, ${dropped} dropped)`,
+      actor: actor._id,
+      actorName: actor.name,
+      snapshot: target.toObject(),
+    });
+  } else {
+    handover.items = composition.items;
+    handover.alerts = composition.alerts;
+    handover.recommendations = composition.recommendations;
+    handover.withheld = composition.withheld;
+    handover.redactions = composition.redactions;
+    handover.snapshot = composition.snapshot;
+    handover.generation = composition.generation;
+    handover.status = 'draft';
+    handover.reviewer = undefined;
+    handover.approvedAt = undefined;
+    handover.approvedBySnapshot = undefined;
+    handover.rejectedAt = undefined;
+    handover.rejectionNote = undefined;
+    handover.reopenedAt = undefined;
+    handover.reviewNote = undefined;
+    handover.sharedAt = undefined;
+    handover.acknowledgedAt = undefined;
+    handover.shareToken = undefined;
+    handover.shareTokenHash = undefined;
+    handover.shareExpiresAt = undefined;
+    handover.revokedAt = undefined;
+    handover.revokedReason = undefined;
+    handover.acknowledgement = { shownItemIds: [], revokedItems: [], statementHashes: {} };
+    handover.freshness = { status: 'current', checkedAt: new Date(), changes: [] };
+
+    await saveVersion(
+      handover,
+      actor,
+      `regenerated from current state (${carried} kept, ${added} new, ${dropped} dropped, ${changed} reset)`,
+    );
+  }
 
   await recordAudit({
     projectId: project._id,
     actor,
     action: 'handover.regenerated',
     targetType: 'handover',
-    targetId: handover._id,
-    targetLabel: `Handover v${handover.version}`,
-    meta: { carried, added, dropped },
+    targetId: target._id,
+    targetLabel: `Handover v${target.version}`,
+    meta: {
+      carried,
+      added,
+      dropped,
+      changed,
+      createdNew: released,
+      sourceHandoverId: released ? String(handover._id) : undefined,
+    },
     req,
+    critical: true,
   });
 
-  return { carried, added, dropped };
+  return { carried, added, dropped, changed, createdNew: released, handover: target };
 }
 
-export async function listVersions(handoverId) {
-  return HandoverVersion.find({ handover: handoverId })
+/**
+ * Older releases wrote the first 80 characters of an item statement into the
+ * version reason. Strip any quoted tail and the free-text note that followed
+ * an em dash, then redact, so historical rows obey today's rules too.
+ */
+export function sanitizeVersionReason(reason) {
+  const text = String(reason ?? '')
+    // Oldest rows put the statement before an em-dash note; strip the note
+    // first so the quoted tail becomes the end of the string and the second
+    // pass can remove it too.
+    .replace(/\s+—\s+[\s\S]*$/, '')
+    .replace(/\s+"[^"]*"\s*$/, '')
+    .trim();
+  return redactText(text).text || 'Changed';
+}
+
+function visibleSnapshotItems(items, { sourceById, project, userId }) {
+  const visible = [];
+  const hidden = [];
+  for (const item of items || []) {
+    const readable = (item.citations || []).every((citation) =>
+      sourceVisibleTo(sourceById.get(String(citation.sourceId)), project, userId),
+    );
+    if (readable) visible.push(item);
+    else hidden.push(item);
+  }
+  return { visible, hidden };
+}
+
+const RESTRICTED_STATEMENT = 'A restricted item changed';
+
+export async function listVersions(handoverId, { limit = 50, cursor = null } = {}) {
+  const query = { handover: handoverId };
+  if (cursor) query.version = { $lt: cursor };
+  const rows = await HandoverVersion.find(query)
     .select('-snapshot')
     .sort({ version: -1 })
+    .limit(limit + 1)
     .lean();
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  return {
+    versions: page.map((entry) => ({
+      ...entry,
+      reason: sanitizeVersionReason(entry.reason),
+    })),
+    hasMore,
+    nextCursor: hasMore ? page[page.length - 1]?.version ?? null : null,
+  };
+}
+
+/**
+ * Rebuilds the item list a version represented. Full snapshots return as-is;
+ * a diff row is applied on top of the nearest earlier full snapshot, so a
+ * request that changed one item still diffs correctly against everything
+ * before it.
+ */
+async function resolveSnapshotItems(row) {
+  if (!row?.snapshot?.diff) return row?.snapshot?.items || [];
+
+  const base = await HandoverVersion.findOne({
+    handover: row.handover,
+    version: { $lt: row.version },
+    'snapshot.diff': { $ne: true },
+  })
+    .sort({ version: -1 })
+    .lean();
+  let items = base?.snapshot?.items || [];
+
+  const chain = await HandoverVersion.find({
+    handover: row.handover,
+    version: { $gte: base ? base.version + 1 : 1, $lte: row.version },
+  })
+    .sort({ version: 1 })
+    .lean();
+
+  for (const entry of chain) {
+    if (!entry.snapshot?.diff) {
+      items = entry.snapshot?.items || [];
+      continue;
+    }
+    const byClaim = new Map(items.map((item) => [String(item.claimId), item]));
+    for (const item of entry.snapshot.items || []) {
+      byClaim.set(String(item.claimId), item);
+    }
+    items = [...byClaim.values()];
+  }
+  return items;
 }
 
 /**
  * Human-readable diff between one stored version and the one before it, so the
- * history shows what changed instead of an opaque version number.
+ * history shows what changed instead of an opaque version number. Snapshots
+ * are filtered against the viewer's current source visibility: an item whose
+ * citation the viewer cannot open never contributes text, only a placeholder.
  */
-export async function versionDiff(handoverId, version) {
+export async function versionDiff(handoverId, version, { viewer, project } = {}) {
   const target = await HandoverVersion.findOne({ handover: handoverId, version }).lean();
   if (!target) throw notFound('That handover version does not exist');
 
@@ -1435,12 +2089,38 @@ export async function versionDiff(handoverId, version) {
     version > 1
       ? await HandoverVersion.findOne({ handover: handoverId, version: version - 1 }).lean()
       : null;
+
+  let targetItems = await resolveSnapshotItems(target);
+  let previousItemList = previous ? await resolveSnapshotItems(previous) : [];
+  let hiddenTarget = [];
+  let hiddenPrevious = [];
+
+  if (viewer && project) {
+    const sourceById = await loadSourceMap(project._id);
+    const targetView = visibleSnapshotItems(targetItems, {
+      sourceById,
+      project,
+      userId: viewer._id,
+    });
+    targetItems = targetView.visible;
+    hiddenTarget = targetView.hidden;
+    const previousView = visibleSnapshotItems(previousItemList, {
+      sourceById,
+      project,
+      userId: viewer._id,
+    });
+    previousItemList = previousView.visible;
+    hiddenPrevious = previousView.hidden;
+  }
+
   const previousItems = new Map(
-    ((previous?.snapshot?.items) || []).map((item) => [String(item.claimId), item]),
+    previousItemList.map((item) => [String(item.claimId), item]),
   );
   const changes = [];
+  const text = (value) => redactText(String(value ?? '')).text;
+  const short = (value) => text(value).slice(0, 140);
 
-  for (const item of target.snapshot?.items || []) {
+  for (const item of targetItems) {
     const key = String(item.claimId);
     const before = previousItems.get(key);
     previousItems.delete(key);
@@ -1448,7 +2128,7 @@ export async function versionDiff(handoverId, version) {
       changes.push({
         claimId: item.claimId,
         type: item.type,
-        statement: truncate(item.statement || '', 140),
+        statement: short(item.statement),
         change: 'added',
       });
       continue;
@@ -1461,8 +2141,8 @@ export async function versionDiff(handoverId, version) {
     if ((before.editedStatement || null) !== (item.editedStatement || null)) {
       fields.push({
         field: 'statement',
-        from: truncate(before.editedStatement || before.statement || '', 140),
-        to: truncate(item.editedStatement || item.statement || '', 140),
+        from: short(before.editedStatement || before.statement || ''),
+        to: short(item.editedStatement || item.statement || ''),
       });
     }
     if (before.status !== item.status) {
@@ -1475,7 +2155,7 @@ export async function versionDiff(handoverId, version) {
       changes.push({
         claimId: item.claimId,
         type: item.type,
-        statement: truncate(item.statement || '', 140),
+        statement: short(item.statement),
         change: 'updated',
         fields,
       });
@@ -1486,15 +2166,36 @@ export async function versionDiff(handoverId, version) {
     changes.push({
       claimId: item.claimId,
       type: item.type,
-      statement: truncate(item.statement || '', 140),
+      statement: short(item.statement),
       change: 'removed',
+    });
+  }
+
+  const hiddenTargetIds = new Set(hiddenTarget.map((item) => String(item.claimId)));
+  const hiddenPreviousIds = new Set(hiddenPrevious.map((item) => String(item.claimId)));
+  for (const item of hiddenTarget) {
+    if (hiddenPreviousIds.has(String(item.claimId))) continue;
+    changes.push({
+      claimId: item.claimId,
+      type: item.type,
+      statement: RESTRICTED_STATEMENT,
+      change: 'restricted',
+    });
+  }
+  for (const item of hiddenPrevious) {
+    if (hiddenTargetIds.has(String(item.claimId))) continue;
+    changes.push({
+      claimId: item.claimId,
+      type: item.type,
+      statement: RESTRICTED_STATEMENT,
+      change: 'restricted',
     });
   }
 
   return {
     handover: target.handover,
     version: target.version,
-    reason: target.reason,
+    reason: sanitizeVersionReason(target.reason),
     actorName: target.actorName,
     createdAt: target.createdAt,
     previousVersion: previous ? previous.version : null,
@@ -1502,6 +2203,7 @@ export async function versionDiff(handoverId, version) {
       added: changes.filter((entry) => entry.change === 'added').length,
       updated: changes.filter((entry) => entry.change === 'updated').length,
       removed: changes.filter((entry) => entry.change === 'removed').length,
+      restricted: changes.filter((entry) => entry.change === 'restricted').length,
       total: changes.length,
     },
     changes,
@@ -1523,7 +2225,16 @@ export function summarizeHandover(handover, { viewer = 'reviewer' } = {}) {
     approvedAt: handover.approvedAt,
     sharedAt: handover.sharedAt,
     acknowledgedAt: handover.acknowledgedAt,
-    freshness: handover.freshness || { status: 'current' },
+    // Lists show only the freshness state. The per-change diff can quote
+    // statements whose sources a given viewer cannot read, so the detail view
+    // rebuilds it against that viewer's permissions instead.
+    freshness: handover.freshness
+      ? {
+          status: handover.freshness.status,
+          checkedAt: handover.freshness.checkedAt,
+          outdatedAt: handover.freshness.outdatedAt,
+        }
+      : { status: 'current' },
   };
 
   // A recipient's list entry carries no review or withholding counts. Before

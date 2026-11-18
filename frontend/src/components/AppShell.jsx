@@ -478,6 +478,7 @@ export default function AppShell() {
   const [switching, setSwitching] = useState(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [demoMode, setDemoMode] = useState(null);
   const location = useLocation();
   const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/);
   const routeProject = projectMatch
@@ -485,9 +486,29 @@ export default function AppShell() {
     : null;
   const project = routeProject;
   const isLead = project?.role === 'lead';
-  const canResetDemo = isLead || projects.some((entry) => entry.role === 'lead');
   const routeProjectId = project?.id || projectMatch?.[1] || null;
   const inProject = Boolean(routeProjectId);
+
+  // Demo tools must never appear on a real deployment. The API decides whether
+  // seeding is enabled; the project flag decides whether this workspace is the
+  // synthetic one. Both must agree, so a real lead sees no demo controls.
+  useEffect(() => {
+    let active = true;
+    api
+      .get('/api/health')
+      .then((data) => {
+        if (active) setDemoMode(data?.demoSeedEnabled === true);
+      })
+      .catch(() => {
+        if (active) setDemoMode(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const showDemoControls = demoMode === true && (project ? project.isDemo === true : true);
+  const canResetDemo = showDemoControls && isLead && project?.isDemo === true;
 
   const switchTo = async (persona) => {
     if (switching) return;
@@ -562,34 +583,42 @@ export default function AppShell() {
             </Badge>
           )}
           <NotificationBell />
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setPersonaOpen((value) => !value)}
-              aria-haspopup="menu"
-              aria-expanded={personaOpen}
-              aria-label={`${user?.name}. Switch demo profile`}
-              data-persona-toggle
-              className="flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1 transition hover:bg-slate-100"
-            >
-              <Avatar name={user?.name} size="sm" />
-              <ChevronsUpDown className="h-3 w-3 text-ink-faint" aria-hidden="true" />
-            </button>
-            <PersonaMenu
-              open={personaOpen}
-              onClose={() => setPersonaOpen(false)}
-              user={user}
-              switching={switching}
-              onSwitch={switchTo}
-              onReset={openResetConfirm}
-              onLogout={logout}
-              canReset={canResetDemo}
-            />
-          </div>
+          {showDemoControls ? (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setPersonaOpen((value) => !value)}
+                aria-haspopup="menu"
+                aria-expanded={personaOpen}
+                aria-label={`${user?.name}. Switch demo profile`}
+                data-persona-toggle
+                className="flex items-center gap-1.5 rounded-full py-0.5 pl-0.5 pr-1 transition hover:bg-slate-100"
+              >
+                <Avatar name={user?.name} size="sm" />
+                <ChevronsUpDown className="h-3 w-3 text-ink-faint" aria-hidden="true" />
+              </button>
+              <PersonaMenu
+                open={personaOpen}
+                onClose={() => setPersonaOpen(false)}
+                user={user}
+                switching={switching}
+                onSwitch={switchTo}
+                onReset={openResetConfirm}
+                onLogout={logout}
+                canReset={canResetDemo}
+              />
+            </div>
+          ) : (
+            <Avatar name={user?.name} size="sm" />
+          )}
         </div>
       </header>
 
-      <div className="hidden h-14 items-center justify-between border-b border-line bg-canvas/80 px-8 backdrop-blur lg:sticky lg:top-0 lg:z-30 lg:flex lg:pl-72">
+      <div
+        role="region"
+        aria-label="Project context"
+        className="hidden h-14 items-center justify-between border-b border-line bg-canvas/80 px-8 backdrop-blur lg:sticky lg:top-0 lg:z-30 lg:flex lg:pl-72"
+      >
         <div className="flex min-w-0 items-center gap-2 text-[12px]">
           <Link to="/" className="font-medium text-ink-muted transition hover:text-ink">
             Projects
@@ -627,38 +656,56 @@ export default function AppShell() {
             Permission-aware
           </span>
           <div className="relative flex shrink-0 items-center gap-2 border-l border-line pl-3">
-            <button
-              type="button"
-              onClick={() => setPersonaOpen((value) => !value)}
-              aria-haspopup="menu"
-              aria-expanded={personaOpen}
-              title="Switch demo profile"
-              data-persona-toggle
-              className="flex items-center gap-2 whitespace-nowrap rounded-lg px-1.5 py-1 text-left transition hover:bg-slate-100"
-            >
-              <Avatar name={user?.name} size="sm" />
-              <span className="leading-tight">
-                <span className="block text-[11.5px] font-semibold">{user?.name}</span>
-                <span className="block text-[10px] text-ink-muted">
-                  {project
-                    ? project.incoming
-                      ? 'Incoming recipient'
-                      : ROLE_LABELS[project.role]
-                    : 'Workspace member'}
+            {showDemoControls ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setPersonaOpen((value) => !value)}
+                  aria-haspopup="menu"
+                  aria-expanded={personaOpen}
+                  title="Switch demo profile"
+                  data-persona-toggle
+                  className="flex items-center gap-2 whitespace-nowrap rounded-lg px-1.5 py-1 text-left transition hover:bg-slate-100"
+                >
+                  <Avatar name={user?.name} size="sm" />
+                  <span className="leading-tight">
+                    <span className="block text-[11.5px] font-semibold">{user?.name}</span>
+                    <span className="block text-[10px] text-ink-muted">
+                      {project
+                        ? project.incoming
+                          ? 'Incoming recipient'
+                          : ROLE_LABELS[project.role]
+                        : 'Workspace member'}
+                    </span>
+                  </span>
+                  <ChevronsUpDown className="h-3.5 w-3.5 text-ink-faint" aria-hidden="true" />
+                </button>
+                <PersonaMenu
+                  open={personaOpen}
+                  onClose={() => setPersonaOpen(false)}
+                  user={user}
+                  switching={switching}
+                  onSwitch={switchTo}
+                  onReset={openResetConfirm}
+                  onLogout={logout}
+                  canReset={canResetDemo}
+                />
+              </>
+            ) : (
+              <span className="flex items-center gap-2 whitespace-nowrap px-1.5 py-1">
+                <Avatar name={user?.name} size="sm" />
+                <span className="leading-tight">
+                  <span className="block text-[11.5px] font-semibold">{user?.name}</span>
+                  <span className="block text-[10px] text-ink-muted">
+                    {project
+                      ? project.incoming
+                        ? 'Incoming recipient'
+                        : ROLE_LABELS[project.role]
+                      : 'Workspace member'}
+                  </span>
                 </span>
               </span>
-              <ChevronsUpDown className="h-3.5 w-3.5 text-ink-faint" aria-hidden="true" />
-            </button>
-            <PersonaMenu
-              open={personaOpen}
-              onClose={() => setPersonaOpen(false)}
-              user={user}
-              switching={switching}
-              onSwitch={switchTo}
-              onReset={openResetConfirm}
-              onLogout={logout}
-              canReset={canResetDemo}
-            />
+            )}
           </div>
         </div>
       </div>
@@ -669,14 +716,25 @@ export default function AppShell() {
             inProject ? 'pb-28 lg:pb-14' : 'pb-12'
           }`}
         >
-          <div className="mb-4 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50/80 px-3.5 py-2 text-[11px] leading-4 text-blue-900">
-            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600" aria-hidden="true" />
-            <p>
-              <span className="font-semibold">Shared demo workspace:</span> other evaluators can see
-              and change what you upload. Reset restores only the seeded sources; nothing another
-              visitor uploaded is erased.
-            </p>
-          </div>
+          {demoMode !== null && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50/80 px-3.5 py-2 text-[11px] leading-4 text-blue-900">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600" aria-hidden="true" />
+              <div>
+                {showDemoControls ? (
+                  <p>
+                    <span className="font-semibold">Shared demo workspace:</span> other evaluators
+                    can see and change what you upload. Reset restores only the seeded sources;
+                    nothing another visitor uploaded is erased.
+                  </p>
+                ) : (
+                  <p>
+                    <span className="font-semibold">Permission-aware workspace:</span> every item you
+                    see is filtered live against the sources you may read.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
           <Outlet />
         </div>
       </main>

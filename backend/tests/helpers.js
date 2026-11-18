@@ -26,6 +26,24 @@ export function auth(token) {
   return { Authorization: `Bearer ${token}` };
 }
 
+/**
+ * Registration is deliberately uniform and does not hand out a session, so
+ * tests that need a signed-in account register and then sign in.
+ */
+export async function registerAndLogin(email, name, password = 'Threadline#2026') {
+  const registered = await request(app).post('/api/auth/register').send({ email, name, password });
+  if (registered.status !== 201) {
+    throw new Error(
+      `Registration failed for ${email}: ${registered.status} ${JSON.stringify(registered.body)}`,
+    );
+  }
+  const login = await request(app).post('/api/auth/login').send({ email, password });
+  if (login.status !== 200) {
+    throw new Error(`Login failed for ${email}: ${login.status} ${JSON.stringify(login.body)}`);
+  }
+  return login.body;
+}
+
 export function userOf(seeded, email) {
   return seeded.users.find((user) => user.email === email);
 }

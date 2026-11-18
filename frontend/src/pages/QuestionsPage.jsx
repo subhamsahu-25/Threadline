@@ -74,6 +74,15 @@ function AnswerForm({ clarification, onAnswered }) {
     }
   };
 
+  const trimmed = answer.trim();
+  const ownerMatch =
+    clarification.kind === 'missing_owner' && trimmed
+      ? (clarification.answerOptions || []).find(
+          (option) => option.toLowerCase() === trimmed.toLowerCase(),
+        )
+      : null;
+  const ownerMismatch = clarification.kind === 'missing_owner' && trimmed && !ownerMatch;
+
   return (
     <div className="mt-3 border-t border-line pt-3">
       {clarification.answerOptions?.length > 0 && (
@@ -110,6 +119,18 @@ function AnswerForm({ clarification, onAnswered }) {
           }
         />
       </Field>
+      {ownerMatch && (
+        <p className="mt-1.5 flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-[11px] text-emerald-800">
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          This will make {ownerMatch} the owner and create person-confirmed evidence.
+        </p>
+      )}
+      {ownerMismatch && (
+        <p className="mt-1.5 rounded-md border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] leading-4 text-amber-800">
+          Type a lead or contributor’s exact name, or their email, so this answer can be linked to
+          that person. Other answers are rejected.
+        </p>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button size="sm" icon={Send} loading={saving} disabled={!answer.trim()} onClick={submit}>
           Submit answer

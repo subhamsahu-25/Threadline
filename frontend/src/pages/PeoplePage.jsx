@@ -80,6 +80,7 @@ function settingsForm(project) {
     outgoingName: project.transition?.outgoingName || '',
     plannedDepartureAt: toDateInput(project.transition?.plannedDepartureAt),
     context: project.transition?.context || '',
+    requireSeparateApprover: Boolean(project.settings?.requireSeparateApprover),
   };
 }
 
@@ -208,6 +209,7 @@ export default function PeoplePage() {
       if (form.plannedDepartureAt) transition.plannedDepartureAt = form.plannedDepartureAt;
       transition.context = form.context.trim();
       payload.transition = transition;
+      payload.settings = { requireSeparateApprover: Boolean(form.requireSeparateApprover) };
 
       const data = await api.patch(`/api/projects/${projectId}`, payload);
       await applyProject(data.project);
@@ -240,7 +242,7 @@ export default function PeoplePage() {
       />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)]">
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Card className="overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3.5">
               <div>
@@ -334,7 +336,12 @@ export default function PeoplePage() {
                 description="Roles are enforced on the server, not hidden in the interface."
               />
             </div>
-            <div className="scroll-safe overflow-x-auto">
+            <div
+              className="scroll-safe overflow-x-auto"
+              role="region"
+              aria-label="Access capabilities"
+              tabIndex={0}
+            >
               <table className="w-full min-w-[520px] text-left">
                 <thead>
                   <tr className="border-b border-line bg-slate-50/60 text-[10px] uppercase tracking-[0.1em] text-ink-muted">
@@ -376,7 +383,7 @@ export default function PeoplePage() {
           </Card>
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Card className="p-4">
             <SectionHeading
               eyebrow="Project record"
@@ -414,6 +421,10 @@ export default function PeoplePage() {
                   <div className="flex justify-between gap-3">
                     <dt className="text-ink-muted">Handover due</dt>
                     <dd>{formatDate(project.transition?.plannedDepartureAt)}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-ink-muted">Separate approver</dt>
+                    <dd>{project.settings?.requireSeparateApprover ? 'required' : 'not required'}</dd>
                   </div>
                 </dl>
                 {owner && (
@@ -457,8 +468,8 @@ export default function PeoplePage() {
                       <option value="completed">Completed</option>
                     </Select>
                   </Field>
-                  <Field label="Project key" hint="Immutable identifier.">
-                    <Input value={project.key} disabled />
+                  <Field label="Project key" htmlFor="project-key" hint="Immutable identifier.">
+                    <Input id="project-key" value={project.key} disabled />
                   </Field>
                 </div>
 
@@ -479,6 +490,29 @@ export default function PeoplePage() {
                       onChange={(event) => setForm({ ...form, targetDate: event.target.value })}
                     />
                   </Field>
+                </div>
+
+                <div className="rounded-lg border border-line bg-slate-50/60 p-3">
+                  <p className="mb-1 text-[11.5px] font-semibold text-ink-soft">Approval policy</p>
+                  <label className="flex cursor-pointer items-start gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.requireSeparateApprover)}
+                      onChange={(event) =>
+                        setForm({ ...form, requireSeparateApprover: event.target.checked })
+                      }
+                      className="mt-0.5 h-3.5 w-3.5 rounded text-brand-700 focus:ring-brand-200"
+                    />
+                    <span>
+                      <span className="block text-[12px] text-ink-soft">
+                        Require a different person to approve a handover
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-4 text-ink-muted">
+                        With this on, the person who prepared a handover cannot also approve it. If
+                        the author is your only lead, add a second lead before they submit.
+                      </span>
+                    </span>
+                  </label>
                 </div>
 
                 <div className="rounded-lg border border-line bg-slate-50/60 p-3">

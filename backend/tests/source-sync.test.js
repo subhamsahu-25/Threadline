@@ -37,11 +37,14 @@ vi.mock('../src/services/ingest/googleDrive.js', async (importOriginal) => {
 });
 
 import { auth, idOf, app, request, seed, startDb, stopDb, tokenOf, whenIdle } from './helpers.js';
+import { env } from '../src/config/env.js';
 import { Source } from '../src/models/index.js';
 import { documentsChecksum, syncDue } from '../src/services/ingest/sync.js';
 
 const LEAD = 'subham@threadline.demo';
 const INCOMING = 'ananya@threadline.demo';
+const GITHUB_REF = 'acme/threadline-demo';
+const DRIVE_REF = '1AbCdEfGhIjKlMnOpQrStUvWxYz012345';
 
 function documentSet({ taskStatus = 'open', decision = 'Use Redis for caching.' } = {}) {
   return [
@@ -96,6 +99,8 @@ describe('connected source sync', () => {
     githubState.documents = documentSet();
     driveState.fail = null;
     driveState.documents = driveDocumentSet();
+    env.githubAllowedRepos = [GITHUB_REF];
+    env.driveAllowedFolders = [DRIVE_REF];
     seeded = await seed();
     await whenIdle();
     projectId = seeded.project.id;
@@ -109,7 +114,7 @@ describe('connected source sync', () => {
       .set(auth(leadToken))
       .send({
         kind: 'github',
-        externalRef: 'acme/threadline-demo',
+        externalRef: GITHUB_REF,
         visibility: { scope: 'project', roles: [], users: [] },
       });
     expect(created.status).toBe(202);
@@ -123,7 +128,7 @@ describe('connected source sync', () => {
       .set(auth(leadToken))
       .send({
         kind: 'drive',
-        externalRef: '1AbCdEfGhIjKlMnOpQrStUvWxYz012345',
+        externalRef: DRIVE_REF,
         visibility: { scope: 'project', roles: [], users: [] },
       });
     expect(created.status).toBe(202);
@@ -160,7 +165,8 @@ describe('connected source sync', () => {
     const sourceId = await createGithubSource();
     let source = await Source.findById(sourceId).lean();
     expect(source.status).toBe('ready');
-    expect(source.sync.enabled).toBe(true);
+    expect(source.sync.enabled).toBe(false);
+    expect(source.sync.intervalMinutes).toBe(15);
     expect(source.sync.cursor.checksum).toHaveLength(64);
     expect(source.sync.lastChangedAt).toBeTruthy();
 
@@ -236,7 +242,8 @@ describe('connected source sync', () => {
     const sourceId = await createDriveSource();
     const source = await Source.findById(sourceId).lean();
     expect(source.kind).toBe('drive');
-    expect(source.sync.enabled).toBe(true);
+    expect(source.sync.enabled).toBe(false);
+    expect(source.sync.intervalMinutes).toBe(15);
     expect(source.sync.cursor.checksum).toHaveLength(64);
 
     const { handoverId } = await createLiveHandover();

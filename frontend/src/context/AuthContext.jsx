@@ -47,12 +47,15 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
-  const register = useCallback(async (payload) => {
-    const data = await api.post('/api/auth/register', payload);
-    setToken(data.token);
-    setUser(data.user);
-    return data.user;
-  }, []);
+  const register = useCallback(
+    async (payload) => {
+      // Registration deliberately returns no session, so a new account signs
+      // in straight after creating one.
+      await api.post('/api/auth/register', payload);
+      return login(payload.email, payload.password);
+    },
+    [login],
+  );
 
   const logout = useCallback(async () => {
     try {

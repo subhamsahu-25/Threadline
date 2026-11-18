@@ -1,9 +1,9 @@
 import { Router } from 'express';
+import mongoose from 'mongoose';
 import { AppError, asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
 import { redactText } from '../lib/redaction.js';
 import { authenticateIfPresent } from '../middleware/auth.js';
 import { getProjectForUser } from '../middleware/project.js';
-import { DEMO_PROJECT_KEY } from '../demo/seed.js';
 import { validate } from '../middleware/validate.js';
 import { Delivery, Handover, HandoverFeedback, Project, User } from '../models/index.js';
 import { canContribute, canManageProject, roleOf, sourceVisibleTo } from '../services/access/policy.js';
@@ -24,17 +24,22 @@ import {
   regenerateHandover,
   rejectHandover,
   reopenHandover,
+  renderItem,
   revokeShare,
   reviewItem,
+  reviewItems,
   shareHandover,
   submitForReview,
   summarizeHandover,
+  summarizeReview,
   versionDiff,
 } from '../services/handover/workflow.js';
 import {
+  bulkReviewSchema,
   createHandoverSchema,
   handoverFeedbackSchema,
   listHandoversQuerySchema,
+  listVersionsQuerySchema,
   noteSchema,
   optionalNoteSchema,
   resolveFeedbackSchema,
@@ -43,11 +48,14 @@ import {
 
 const router = Router();
 
-async function loadContext(id) {
+async function loadContext(id, user) {
+  // A non-member gets exactly the same response as a random id: existence is
+  // never revealed, and no further state (status, names, counts) leaks.
+  if (!mongoose.isValidObjectId(id)) throw notFound('Handover not found');
   const handover = await Handover.findById(id);
   if (!handover) throw notFound('Handover not found');
   const project = await Project.findById(handover.project);
-  if (!project) throw notFound('Project not found');
+  if (!project || !roleOf(project, user._id)) throw notFound('Handover not found');
   return { handover, project };
 }
 
@@ -156,7 +164,7 @@ router.get(
   '/',
   validate({ query: listHandoversQuerySchema }),
   asyncHandler(async (req, res) => {
-    const { projectId, scope } = req.query;
+    const { projectId, scope, limit, cursor } = req.query;
     const userId = req.user._id;
 
     let query;
@@ -164,11 +172,11 @@ router.get(
       const project = await getProjectForUser(projectId, req.user);
       const isLead = canManageProject(project, req.user);
       query = { project: project._id };
-      if (!isLead) {
-        if (scope === 'created') query.createdBy = userId;
-        else if (scope === 'received') query.recipient = userId;
-        else query.$or = [{ createdBy: userId }, { recipient: userId }];
-      }
+      // Scope always filters. A lead may pass scope=all to list the project's
+      // handovers; every other value means exactly what it says for everyone.
+      if (scope === 'created') query.createdBy = userId;
+      else if (scope === 'received') query.recipient = userId;
+      else if (!isLead) query.$or = [{ createdBy: userId }, { recipient: userId }];
     } else {
       const projects = await Project.find({ 'members.user': userId })
         .select('owner members')
@@ -188,29 +196,58 @@ router.get(
       }
     }
 
-    const handovers = await Handover.find(query).sort({ createdAt: -1 }).limit(100);
-
-    const projectIds = [...new Set(handovers.map((handover) => String(handover.project)))];
-    const projects = await Project.find({ _id: { $in: projectIds } }).lean();
-    const projectById = new Map(projects.map((project) => [String(project._id), project]));
-
     // A recipient sees only what was actually given to them: the same
     // read-time access check used by the detail route decides list membership,
-    // so an unshared draft never leaks through the list.
-    const visible = handovers
-      .map((handover) => {
-        const project = projectById.get(String(handover.project));
-        return {
-          handover,
-          project,
-          isCreator: String(handover.createdBy) === String(userId),
-          isLead: canManageProject(project || {}, req.user),
-          canView: Boolean(
-            project && handoverAccess({ handover, project, user: req.user }).canView,
-          ),
-        };
-      })
-      .filter(({ canView }) => canView);
+    // so an unshared draft never leaks through the list. The check happens per
+    // page, and a page can be shorter than the limit when a hidden row sits at
+    // the boundary.
+    const visibleRows = async (rows) => {
+      if (rows.length === 0) return [];
+      const projectIds = [...new Set(rows.map((handover) => String(handover.project)))];
+      const projects = await Project.find({ _id: { $in: projectIds } }).lean();
+      const projectById = new Map(projects.map((project) => [String(project._id), project]));
+      return rows
+        .map((handover) => {
+          const project = projectById.get(String(handover.project));
+          return {
+            handover,
+            project,
+            isCreator: String(handover.createdBy) === String(userId),
+            isLead: canManageProject(project || {}, req.user),
+            canView: Boolean(
+              project && handoverAccess({ handover, project, user: req.user }).canView,
+            ),
+          };
+        })
+        .filter(({ canView }) => canView);
+    };
+
+    let after = cursor ? new mongoose.Types.ObjectId(cursor) : null;
+    let hasMore = false;
+    let nextCursor = null;
+    const visible = [];
+
+    for (;;) {
+      const filter = after ? { $and: [query, { _id: { $lt: after } }] } : query;
+      const batch = await Handover.find(filter).sort({ _id: -1 }).limit(limit).lean();
+      if (batch.length === 0) break;
+
+      visible.push(...(await visibleRows(batch)));
+
+      if (visible.length >= limit) {
+        // Page from the last returned row, not the last examined one, so rows
+        // that were examined but did not fit are re-read on the next page.
+        nextCursor = String(visible[limit - 1].handover._id);
+        hasMore =
+          visible.length > limit ||
+          Boolean(await Handover.exists({ $and: [query, { _id: { $lt: visible[limit - 1].handover._id } }] }));
+        visible.length = limit;
+        break;
+      }
+
+      after = batch[batch.length - 1]._id;
+      if (batch.length < limit) break;
+    }
 
     res.json({
       handovers: visible.map(({ handover, isCreator, isLead }) =>
@@ -218,6 +255,8 @@ router.get(
           viewer: isCreator || isLead ? 'reviewer' : 'recipient',
         }),
       ),
+      nextCursor,
+      hasMore,
     });
   }),
 );
@@ -283,7 +322,7 @@ async function loadSharedHandover(token, viewer) {
     if (String(handover.recipient) !== String(viewer._id)) {
       throw forbidden('This share link belongs to a different recipient');
     }
-  } else if (project.key !== DEMO_PROJECT_KEY) {
+  } else if (!project.isDemo) {
     throw forbidden('This share link opens only for the named recipient. Sign in to continue.');
   }
 
@@ -310,7 +349,13 @@ sharedHandoverRouter.get(
     handover.lastAccessedAt = openedAt;
     await handover.save();
 
-    const view = await buildRecipientView({ handover, project, user: recipient, req });
+    const view = await buildRecipientView({
+      handover,
+      project,
+      user: recipient,
+      req,
+      auditActor: req.user || null,
+    });
     res.json({
       handover: view,
       viewer: 'recipient',
@@ -328,7 +373,13 @@ sharedHandoverRouter.get(
       req.params.token,
       req.user,
     );
-    const view = await buildRecipientView({ handover, project, user: recipient, req });
+    const view = await buildRecipientView({
+      handover,
+      project,
+      user: recipient,
+      req,
+      auditActor: req.user || null,
+    });
     sendMarkdown(res, {
       view,
       project,
@@ -372,8 +423,15 @@ sharedHandoverRouter.post(
       actor: recipient,
       req,
       channel: req.user ? 'share_link' : 'public_share_link',
+      auditActor: req.user || null,
     });
-    const view = await buildRecipientView({ handover, project, user: recipient, req });
+    const view = await buildRecipientView({
+      handover,
+      project,
+      user: recipient,
+      req,
+      auditActor: req.user || null,
+    });
     res.json({
       handover: view,
       viewer: 'recipient',
@@ -386,7 +444,7 @@ sharedHandoverRouter.post(
 router.get(
   '/:id',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     const access = handoverAccess({ handover, project, user: req.user });
 
     if (!access.canView) {
@@ -412,7 +470,7 @@ router.get(
 router.get(
   '/:id/export',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     const access = handoverAccess({ handover, project, user: req.user });
     if (!access.canView) throw forbidden('You do not have access to this handover');
 
@@ -433,7 +491,7 @@ router.get(
 router.get(
   '/:id/feedback',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     assertAuthorOrLead(handover, project, req.user, 'read feedback on');
     const rows = await HandoverFeedback.find({ handover: handover._id })
       .sort({ createdAt: -1 })
@@ -446,7 +504,7 @@ router.post(
   '/:id/feedback',
   validate({ body: handoverFeedbackSchema }),
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     const access = handoverAccess({ handover, project, user: req.user });
     if (!access.isRecipient) {
       throw forbidden('Only the named recipient can send feedback on this handover');
@@ -466,7 +524,7 @@ router.patch(
   '/:id/feedback/:feedbackId',
   validate({ body: resolveFeedbackSchema }),
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     assertAuthorOrLead(handover, project, req.user, 'resolve feedback on');
     const record = await HandoverFeedback.findOne({
       _id: req.params.feedbackId,
@@ -498,7 +556,7 @@ router.patch(
 router.get(
   '/:id/deliveries',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     assertAuthorOrLead(handover, project, req.user, 'read deliveries for');
     const rows = await Delivery.find({ handover: handover._id })
       .sort({ createdAt: -1 })
@@ -521,10 +579,10 @@ router.patch(
   '/:id/items/:claimId',
   validate({ body: reviewItemSchema }),
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     assertAuthorOrLead(handover, project, req.user, 'review');
 
-    await reviewItem({
+    const item = await reviewItem({
       handover,
       project,
       actor: req.user,
@@ -536,14 +594,43 @@ router.patch(
       req,
     });
 
-    res.json({ handover: await buildReviewerView({ handover, project, user: req.user }) });
+    // Return only what changed. Sending the whole reviewer view for every
+    // keystroke-scale decision made the review loop heavy on large handovers.
+    res.json({
+      item: renderItem(item, { recipient: false }),
+      version: handover.version,
+      counts: summarizeReview(handover),
+    });
+  }),
+);
+
+router.post(
+  '/:id/items/bulk',
+  validate({ body: bulkReviewSchema }),
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id, req.user);
+    assertAuthorOrLead(handover, project, req.user, 'review');
+
+    const applied = await reviewItems({
+      handover,
+      project,
+      actor: req.user,
+      decisions: req.body.decisions,
+      req,
+    });
+
+    res.json({
+      items: applied.map((item) => renderItem(item, { recipient: false })),
+      version: handover.version,
+      counts: summarizeReview(handover),
+    });
   }),
 );
 
 router.post(
   '/:id/submit',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     assertAuthorOrLead(handover, project, req.user, 'submit');
 
     await submitForReview({ handover, project, actor: req.user, req });
@@ -555,7 +642,7 @@ router.post(
   '/:id/approve',
   validate({ body: optionalNoteSchema }),
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     await approveHandover({
       handover,
       project,
@@ -571,7 +658,7 @@ router.post(
   '/:id/reject',
   validate({ body: noteSchema }),
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     await rejectHandover({
       handover,
       project,
@@ -586,7 +673,7 @@ router.post(
 router.post(
   '/:id/reopen',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     await reopenHandover({ handover, project, actor: req.user, req });
     res.json({ handover: await buildReviewerView({ handover, project, user: req.user }) });
   }),
@@ -595,7 +682,7 @@ router.post(
 router.get(
   '/:id/freshness',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     assertAuthorOrLead(handover, project, req.user, 'compare');
     const comparison = await compareHandover({ handover, project, actor: req.user });
     res.json({ comparison });
@@ -605,7 +692,7 @@ router.get(
 router.post(
   '/:id/regenerate',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     assertAuthorOrLead(handover, project, req.user, 'regenerate');
     const result = await regenerateHandover({
       handover,
@@ -616,7 +703,11 @@ router.post(
     res.json({
       regenerated: true,
       ...result,
-      handover: await buildReviewerView({ handover, project, user: req.user }),
+      handover: await buildReviewerView({
+        handover: result.handover,
+        project,
+        user: req.user,
+      }),
     });
   }),
 );
@@ -624,7 +715,7 @@ router.post(
 router.post(
   '/:id/share',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     const token = await shareHandover({
       handover,
       project,
@@ -646,7 +737,7 @@ router.post(
 router.post(
   '/:id/share/revoke',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     const result = await revokeShare({
       handover,
       project,
@@ -665,7 +756,7 @@ router.post(
 router.post(
   '/:id/acknowledge',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     await acknowledgeHandover({ handover, project, actor: req.user, req });
     const view = await buildRecipientView({ handover, project, user: req.user, req });
     res.json({ handover: view, viewer: 'recipient' });
@@ -674,22 +765,27 @@ router.post(
 
 router.get(
   '/:id/versions',
+  validate({ query: listVersionsQuerySchema }),
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     assertAuthorOrLead(handover, project, req.user, 'view the history of');
-    const versions = await listVersions(handover._id);
-    res.json({ versions });
+    const { limit, cursor } = req.query;
+    const page = await listVersions(handover._id, { limit, cursor });
+    res.json(page);
   }),
 );
 
 router.get(
   '/:id/versions/:version',
   asyncHandler(async (req, res) => {
-    const { handover, project } = await loadContext(req.params.id);
+    const { handover, project } = await loadContext(req.params.id, req.user);
     assertAuthorOrLead(handover, project, req.user, 'view the history of');
     const version = Number(req.params.version);
     if (!Number.isInteger(version) || version < 1) throw badRequest('Invalid version number');
-    const diff = await versionDiff(handover._id, version);
+    const diff = await versionDiff(handover._id, version, {
+      viewer: req.user,
+      project,
+    });
     res.json({ diff });
   }),
 );

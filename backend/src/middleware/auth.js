@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import { AppError, asyncHandler, unauthorized } from '../lib/errors.js';
-import { User } from '../models/index.js';
+import { Session, User } from '../models/index.js';
 
 async function userFromRequest(req) {
   const header = req.get('authorization') || '';
@@ -10,9 +10,13 @@ async function userFromRequest(req) {
   const token = header.slice(7).trim();
   let payload;
   try {
-    payload = jwt.verify(token, env.jwtSecret);
+    payload = jwt.verify(token, env.jwtSecret, { algorithms: ['HS256'] });
   } catch {
     throw unauthorized('Your session token is invalid or has expired');
+  }
+
+  if (!payload.jti) {
+    throw unauthorized('Your session has ended. Sign in again.');
   }
 
   const user = await User.findById(payload.sub);
@@ -20,7 +24,15 @@ async function userFromRequest(req) {
   if ((payload.tv || 0) !== (user.tokenVersion || 0)) {
     throw unauthorized('Your session has been revoked. Sign in again.');
   }
-  return user;
+
+  const session = await Session.findOne({
+    jti: payload.jti,
+    user: user._id,
+    revokedAt: null,
+  }).lean();
+  if (!session) throw unauthorized('Your session has ended. Sign in again.');
+
+  return { user, payload };
 }
 
 export const authenticate = asyncHandler(async (req, _res, next) => {
@@ -29,12 +41,16 @@ export const authenticate = asyncHandler(async (req, _res, next) => {
     throw unauthorized('Provide an Authorization: Bearer <token> header');
   }
 
-  req.user = await userFromRequest(req);
+  const result = await userFromRequest(req);
+  req.user = result.user;
+  req.auth = result.payload;
   next();
 });
 
 export const authenticateOptional = asyncHandler(async (req, _res, next) => {
-  req.user = await userFromRequest(req);
+  const result = await userFromRequest(req);
+  req.user = result?.user || null;
+  req.auth = result?.payload || null;
   next();
 });
 
@@ -42,9 +58,12 @@ export const authenticateOptional = asyncHandler(async (req, _res, next) => {
 // stale, so a broken token is treated as "not signed in" instead of a 401.
 export const authenticateIfPresent = asyncHandler(async (req, _res, next) => {
   try {
-    req.user = await userFromRequest(req);
+    const result = await userFromRequest(req);
+    req.user = result?.user || null;
+    req.auth = result?.payload || null;
   } catch {
     req.user = null;
+    req.auth = null;
   }
   next();
 });

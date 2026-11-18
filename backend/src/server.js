@@ -4,17 +4,32 @@ import { connectDB, disconnectDB, redactUri } from './db/connect.js';
 import { logger } from './lib/logger.js';
 import { processSourceJob, recoverInterruptedSources } from './services/ingest/index.js';
 import { startSyncScheduler } from './services/ingest/sync.js';
+import { startUploadJanitor } from './services/ingest/uploadJanitor.js';
 import { startReminderScheduler } from './services/handover/reminders.js';
-import { configureQueue, setJobHandler } from './services/queue.js';
+import {
+  configureQueueFromEnv,
+  drainQueue,
+  recoverDurableJobs,
+  setJobHandler,
+} from './services/queue.js';
 import { reconcileDemoWorkspace } from './demo/seed.js';
 
+// `app.js` also registers the handler; setting it again here would allow a
+// second registration to silently replace the first.
 setJobHandler(processSourceJob);
-configureQueue({ concurrency: Number(process.env.INGEST_CONCURRENCY || 2), maxAttempts: 2 });
+configureQueueFromEnv();
 
 await connectDB();
 
 const recovered = await recoverInterruptedSources();
 if (recovered > 0) logger.info({ recovered }, 'Re-queued interrupted ingestion jobs');
+
+try {
+  const durable = await recoverDurableJobs();
+  if (durable > 0) logger.info({ recovered: durable }, 'Re-queued durable background jobs');
+} catch (error) {
+  logger.warn({ err: error }, 'Could not recover queued background jobs');
+}
 
 try {
   const repaired = await reconcileDemoWorkspace();
@@ -30,6 +45,7 @@ try {
 
 const stopSync = startSyncScheduler();
 const stopReminders = startReminderScheduler();
+const stopJanitor = env.uploadJanitorEnabled ? startUploadJanitor() : () => {};
 
 const server = app.listen(env.port, () => {
   logger.info(
@@ -50,6 +66,9 @@ async function shutdown(signal) {
   logger.info({ signal }, 'Shutting down');
   stopSync();
   stopReminders();
+  stopJanitor();
+  // Let a running extraction finish its batch before the database closes.
+  await drainQueue({ timeoutMs: 8_000 });
   server.close(async () => {
     await disconnectDB();
     process.exit(0);

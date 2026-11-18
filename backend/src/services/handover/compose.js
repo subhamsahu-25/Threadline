@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { env, llmEnabled } from '../../config/env.js';
 import { badRequest } from '../../lib/errors.js';
 import { createRedactionTally, redactText } from '../../lib/redaction.js';
@@ -92,10 +93,18 @@ function buildItem({
     .sort((a, b) => new Date(a.occurredAt || 0) - new Date(b.occurredAt || 0));
 
   const hasVerifiedCitation = citations.some((citation) => citation.validation !== 'failed');
+  // Text that looks like an instruction never becomes an accepted item on its
+  // own, even when the quote checks out: a person has to accept it explicitly.
+  // A statement that names something its quote never says needs the same
+  // explicit review.
+  const autoAccepted =
+    hasVerifiedCitation &&
+    !(claim.flags || []).includes('instruction_like') &&
+    !(claim.flags || []).includes('statement_quote_mismatch');
   const resolutionNote = redactText(claim.resolution?.note || '');
   redactions.add(resolutionNote);
 
-  return {
+  const item = {
     claimId: claim._id,
     type: claim.type,
     statement: statement.text,
@@ -105,6 +114,7 @@ function buildItem({
     confidence: claim.confidence,
     sensitivity: claim.sensitivity,
     ownerName: claim.ownerName,
+    ownerUser: claim.ownerUser,
     dueAt: claim.dueAt,
     occurredAt: claim.occurredAt || claim.createdAt,
     origin: claim.origin || 'document',
@@ -118,9 +128,64 @@ function buildItem({
     resolutionNote: resolutionNote.text || null,
     resolutionByName: claim.resolution?.byName || null,
     citations,
-    decision: hasVerifiedCitation ? 'accepted' : 'pending',
+    decision: autoAccepted ? 'accepted' : 'pending',
     acceptedWithoutEvidence: false,
   };
+  item.contentHash = itemContentHash(item);
+  if (autoAccepted) item.reviewedHash = item.contentHash;
+  return item;
+}
+
+/**
+ * Identifies what a reviewer actually saw: the rendered statement, status,
+ * owner and evidence quotes. Repository decisions carry over to a regenerated
+ * handover only while this hash is unchanged.
+ */
+export function itemContentHash(item) {
+  const quotes = (item.citations || [])
+    .map((citation) => String(citation.quote || ''))
+    .sort()
+    .join('\u0000');
+  return createHash('sha256')
+    .update(
+      [item.statement || '', item.status || '', item.ownerName || '', quotes].join('\u0000'),
+    )
+    .digest('hex')
+    .slice(0, 40);
+}
+
+/**
+ * Builds one reviewable item for a claim that was withheld from a draft, so a
+ * lead can share a confirmed answer with the project and have it appear in the
+ * handover without regenerating the whole draft.
+ */
+export async function buildItemForClaim({ project, claimId }) {
+  const claim = await Claim.findOne({
+    _id: claimId,
+    project: project._id,
+    retiredAt: null,
+  }).lean();
+  if (!claim) return null;
+
+  const evidence = await Evidence.find({ claim: claim._id }).lean();
+  const sourceIds = [...new Set(evidence.map((entry) => String(entry.source)))];
+  const documentIds = [...new Set(evidence.map((entry) => String(entry.document)))];
+  const [sources, documents] = await Promise.all([
+    Source.find({ _id: { $in: sourceIds }, project: project._id }).lean(),
+    Document.find({ _id: { $in: documentIds } }).lean(),
+  ]);
+  const sourceById = new Map(sources.map((source) => [String(source._id), source]));
+  const docById = new Map(documents.map((document) => [String(document._id), document]));
+  const redactions = createRedactionTally();
+
+  return buildItem({
+    claim,
+    evidence,
+    docById,
+    sourceById,
+    redactions,
+    permittedForRecipient: true,
+  });
 }
 
 function redactFields(entry, fields, redactions) {
@@ -140,7 +205,13 @@ function redactFields(entry, fields, redactions) {
  * the recipient may read; the alternative would leak restricted context through
  * partial evidence. Shared by the initial composition and by regeneration.
  */
-export async function buildComposition({ project, recipient, actor, roleTemplate = 'onboarding' }) {
+export async function buildComposition({
+  project,
+  recipient,
+  actor,
+  roleTemplate = 'onboarding',
+  permissionUserIds,
+}) {
   if (!TEMPLATES[roleTemplate]) {
     throw badRequest(`Unknown role template "${roleTemplate}"`);
   }
@@ -162,6 +233,21 @@ export async function buildComposition({ project, recipient, actor, roleTemplate
   ]);
 
   const sourceById = new Map(sources.map((source) => [String(source._id), source]));
+
+  // Composition is allowed when any trusted author (the original author and a
+  // regenerator, when they differ) can read a claim. Anything none of them can
+  // read stays out, so a narrower re-run cannot silently drop approved items.
+  const authors = [...new Set([...(permissionUserIds || []), String(actor._id)].map(String))];
+  const permittedForAnyAuthor = (claimEvidence) =>
+    authors.some((userId) =>
+      claimVisibleTo({
+        evidence: claimEvidence,
+        sourceById,
+        project,
+        userId,
+      }),
+    );
+
   const claimIds = claims.map((claim) => claim._id);
   const evidence = await Evidence.find({ claim: { $in: claimIds } }).lean();
 
@@ -186,6 +272,7 @@ export async function buildComposition({ project, recipient, actor, roleTemplate
   const redactions = createRedactionTally();
   const visibleClaims = [];
   const items = [];
+  let unsharedConfirmations = 0;
 
   const withhold = (claim, reason) => {
     withheld.total += 1;
@@ -196,28 +283,27 @@ export async function buildComposition({ project, recipient, actor, roleTemplate
 
   for (const claim of claims) {
     const claimEvidence = evidenceByClaim.get(String(claim._id)) || [];
+
+    // A trusted author must be able to read everything the handover carries.
+    // Otherwise the review screen would become a side channel into sources the
+    // person composing cannot see.
+    if (!permittedForAnyAuthor(claimEvidence)) {
+      withhold(claim, 'author_permissions');
+      continue;
+    }
+
+    // The recipient check applies uniformly, including person-confirmed
+    // answers. A confirmed answer becomes eligible only after a lead shares
+    // its source with the project.
     const permittedForRecipient = claimVisibleTo({
       evidence: claimEvidence,
       sourceById,
       project,
       userId: recipient._id,
     });
-
-    if (!permittedForRecipient && claim.origin !== 'person_confirmed') {
+    if (!permittedForRecipient) {
       withhold(claim, 'permissions');
-      continue;
-    }
-
-    // The author must be able to read everything they hand over. Otherwise the
-    // review screen would become a side channel into sources they cannot see.
-    const permittedForAuthor = claimVisibleTo({
-      evidence: claimEvidence,
-      sourceById,
-      project,
-      userId: actor._id,
-    });
-    if (!permittedForAuthor) {
-      withhold(claim, 'author_permissions');
+      if (claim.origin === 'person_confirmed') unsharedConfirmations += 1;
       continue;
     }
 
@@ -303,6 +389,14 @@ export async function buildComposition({ project, recipient, actor, roleTemplate
       code: 'restricted_items_excluded',
       severity: 'info',
       message: `${hiddenByPermissions} item(s) were excluded because the author or the recipient is not authorized to read their source. Details are intentionally not shown.`,
+      audience: 'reviewer',
+    });
+  }
+  if (unsharedConfirmations > 0) {
+    alerts.push({
+      code: 'confirmed_answers_unshared',
+      severity: 'info',
+      message: `${unsharedConfirmations} confirmed answer(s) were withheld because they have not been shared with the project. A lead can share an answer from the handover review screen.`,
       audience: 'reviewer',
     });
   }

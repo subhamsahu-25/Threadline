@@ -153,6 +153,14 @@ export function uploadSource(projectId, { files, name, sensitivity, visibility }
 
 export function errorMessage(error) {
   if (error instanceof ApiError) {
+    // A rejected form should say which field failed rather than only
+    // "The request contains invalid fields".
+    if (error.code === 'validation_error' && Array.isArray(error.details) && error.details.length > 0) {
+      const messages = error.details
+        .map((issue) => issue?.message)
+        .filter((message) => typeof message === 'string' && message.length > 0);
+      if (messages.length > 0) return messages.join(' · ');
+    }
     if (error.code === 'unprocessable' && error.details?.pendingClaimIds?.length) {
       return `${error.message} (${error.details.pendingClaimIds.length} remaining)`;
     }
