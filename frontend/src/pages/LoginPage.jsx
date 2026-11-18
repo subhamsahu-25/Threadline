@@ -305,10 +305,11 @@ export default function LoginPage() {
 
   if (user) return <Navigate to={destination} replace />;
 
-  // The persona picker is a demo affordance. It only appears when this API
-  // reports that seeding is enabled, so a real deployment never suggests a
-  // sign-in path that cannot work there.
-  const demoEnabled = health?.demoSeedEnabled === true;
+  // The persona picker is a demo affordance. It appears when seeding is
+  // enabled or when the demo workspace already exists, so the hosted demo
+  // stays usable after seeding is switched off on the server.
+  const demoEnabled =
+    health?.demoSeedEnabled === true || health?.demoProjectReady === true;
 
   const enterAs = async (persona) => {
     if (pending) return;
