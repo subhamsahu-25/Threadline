@@ -30,7 +30,10 @@ allowed to see**.
 
 The API runs on Render's free tier. After about 15 minutes of inactivity the
 first request can take roughly a minute while the instance wakes; the UI warns
-you about this, and the request completes normally.
+you about this, and the request completes normally. The four demo profiles stay
+available because the seeded workspace already exists; rebuilding it from the
+UI additionally needs `DEMO_MODE=true` on the backend, which is off by default
+so a production deployment never exposes public seeding.
 
 ### 90-second walkthrough
 

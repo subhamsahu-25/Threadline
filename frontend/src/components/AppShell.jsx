@@ -479,6 +479,7 @@ export default function AppShell() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [demoMode, setDemoMode] = useState(null);
+  const [demoSeedEnabled, setDemoSeedEnabled] = useState(false);
   const location = useLocation();
   const projectMatch = location.pathname.match(/^\/projects\/([^/]+)/);
   const routeProject = projectMatch
@@ -490,17 +491,22 @@ export default function AppShell() {
   const inProject = Boolean(routeProjectId);
 
   // Demo tools must never appear on a real deployment. The API decides whether
-  // seeding is enabled; the project flag decides whether this workspace is the
-  // synthetic one. Both must agree, so a real lead sees no demo controls.
+  // the demo workspace exists or can be seeded; the project flag decides whether
+  // this workspace is the synthetic one. Both must agree, so a real lead sees no
+  // demo controls, while a hosted demo keeps working after seeding is disabled.
   useEffect(() => {
     let active = true;
     api
       .get('/api/health')
       .then((data) => {
-        if (active) setDemoMode(data?.demoSeedEnabled === true);
+        if (!active) return;
+        setDemoSeedEnabled(data?.demoSeedEnabled === true);
+        setDemoMode(data?.demoSeedEnabled === true || data?.demoProjectReady === true);
       })
       .catch(() => {
-        if (active) setDemoMode(false);
+        if (!active) return;
+        setDemoSeedEnabled(false);
+        setDemoMode(false);
       });
     return () => {
       active = false;
@@ -508,7 +514,8 @@ export default function AppShell() {
   }, []);
 
   const showDemoControls = demoMode === true && (project ? project.isDemo === true : true);
-  const canResetDemo = showDemoControls && isLead && project?.isDemo === true;
+  const canResetDemo =
+    showDemoControls && demoSeedEnabled && isLead && project?.isDemo === true;
 
   const switchTo = async (persona) => {
     if (switching) return;
