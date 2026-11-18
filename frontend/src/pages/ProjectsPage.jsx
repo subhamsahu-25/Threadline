@@ -160,9 +160,28 @@ export default function ProjectsPage() {
     );
   }, [projects, query]);
 
+  const [demoSeedEnabled, setDemoSeedEnabled] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .get('/api/health')
+      .then((data) => {
+        if (active) setDemoSeedEnabled(data?.demoSeedEnabled === true);
+      })
+      .catch(() => {
+        if (active) setDemoSeedEnabled(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const canManageDemo = useMemo(
-    () => projects.some((project) => project.role === 'lead'),
-    [projects],
+    () =>
+      demoSeedEnabled &&
+      projects.some((project) => project.role === 'lead' && project.isDemo === true),
+    [demoSeedEnabled, projects],
   );
 
   const totals = useMemo(() => {
