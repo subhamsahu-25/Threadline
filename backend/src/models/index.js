@@ -406,6 +406,10 @@ const handoverSchema = new Schema(
     reopenedAt: Date,
     reviewNote: String,
     sharedAt: Date,
+    shareOpenedAt: Date,
+    shareLastOpenedAt: Date,
+    shareOpenCount: { type: Number, default: 0 },
+    reminderSentAt: Date,
     acknowledgedAt: Date,
     shareToken: { type: String, index: true, sparse: true },
     shareTokenHash: { type: String, index: true, sparse: true },
@@ -565,6 +569,8 @@ export const NOTIFICATION_TYPES = [
   'handover.shared',
   'handover.revoked',
   'handover.outdated',
+  'handover.reminder',
+  'handover.feedback',
   'clarification.asked',
   'clarification.answered',
   'clarification.declined',
@@ -596,3 +602,52 @@ notificationSchema.index({ recipient: 1, createdAt: -1 });
 notificationSchema.index({ recipient: 1, dedupeKey: 1 }, { unique: true });
 
 export const Notification = mongoose.model('Notification', notificationSchema);
+
+/**
+ * A note the recipient (or a guest using the demo link) sends back about one
+ * item or the handover as a whole. The message is redacted before it is
+ * stored, so the reviewer never sees a credential the recipient pasted in.
+ */
+const handoverFeedbackSchema = new Schema(
+  {
+    project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
+    handover: { type: Schema.Types.ObjectId, ref: 'Handover', required: true, index: true },
+    claimId: { type: Schema.Types.ObjectId, ref: 'Claim' },
+    author: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    authorSnapshot: { name: String, role: String },
+    message: { type: String, required: true },
+    status: { type: String, enum: ['open', 'resolved'], default: 'open', index: true },
+    resolvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    resolvedAt: Date,
+    resolutionNote: String,
+  },
+  { timestamps: true, toJSON: jsonOptions },
+);
+
+handoverFeedbackSchema.index({ handover: 1, createdAt: -1 });
+
+export const HandoverFeedback = mongoose.model('HandoverFeedback', handoverFeedbackSchema);
+
+/**
+ * Outbound delivery record. The target is deliberately stored as a channel
+ * name, never the webhook URL itself, and a failure detail never repeats a
+ * URL or a response body. `skipped` means nothing left the server because no
+ * webhook is configured; that must never be presented as a send.
+ */
+const deliverySchema = new Schema(
+  {
+    project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
+    handover: { type: Schema.Types.ObjectId, ref: 'Handover', index: true },
+    clarification: { type: Schema.Types.ObjectId, ref: 'Clarification' },
+    kind: { type: String, required: true },
+    channel: { type: String, enum: ['webhook'], default: 'webhook' },
+    status: { type: String, enum: ['sent', 'skipped', 'failed'], required: true },
+    detail: String,
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User' },
+  },
+  { timestamps: true, toJSON: jsonOptions },
+);
+
+deliverySchema.index({ project: 1, createdAt: -1 });
+
+export const Delivery = mongoose.model('Delivery', deliverySchema);

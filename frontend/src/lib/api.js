@@ -95,6 +95,53 @@ export const api = {
   del: (path, options) => request(path, { ...options, method: 'DELETE' }),
 };
 
+/**
+ * Fetches a file with the same Authorization header as every other call, then
+ * hands it to the browser as a download. A plain anchor cannot send the token
+ * when the API lives on another origin (for example Vercel calling Render).
+ */
+export async function downloadFile(path, fallbackName = 'download') {
+  const headers = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  let response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { headers });
+  } catch {
+    throw new ApiError('Cannot reach the Threadline API to download this file.', {
+      code: 'network_error',
+    });
+  }
+
+  if (!response.ok) {
+    let data = null;
+    try {
+      data = await response.json();
+    } catch {
+      data = null;
+    }
+    const detail = data?.error || {};
+    if (response.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
+    throw new ApiError(detail.message || `Download failed with status ${response.status}`, {
+      status: response.status,
+      code: detail.code || 'request_failed',
+    });
+  }
+
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = /filename="?([^";]+)"?/i.exec(disposition);
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = match?.[1] || fallbackName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1_000);
+}
+
 export function uploadSource(projectId, { files, name, sensitivity, visibility }) {
   const form = new FormData();
   for (const file of files) form.append('files', file);

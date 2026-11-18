@@ -106,6 +106,10 @@ All variables are optional in development.
 | `EXTRACT_TIME_BUDGET_MS` | `120000` | Time budget for one extraction pass |
 | `STALE_DAYS` | `30` | Age before an open item is flagged stale |
 | `SHARE_TTL_DAYS` | `7` | Share-link lifetime |
+| `OUTBOUND_WEBHOOK_URL` | empty | Optional webhook for share, acknowledgement, clarification and reminder delivery; when empty every delivery is recorded as `skipped`, never as sent |
+| `OUTBOUND_WEBHOOK_TIMEOUT_MS` | `5000` | Webhook request timeout |
+| `HANDOVER_REMINDER_ENABLED` | `true` | Sends one in-app notice and one outbound delivery for a shared handover that is still unacknowledged |
+| `HANDOVER_REMINDER_DAYS` | `3` | Days after sharing before the reminder fires |
 | `ALLOW_DEMO_SEED` | `true` | Enables `POST /api/demo/seed`; creating a missing workspace is public, rebuilding requires the Atlas lead |
 | `INGEST_CONCURRENCY` | `2` | Background ingestion workers |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |

@@ -171,6 +171,15 @@ export const optionalNoteSchema = z.object({
   note: z.string().trim().max(600).optional(),
 });
 
+export const handoverFeedbackSchema = z.object({
+  message: z.string().trim().min(5).max(1000),
+  claimId: objectId.optional(),
+});
+
+export const resolveFeedbackSchema = z.object({
+  note: z.string().trim().max(600).optional(),
+});
+
 export const listHandoversQuerySchema = z.object({
   projectId: objectId.optional(),
   scope: z.enum(['all', 'created', 'received']).default('all'),

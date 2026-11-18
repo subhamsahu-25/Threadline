@@ -12,6 +12,7 @@ import {
   User,
 } from '../models/index.js';
 import { recordAudit } from './audit.js';
+import { deliverOutbound } from './delivery.js';
 import { leadIds, notify } from './notifications.js';
 import { buildStateForUser, loadVisibleClaims } from './projectState.js';
 
@@ -234,6 +235,14 @@ async function createClarificationRecord({ project, actor, outgoing, candidate, 
     entityType: 'clarification',
     entityId: record._id,
     actor,
+  });
+
+  await deliverOutbound({
+    projectId: project._id,
+    clarificationId: record._id,
+    kind: 'clarification.asked',
+    text: `A question about ${project.name} is waiting for ${outgoing.name || 'the departing member'} in Threadline.`,
+    createdBy: actor._id,
   });
 
   return serializeClarification(record);

@@ -10,7 +10,7 @@ import {
   ShieldAlert,
   ShieldCheck,
 } from 'lucide-react';
-import { api } from '../lib/api.js';
+import { api, downloadFile, errorMessage } from '../lib/api.js';
 import { useAsync } from '../hooks/useAsync.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
@@ -153,6 +153,25 @@ export default function SharedHandoverPage() {
     }
   };
 
+  const download = async () => {
+    try {
+      await downloadFile(`/api/handovers/shared/${token}/export`, 'handover.md');
+      toast.success('Download started. This copy contains only what you can read.');
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  };
+
+  const sendFeedback = async ({ message, claimId }) => {
+    try {
+      await api.post(`/api/handovers/shared/${token}/feedback`, { message, claimId });
+      toast.success('Your note was sent to the project team.');
+    } catch (err) {
+      toast.error(errorMessage(err));
+      throw err;
+    }
+  };
+
   if (loading && !handover) return <LoadingScreen label="Opening your shared handover" />;
   if (error && !handover) return <LinkProblem error={error} />;
 
@@ -220,6 +239,8 @@ export default function SharedHandoverPage() {
         projectId={handover.projectId}
         onAcknowledge={acknowledge}
         acknowledging={acknowledging}
+        onDownload={download}
+        onFeedback={sendFeedback}
       />
     </SharedShell>
   );

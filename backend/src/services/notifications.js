@@ -106,6 +106,20 @@ function handoverNotice({ type, handover, project, viewer, isLead, isAuthor }) {
         detail: `${project.name} · ask the project lead if you still need it`,
         href,
       };
+    case 'handover.reminder':
+      if (!isRecipient || !linkLive) return null;
+      return {
+        title: 'Reminder: your handover is waiting',
+        detail: `${project.name} · open the link and acknowledge it when you have read it`,
+        href,
+      };
+    case 'handover.feedback':
+      if (!isLead && !isAuthor) return null;
+      return {
+        title: 'The recipient sent feedback on a handover',
+        detail: `${recipientName} · ${project.name}`,
+        href,
+      };
     case 'handover.outdated':
       if (!isLead && !isAuthor) return null;
       return {

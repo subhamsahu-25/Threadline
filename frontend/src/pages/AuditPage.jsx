@@ -4,10 +4,12 @@ import {
   CheckCircle2,
   ChevronDown,
   Database,
+  Download,
   FileSignature,
   FileText,
   FolderPlus,
   LogIn,
+  MessageSquare,
   Pencil,
   RefreshCw,
   ScrollText,
@@ -65,6 +67,8 @@ const ACTION_META = {
   'handover.share_renewed': { icon: RefreshCw, tone: 'blue' },
   'handover.acknowledged': { icon: ShieldCheck, tone: 'teal' },
   'handover.recipient_viewed': { icon: FileText, tone: 'slate' },
+  'handover.feedback_received': { icon: MessageSquare, tone: 'blue' },
+  'handover.feedback_resolved': { icon: CheckCircle2, tone: 'green' },
   'handover.permissions_rechecked': { icon: ShieldCheck, tone: 'amber' },
 };
 
@@ -90,6 +94,11 @@ function metaSummary(meta) {
   if (meta.decision) parts.push(`decision: ${meta.decision}`);
   if (typeof meta.withheld === 'number') parts.push(`${meta.withheld} withheld`);
   return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+function csvCell(value) {
+  if (value === undefined || value === null) return '""';
+  return `"${String(value).replace(/"/g, '""')}"`;
 }
 
 function EventRow({ event }) {
@@ -217,6 +226,47 @@ export default function AuditPage() {
     return [...groups.entries()];
   }, [filtered]);
 
+  // The CSV is built from the rows this screen already received from the
+  // lead-only, redaction-filtered audit endpoint. It never reads the database
+  // and never adds an event the viewer cannot see.
+  const exportCsv = () => {
+    if (filtered.length === 0) return;
+    const header = [
+      'timestamp',
+      'actor',
+      'action',
+      'label',
+      'target_type',
+      'target_id',
+      'ip',
+      'details',
+    ];
+    const rows = filtered.map((event) => [
+      event.createdAt,
+      event.actorName,
+      event.action,
+      event.targetLabel,
+      event.targetType,
+      event.targetId,
+      event.ip,
+      event.meta && Object.keys(event.meta).length > 0 ? JSON.stringify(event.meta) : '',
+    ]);
+    const csv = [header, ...rows]
+      .map((row) => row.map(csvCell).join(','))
+      .join('\r\n');
+    const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${project.key.toLowerCase()}-audit-${new Date()
+      .toISOString()
+      .slice(0, 10)}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  };
+
   if (!isLead) {
     return (
       <div>
@@ -252,15 +302,26 @@ export default function AuditPage() {
         title="Audit log"
         description="An append-only record of who did what, when, from where. Use it to prove that restricted material stayed restricted and that a handover was reviewed before release."
         actions={
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={RefreshCw}
-            loading={loading}
-            onClick={() => reload().catch(() => {})}
-          >
-            Refresh
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={Download}
+              disabled={filtered.length === 0}
+              onClick={exportCsv}
+            >
+              Export CSV
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={RefreshCw}
+              loading={loading}
+              onClick={() => reload().catch(() => {})}
+            >
+              Refresh
+            </Button>
+          </>
         }
       />
 
@@ -373,7 +434,7 @@ export default function AuditPage() {
           <div className="flex items-center justify-between border-b border-line bg-slate-50/60 px-4 py-2.5">
             <p className="text-[11.5px] text-ink-muted">
               Showing <span className="font-semibold text-ink">{filtered.length}</span> of{' '}
-              {pluralize(events.length, 'event')}
+              {pluralize(events.length, 'event')} · the CSV export uses the same filtered rows
             </p>
             <span className="inline-flex items-center gap-1.5 font-mono text-[9.5px] text-ink-faint">
               <ShieldCheck className="h-3 w-3 text-emerald-600" aria-hidden="true" />

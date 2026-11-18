@@ -1,16 +1,16 @@
 # Testing Notes
 
-Living document — last updated 17 Nov 2026. Supersedes the Round 2 notes.
+Living document — last updated 18 Nov 2026. Supersedes the Round 2 notes.
 All results below were observed directly; no metric is projected or estimated.
-The hosted build lags behind this working tree because Round 3 changes have not
-been pushed; every Round 3 result below is from the local dev stack.
+Every automated result was produced on the local stack; the hosted deployment is
+checked separately and called out where it differs.
 
 ---
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **17 suites, 124 tests**, green on the last full run
-(18 Nov 2026, 101.79 s). Each suite boots its own ephemeral MongoDB
+`cd backend && npm test` — **18 suites, 135 tests**, green on the last full run
+(18 Nov 2026, 118.38 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
@@ -23,6 +23,7 @@ been pushed; every Round 3 result below is from the local dev stack.
 | `conflict-resolution.test.js` | 6 | Lead confirms the current decision, the rest are superseded, conflict clears, drafts exclude superseded statements, audit event, contributor/observer rejection |
 | `handover-permissions.test.js` | 10 | Recipient-specific withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review boundaries, non-member rejection |
 | `handover-workflow.test.js` | 7 | Edit/submit/approve/share/acknowledge, version history and audit, pending-item guard, transition guards, share rotation, and the public demo link: anonymous read and acknowledgement, audited with `channel: public_share_link`, refused for non-demo projects |
+| `handover-extras.test.js` | 11 | Recipient and reviewer Markdown exports hide restricted evidence; export access control; share-open counts reset on rotation; feedback create/list/notify/resolve and rejection before sharing, from non-recipients, on items that became unreadable, and below the minimum length; honest `skipped`, `sent` and `failed` delivery rows with no webhook URL leaked; clarification delivery; reminder once-only, delay, acknowledgement and switch |
 | `ingest-hardening.test.js` | 11 | Low-confidence and injection-like flags, truncation warnings, re-ingest preserves IDs/owners/statuses/resolutions, extraction method counts, 409 while processing, connector allow-list, confidential uploads lead-only, large-upload reporting, failed re-ingest keeps content, hiding a source removes it and its claims from every reader |
 | `reconstruction.test.js` | 11 | Blocked status, no ingestion-time dates, no stale undated items, null readiness when empty, execution phase while anything is open, blockers list, fuzzy topic conflicts, identical restatements, critical unblock actions |
 | `extraction.test.js` | 9 | Verbatim quote location (`exact` / `normalized` / `failed`), paraphrase rejection, heuristic extraction, CSV normalization |
@@ -33,13 +34,18 @@ been pushed; every Round 3 result below is from the local dev stack.
 | `llm-fallback.test.js` | 3 | Gemini retry on 404 (retired model), 429 and 503 |
 | `notifications.test.js` | 10 | Notices routed by role and event, one per recipient and event, removed when access ends, read state isolated per user, payload limited to a title, detail, project key and link |
 
-Frontend validation: `npm run build` (clean Vite production build) and
-`npm run smoke`, which checks the built `index.html` — root mount, title,
-bundled CSS/JS and that every referenced asset exists. The UI's main gate
-remains the in-browser journeys below; there is no component-test suite.
+Frontend validation: `npm run build` (clean Vite production build, 1,610 modules,
+496.94 kB JS), `npm run smoke` (the built `index.html` mounts and every asset
+exists) and `npm run e2e` (Playwright/Chromium, one spec covering the four core
+journeys). The Playwright run starts its own backend on a spare port with an
+empty `MONGODB_URI` (fresh in-memory database), seeds through the public demo
+endpoint, and keeps `OUTBOUND_WEBHOOK_URL` empty and reminders disabled so the
+delivery and reminder assertions are deterministic. There is still no component
+test suite.
 
 CI (`.github/workflows/ci.yml`) runs backend `npm ci && npm test` and frontend
-`npm ci && npm run build && npm run smoke` on every push and pull request.
+`npm ci && npm run build && npm run smoke` on every push and pull request. The
+Playwright run is a local gate, not yet a CI job.
 
 ---
 
@@ -60,8 +66,8 @@ carry `validation: person_confirmed`, not `exact`.
 ## 3. Main journeys — tested in a real browser
 
 Exercised on the local dev stack at desktop 1440×900 and mobile 390×844. The
-hosted build was exercised in earlier rounds; it does not include the
-uncommitted Round 3 changes.
+hosted build was exercised in earlier rounds; the Round 3 deployment is checked
+in the release notes rather than duplicated here.
 
 1. **Onboarding a recipient.** Lead creates a handover for the incoming member →
    accepts / edits / rejects items → submits → approves → shares → the recipient
@@ -99,6 +105,31 @@ uncommitted Round 3 changes.
     share link opens read-only in a fresh tab: "Prepared for Ananya Rao", the
     full approved content and the evidence previews appear, and *Acknowledge
     receipt* records the acknowledgement (audit `channel: public_share_link`).
+
+### 3.1 Recorded Playwright run — 18 Nov 2026
+
+Command (from `frontend/`):
+
+```bash
+E2E_BACKEND_PORT=4100 E2E_FRONTEND_PORT=5273 npx playwright test
+```
+
+Result: **1 passed (27.6 s)**, test body 20.7 s, one Chromium worker, no retries.
+The single spec (`e2e/handover-journey.spec.js`) runs these steps in order:
+
+| Step | What it asserts |
+| --- | --- |
+| Seed | `POST /api/demo/seed` succeeds against the fresh in-memory database |
+| 1. Lead sign-in | One-click Subham profile lands on the Atlas project card; opening it shows **New handover** |
+| 2. Compose–approve–share | Create a draft for Ananya Rao, accept all 25 items, submit, approve, create the share link |
+| 3. Recipient open | The link opens in a clean guest context; **Download Markdown** produces `handover-ananya-rao-YYYY-MM-DD.md` containing the recipient view, and without a restricted source name; flagging an item sends a note |
+| 4. Acknowledge | **Acknowledge receipt** shows the acknowledged state |
+| Lead re-check | After reload: open count, the feedback text, a `skipped` delivery row, then **Mark resolved** changes the note to Resolved |
+| Audit CSV | **Export CSV** downloads `atlas-audit-YYYY-MM-DD.csv` containing `handover.feedback_received` and `handover.acknowledged` |
+
+Artifacts on failure (trace, screenshot, video) are written under
+`frontend/test-results/`; a passing run keeps the HTML report under
+`frontend/playwright-report/`. Both directories are gitignored.
 
 ---
 
@@ -176,9 +207,11 @@ and landmark fixes is captured in
 - No load testing; concurrency beyond demo scale is unmeasured.
 - The in-process queue does not survive a hard crash; startup recovery only
   re-queues sources stuck for more than 10 minutes.
-- No component or end-to-end browser automation in CI; the frontend gate is the
-  production build, the smoke check and the scripted journeys above.
+- No component tests. Playwright covers the core handover journey and the new
+  export, feedback, delivery and CSV paths, but not every screen, and the E2E run
+  is not yet a CI job.
 - No axe/Lighthouse run; accessibility numbers come from the DOM audit in
   section 4.
-- Round 3 changes are not on the hosted build until they are committed and
-  pushed.
+- Outbound delivery is a single webhook POST with no retry queue. Without
+  `OUTBOUND_WEBHOOK_URL`, rows say `skipped` and nothing leaves the server, so
+  the hosted demo does not send real email.

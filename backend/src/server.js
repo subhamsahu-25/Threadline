@@ -4,6 +4,7 @@ import { connectDB, disconnectDB, redactUri } from './db/connect.js';
 import { logger } from './lib/logger.js';
 import { processSourceJob, recoverInterruptedSources } from './services/ingest/index.js';
 import { startSyncScheduler } from './services/ingest/sync.js';
+import { startReminderScheduler } from './services/handover/reminders.js';
 import { configureQueue, setJobHandler } from './services/queue.js';
 import { reconcileDemoWorkspace } from './demo/seed.js';
 
@@ -28,6 +29,7 @@ try {
 }
 
 const stopSync = startSyncScheduler();
+const stopReminders = startReminderScheduler();
 
 const server = app.listen(env.port, () => {
   logger.info(
@@ -47,6 +49,7 @@ async function shutdown(signal) {
   shuttingDown = true;
   logger.info({ signal }, 'Shutting down');
   stopSync();
+  stopReminders();
   server.close(async () => {
     await disconnectDB();
     process.exit(0);

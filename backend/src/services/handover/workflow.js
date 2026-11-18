@@ -3,9 +3,20 @@ import { env } from '../../config/env.js';
 import { truncate } from '../../lib/text.js';
 import { badRequest, conflict, forbidden, notFound, unprocessable } from '../../lib/errors.js';
 import { redactText } from '../../lib/redaction.js';
-import { Claim, Evidence, Handover, HandoverVersion, Project, Source, User } from '../../models/index.js';
+import {
+  Claim,
+  Delivery,
+  Evidence,
+  Handover,
+  HandoverFeedback,
+  HandoverVersion,
+  Project,
+  Source,
+  User,
+} from '../../models/index.js';
 import { canManageProject, claimVisibleTo, roleOf, sourceVisibleTo } from '../access/policy.js';
 import { recordAudit } from '../audit.js';
+import { deliverOutbound } from '../delivery.js';
 import { leadIds, notify } from '../notifications.js';
 import { loadVisibleClaims } from '../projectState.js';
 import { reconstructState, summarizeCounts } from '../reconstruction/state.js';
@@ -216,6 +227,11 @@ export async function buildReviewerView({ handover, project, user }) {
     })
     .filter(Boolean);
 
+  const [feedbackRows, deliveryRows] = await Promise.all([
+    HandoverFeedback.find({ handover: handover._id }).sort({ createdAt: -1 }).limit(50).lean(),
+    Delivery.find({ handover: handover._id }).sort({ createdAt: -1 }).limit(10).lean(),
+  ]);
+
   return {
     id: handover._id,
     projectId: handover.project,
@@ -235,6 +251,10 @@ export async function buildReviewerView({ handover, project, user }) {
     rejectionNote: handover.rejectionNote,
     reopenedAt: handover.reopenedAt,
     sharedAt: handover.sharedAt,
+    shareOpenedAt: handover.shareOpenedAt || null,
+    shareLastOpenedAt: handover.shareLastOpenedAt || null,
+    shareOpenCount: handover.shareOpenCount || 0,
+    reminderSentAt: handover.reminderSentAt || null,
     acknowledgedAt: handover.acknowledgedAt,
     shareExpiresAt: handover.shareExpiresAt,
     // Only a hash is stored, so the link itself is released once by the share
@@ -243,6 +263,25 @@ export async function buildReviewerView({ handover, project, user }) {
     shareActive: Boolean(handover.shareTokenHash),
     shareRevokedAt: handover.revokedAt || null,
     shareRevokedReason: handover.revokedReason || null,
+    feedback: feedbackRows.map((row) => ({
+      id: row._id,
+      claimId: row.claimId || null,
+      authorName: row.authorSnapshot?.name || 'Recipient',
+      authorRole: row.authorSnapshot?.role || null,
+      message: row.message,
+      status: row.status,
+      createdAt: row.createdAt,
+      resolvedAt: row.resolvedAt || null,
+      resolutionNote: row.resolutionNote || null,
+    })),
+    deliveries: deliveryRows.map((row) => ({
+      id: row._id,
+      kind: row.kind,
+      channel: row.channel,
+      status: row.status,
+      detail: row.detail,
+      createdAt: row.createdAt,
+    })),
     items: visibleItems.map((item) => renderItem(item, { recipient: false })),
     alerts,
     recommendations,
@@ -990,6 +1029,12 @@ export async function shareHandover({
   handover.shareExpiresAt = new Date(Date.now() + env.shareTtlDays * 86_400_000);
   handover.revokedAt = undefined;
   handover.revokedReason = undefined;
+  // A new link starts a new read history. The old link's opens must not be
+  // reported against the link the recipient is about to receive.
+  handover.shareOpenedAt = undefined;
+  handover.shareLastOpenedAt = undefined;
+  handover.shareOpenCount = 0;
+  handover.reminderSentAt = undefined;
   await saveVersion(
     handover,
     actor,
@@ -1016,6 +1061,14 @@ export async function shareHandover({
     entityType: 'handover',
     entityId: handover._id,
     actor,
+  });
+
+  await deliverOutbound({
+    projectId: project._id,
+    handoverId: handover._id,
+    kind: 'handover.shared',
+    text: `A handover for ${handover.recipientSnapshot?.name || 'the recipient'} is ready in ${project.name}. Open Threadline for the share link.`,
+    createdBy: actor._id,
   });
 
   return token;

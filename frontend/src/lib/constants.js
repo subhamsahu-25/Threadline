@@ -156,6 +156,8 @@ export const AUDIT_ACTION_LABELS = {
   'handover.share_renewed': 'Share link renewed',
   'handover.acknowledged': 'Handover acknowledged',
   'handover.recipient_viewed': 'Handover opened by recipient',
+  'handover.feedback_received': 'Recipient feedback received',
+  'handover.feedback_resolved': 'Recipient feedback resolved',
   'handover.permissions_rechecked': 'Permissions rechecked',
 };
 

@@ -1,12 +1,16 @@
 import { Router } from 'express';
 import { AppError, asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
+import { redactText } from '../lib/redaction.js';
 import { authenticateIfPresent } from '../middleware/auth.js';
 import { getProjectForUser } from '../middleware/project.js';
 import { DEMO_PROJECT_KEY } from '../demo/seed.js';
 import { validate } from '../middleware/validate.js';
-import { Handover, Project, User } from '../models/index.js';
-import { canManageProject, roleOf } from '../services/access/policy.js';
+import { Delivery, Handover, HandoverFeedback, Project, User } from '../models/index.js';
+import { canManageProject, roleOf, sourceVisibleTo } from '../services/access/policy.js';
+import { recordAudit } from '../services/audit.js';
 import { composeHandover } from '../services/handover/compose.js';
+import { renderHandoverMarkdown } from '../services/handover/export.js';
+import { leadIds, notify } from '../services/notifications.js';
 import {
   acknowledgeHandover,
   approveHandover,
@@ -16,6 +20,7 @@ import {
   handoverAccess,
   hashShareToken,
   listVersions,
+  loadSourceMap,
   regenerateHandover,
   rejectHandover,
   reopenHandover,
@@ -28,9 +33,11 @@ import {
 } from '../services/handover/workflow.js';
 import {
   createHandoverSchema,
+  handoverFeedbackSchema,
   listHandoversQuerySchema,
   noteSchema,
   optionalNoteSchema,
+  resolveFeedbackSchema,
   reviewItemSchema,
 } from '../validation/schemas.js';
 
@@ -50,6 +57,98 @@ function assertAuthorOrLead(handover, project, user, action = 'change') {
     throw forbidden(`Only the author or a project lead can ${action} this handover`);
   }
   return access;
+}
+
+function serializeFeedback(row) {
+  const plain = typeof row.toObject === 'function' ? row.toObject() : row;
+  return {
+    id: plain._id,
+    claimId: plain.claimId || null,
+    authorName: plain.authorSnapshot?.name || 'Recipient',
+    authorRole: plain.authorSnapshot?.role || null,
+    message: plain.message,
+    status: plain.status,
+    createdAt: plain.createdAt,
+    resolvedAt: plain.resolvedAt || null,
+    resolutionNote: plain.resolutionNote || null,
+  };
+}
+
+async function createFeedbackRecord({ handover, project, recipient, body, req }) {
+  if (
+    !['shared', 'acknowledged'].includes(handover.status) ||
+    !handover.shareTokenHash
+  ) {
+    throw forbidden('Feedback opens only while the handover is shared');
+  }
+
+  let claimId = null;
+  if (body.claimId) {
+    const item = (handover.items || []).find(
+      (entry) => String(entry.claimId) === String(body.claimId),
+    );
+    if (!item) throw badRequest('That item is not part of this handover');
+    const sourceById = await loadSourceMap(project._id);
+    const readable = (item.citations || []).every((citation) =>
+      sourceVisibleTo(sourceById.get(String(citation.sourceId)), project, recipient._id),
+    );
+    if (!readable) throw forbidden('You cannot comment on an item you cannot read');
+    claimId = item.claimId;
+  }
+
+  const record = await HandoverFeedback.create({
+    project: project._id,
+    handover: handover._id,
+    claimId,
+    author: recipient._id,
+    authorSnapshot: {
+      name: recipient.name,
+      role: roleOf(project, recipient._id) || 'member',
+    },
+    message: redactText(body.message).text,
+  });
+
+  await recordAudit({
+    projectId: project._id,
+    actor: recipient,
+    action: 'handover.feedback_received',
+    targetType: 'handover',
+    targetId: handover._id,
+    targetLabel: `Handover v${handover.version}`,
+    meta: { claimId: claimId ? String(claimId) : null },
+    req,
+  });
+
+  await notify({
+    project,
+    recipients: [handover.createdBy, ...leadIds(project)],
+    type: 'handover.feedback',
+    entityType: 'handover',
+    entityId: handover._id,
+    actor: recipient,
+  });
+
+  return record;
+}
+
+function exportFilename(handover) {
+  const who = String(handover.recipientSnapshot?.name || 'recipient')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+  const day = new Date().toISOString().slice(0, 10);
+  return `handover-${who || 'recipient'}-${day}.md`;
+}
+
+function sendMarkdown(res, { view, project, viewer, filename }) {
+  const markdown = renderHandoverMarkdown({
+    handover: view,
+    projectName: project.name,
+    viewer,
+  });
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(markdown);
 }
 
 router.get(
@@ -184,6 +283,18 @@ sharedHandoverRouter.get(
       req.params.token,
       req.user,
     );
+
+    // The sender can see that the link was opened even before it is
+    // acknowledged. Each open is counted, but only the first and last times
+    // are shown. A save here is safe: this document was just loaded and only
+    // these tracking fields change.
+    const openedAt = new Date();
+    if (!handover.shareOpenedAt) handover.shareOpenedAt = openedAt;
+    handover.shareLastOpenedAt = openedAt;
+    handover.shareOpenCount = (handover.shareOpenCount || 0) + 1;
+    handover.lastAccessedAt = openedAt;
+    await handover.save();
+
     const view = await buildRecipientView({ handover, project, user: recipient, req });
     res.json({
       handover: view,
@@ -191,6 +302,44 @@ sharedHandoverRouter.get(
       recipientName: recipient.name,
       publicPreview: !req.user,
     });
+  }),
+);
+
+sharedHandoverRouter.get(
+  '/:token/export',
+  authenticateIfPresent,
+  asyncHandler(async (req, res) => {
+    const { handover, project, recipient } = await loadSharedHandover(
+      req.params.token,
+      req.user,
+    );
+    const view = await buildRecipientView({ handover, project, user: recipient, req });
+    sendMarkdown(res, {
+      view,
+      project,
+      viewer: 'recipient',
+      filename: exportFilename(handover),
+    });
+  }),
+);
+
+sharedHandoverRouter.post(
+  '/:token/feedback',
+  authenticateIfPresent,
+  validate({ body: handoverFeedbackSchema }),
+  asyncHandler(async (req, res) => {
+    const { handover, project, recipient } = await loadSharedHandover(
+      req.params.token,
+      req.user,
+    );
+    const record = await createFeedbackRecord({
+      handover,
+      project,
+      recipient,
+      body: req.body,
+      req,
+    });
+    res.status(201).json({ feedback: serializeFeedback(record) });
   }),
 );
 
@@ -241,6 +390,114 @@ router.get(
     return res.json({
       handover: await buildReviewerView({ handover, project, user: req.user }),
       viewer: access.isCreator ? 'author' : 'reviewer',
+    });
+  }),
+);
+
+router.get(
+  '/:id/export',
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    const access = handoverAccess({ handover, project, user: req.user });
+    if (!access.canView) throw forbidden('You do not have access to this handover');
+
+    const recipientOnly = access.isRecipient && !access.isCreator && !access.isLead;
+    const view = recipientOnly
+      ? await buildRecipientView({ handover, project, user: req.user, req })
+      : await buildReviewerView({ handover, project, user: req.user });
+
+    sendMarkdown(res, {
+      view,
+      project,
+      viewer: recipientOnly ? 'recipient' : 'reviewer',
+      filename: exportFilename(handover),
+    });
+  }),
+);
+
+router.get(
+  '/:id/feedback',
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    assertAuthorOrLead(handover, project, req.user, 'read feedback on');
+    const rows = await HandoverFeedback.find({ handover: handover._id })
+      .sort({ createdAt: -1 })
+      .limit(100);
+    res.json({ feedback: rows.map(serializeFeedback) });
+  }),
+);
+
+router.post(
+  '/:id/feedback',
+  validate({ body: handoverFeedbackSchema }),
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    const access = handoverAccess({ handover, project, user: req.user });
+    if (!access.isRecipient) {
+      throw forbidden('Only the named recipient can send feedback on this handover');
+    }
+    const record = await createFeedbackRecord({
+      handover,
+      project,
+      recipient: req.user,
+      body: req.body,
+      req,
+    });
+    res.status(201).json({ feedback: serializeFeedback(record) });
+  }),
+);
+
+router.patch(
+  '/:id/feedback/:feedbackId',
+  validate({ body: resolveFeedbackSchema }),
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    assertAuthorOrLead(handover, project, req.user, 'resolve feedback on');
+    const record = await HandoverFeedback.findOne({
+      _id: req.params.feedbackId,
+      handover: handover._id,
+    });
+    if (!record) throw notFound('Feedback not found');
+
+    record.status = 'resolved';
+    record.resolvedBy = req.user._id;
+    record.resolvedAt = new Date();
+    record.resolutionNote = req.body.note ? redactText(req.body.note).text : undefined;
+    await record.save();
+
+    await recordAudit({
+      projectId: project._id,
+      actor: req.user,
+      action: 'handover.feedback_resolved',
+      targetType: 'handover',
+      targetId: handover._id,
+      targetLabel: `Handover v${handover.version}`,
+      meta: { feedbackId: String(record._id), note: record.resolutionNote || null },
+      req,
+    });
+
+    res.json({ feedback: serializeFeedback(record) });
+  }),
+);
+
+router.get(
+  '/:id/deliveries',
+  asyncHandler(async (req, res) => {
+    const { handover, project } = await loadContext(req.params.id);
+    assertAuthorOrLead(handover, project, req.user, 'read deliveries for');
+    const rows = await Delivery.find({ handover: handover._id })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean();
+    res.json({
+      deliveries: rows.map((row) => ({
+        id: row._id,
+        kind: row.kind,
+        channel: row.channel,
+        status: row.status,
+        detail: row.detail,
+        createdAt: row.createdAt,
+      })),
     });
   }),
 );

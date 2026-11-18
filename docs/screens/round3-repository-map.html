@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        width: 1458px;
+        height: 420px;
+        padding: 18px 24px;
+        background: #ffffff;
+        color: #0f1e33;
+        font-family: "Segoe UI", Arial, sans-serif;
+      }
+      .row { display: grid; grid-template-columns: 300px 34px 1fr; align-items: center; }
+      .repo {
+        background: #12314f;
+        color: #ffffff;
+        border-radius: 12px;
+        padding: 20px 22px;
+      }
+      .repo .eyebrow { font-family: Consolas, monospace; font-size: 13px; letter-spacing: 0.14em; color: #9fb4c9; }
+      .repo h1 { margin: 6px 0 2px; font-size: 24px; }
+      .repo p { margin: 0; font-family: Consolas, monospace; font-size: 12px; color: #b9c9d9; }
+      .spine { position: relative; height: 384px; }
+      .spine::before { content: ""; position: absolute; left: 6px; top: 80px; bottom: 80px; width: 2px; background: #9fb0c4; }
+      .spine::after { content: ""; position: absolute; left: 6px; top: 80px; width: 24px; height: 2px; background: #9fb0c4; box-shadow: 0 111px 0 #9fb0c4, 0 222px 0 #9fb0c4, 0 292px 0 #9fb0c4; }
+      .rows { display: grid; gap: 12px; }
+      .card {
+        border: 1px solid #dce3eb;
+        background: #f7f9fc;
+        border-radius: 12px;
+        padding: 13px 18px;
+      }
+      .card h2 { margin: 0; font-family: Consolas, monospace; font-size: 17px; }
+      .card p { margin: 4px 0 0; font-size: 13.5px; line-height: 1.35; color: #4a5a6e; }
+      .card strong { color: #167a5b; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div class="row">
+      <div class="repo">
+        <div class="eyebrow">REPOSITORY</div>
+        <h1>Threadline · main</h1>
+        <p>subhamsahu-25/Threadline</p>
+      </div>
+      <div class="spine"></div>
+      <div class="rows">
+        <div class="card">
+          <h2>backend/</h2>
+          <p>Express API, data models, access policy, ingestion, extraction and workflow services</p>
+          <p><strong>18 test suites · 135 tests</strong> · quote evaluation at 29/29 rules and 35/35 Gemini</p>
+        </div>
+        <div class="card">
+          <h2>frontend/</h2>
+          <p>React single-page app: review, recipient, share-link, clarification and audit views</p>
+          <p><strong>production build 4.27 s · 6/6 smoke checks</strong> · one Playwright journey</p>
+        </div>
+        <div class="card">
+          <h2>docs/</h2>
+          <p>architecture, testing notes, quote accuracy, sync and clarification evidence, AI disclosure</p>
+          <p><strong>every number in this report is traceable</strong> to a file here or to a test name</p>
+        </div>
+        <div class="card">
+          <h2>.github/workflows/</h2>
+          <p>ci.yml — backend tests and the frontend build + smoke gate on every push</p>
+          <p><strong>runs on push to main</strong> and on every pull request</p>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

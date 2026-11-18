@@ -46,6 +46,12 @@ export const env = {
   maxFilesPerUpload: int('MAX_FILES_PER_UPLOAD', 20),
   staleDays: int('STALE_DAYS', 30),
   shareTtlDays: int('SHARE_TTL_DAYS', 7),
+  // Outbound delivery is optional. Without a webhook the product still records
+  // a "skipped" delivery row; it never pretends a message was sent.
+  outboundWebhookUrl: process.env.OUTBOUND_WEBHOOK_URL || '',
+  outboundWebhookTimeoutMs: Math.max(1_000, int('OUTBOUND_WEBHOOK_TIMEOUT_MS', 5_000)),
+  handoverReminderEnabled: bool('HANDOVER_REMINDER_ENABLED', true),
+  handoverReminderDays: Math.max(1, int('HANDOVER_REMINDER_DAYS', 3)),
   extractConcurrency: Math.max(1, int('EXTRACT_CONCURRENCY', 3)),
   extractTimeBudgetMs: Math.max(5_000, int('EXTRACT_TIME_BUDGET_MS', 120_000)),
   // The demo workspace must be loadable on the public evaluation deployment.

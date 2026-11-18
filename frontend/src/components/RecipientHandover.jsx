@@ -4,22 +4,27 @@ import {
   BadgeCheck,
   CalendarClock,
   CheckCircle2,
+  Download,
   EyeOff,
+  Flag,
   GitCompareArrows,
   Info,
   LockKeyhole,
+  MessageSquare,
+  Send,
   ShieldCheck,
   Sparkles,
   UserRound,
 } from 'lucide-react';
+import { errorMessage } from '../lib/api.js';
 import { evidenceStatus, expectsOwner, formatDate, formatDateTime } from '../lib/format.js';
 import { CLAIM_TYPES } from '../lib/constants.js';
 import { TypeBadge, StateBadge, SensitivityBadge, SeverityBadge } from './badges.jsx';
 import { CitationList } from './ClaimCard.jsx';
 import EvidenceDrawer from './EvidenceDrawer.jsx';
-import { Badge, Button, Card, EmptyState, SectionHeading } from './ui.jsx';
+import { Badge, Button, Card, EmptyState, Field, Modal, SectionHeading, Textarea } from './ui.jsx';
 
-function ReadOnlyItem({ item, onEvidence }) {
+function ReadOnlyItem({ item, onEvidence, onFlag }) {
   const edited = item.decision === 'edited';
   const certainty = evidenceStatus(item);
   return (
@@ -117,6 +122,16 @@ function ReadOnlyItem({ item, onEvidence }) {
       )}
       <div className="mt-3 border-t border-line pt-2.5">
         <CitationList citations={item.citations || []} onEvidence={onEvidence} />
+        {onFlag && (
+          <button
+            type="button"
+            onClick={() => onFlag(item)}
+            className="mt-2 inline-flex items-center gap-1 text-[10.5px] font-semibold text-ink-muted transition hover:text-brand-800"
+          >
+            <Flag className="h-3 w-3" aria-hidden="true" />
+            Flag this item
+          </button>
+        )}
       </div>
     </Card>
   );
@@ -128,9 +143,17 @@ export default function RecipientHandover({
   onAcknowledge,
   acknowledging = false,
   showAcknowledge = true,
+  onDownload,
+  onFeedback,
 }) {
   const [evidenceId, setEvidenceId] = useState(null);
   const [typeFilter, setTypeFilter] = useState('all');
+  const [downloading, setDownloading] = useState(false);
+  const [feedbackTarget, setFeedbackTarget] = useState(null);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackError, setFeedbackError] = useState('');
+  const [feedbackSending, setFeedbackSending] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState('');
 
   const counts = useMemo(() => {
     const result = {};
@@ -148,6 +171,49 @@ export default function RecipientHandover({
   const snapshot = handover.snapshot || {};
   const contentChanged = Boolean(handover.permissionRecheck?.contentChanged);
   const firstWeek = handover.firstWeek;
+
+  const download = async () => {
+    if (!onDownload) return;
+    setDownloading(true);
+    try {
+      await onDownload();
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const openFeedback = (item = null) => {
+    setFeedbackTarget(item ? { claimId: item.claimId, statement: item.statement } : { claimId: null });
+    setFeedbackText('');
+    setFeedbackError('');
+    setFeedbackSent('');
+  };
+
+  const sendFeedback = async () => {
+    if (!feedbackTarget || !onFeedback) return;
+    if (feedbackText.trim().length < 5) {
+      setFeedbackError('Write at least a short sentence so the team can act on it.');
+      return;
+    }
+    setFeedbackSending(true);
+    setFeedbackError('');
+    try {
+      await onFeedback({
+        message: feedbackText.trim(),
+        claimId: feedbackTarget.claimId || undefined,
+      });
+      setFeedbackTarget(null);
+      setFeedbackSent(
+        feedbackTarget.claimId
+          ? 'Your note was sent to the project team with this item attached.'
+          : 'Your note was sent to the project team.',
+      );
+    } catch (error) {
+      setFeedbackError(errorMessage(error));
+    } finally {
+      setFeedbackSending(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -430,19 +496,31 @@ export default function RecipientHandover({
           title={`${handover.items?.length || 0} items`}
           description="Only items the reviewer accepted or edited are included."
         />
-        {showAcknowledge && !acknowledged && (
-          <Button
-            icon={CheckCircle2}
-            loading={acknowledging}
-            onClick={() =>
-              onAcknowledge?.(
-                'I confirm I have received and reviewed this handover.',
-              )
-            }
-          >
-            Acknowledge receipt
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          {onDownload && (
+            <Button
+              variant="secondary"
+              icon={Download}
+              loading={downloading}
+              onClick={download}
+            >
+              Download Markdown
+            </Button>
+          )}
+          {showAcknowledge && !acknowledged && (
+            <Button
+              icon={CheckCircle2}
+              loading={acknowledging}
+              onClick={() =>
+                onAcknowledge?.(
+                  'I confirm I have received and reviewed this handover.',
+                )
+              }
+            >
+              Acknowledge receipt
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="mb-3 flex flex-wrap gap-1.5">
@@ -476,7 +554,12 @@ export default function RecipientHandover({
 
       <div className="space-y-2.5">
         {items.map((item) => (
-          <ReadOnlyItem key={item.claimId} item={item} onEvidence={setEvidenceId} />
+          <ReadOnlyItem
+            key={item.claimId}
+            item={item}
+            onEvidence={setEvidenceId}
+            onFlag={onFeedback ? openFeedback : undefined}
+          />
         ))}
         {items.length === 0 && (
           <EmptyState
@@ -486,6 +569,34 @@ export default function RecipientHandover({
           />
         )}
       </div>
+
+      {onFeedback && (
+        <Card className="mt-4 p-4" data-testid="recipient-feedback">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <SectionHeading
+              eyebrow="Two-way handover"
+              title="Something unclear or wrong?"
+              description="Send a note straight to the project lead. Flag a specific item to keep the thread attached to it."
+            />
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={MessageSquare}
+              onClick={() => openFeedback()}
+            >
+              Send a note
+            </Button>
+          </div>
+          {feedbackSent && (
+            <p
+              role="status"
+              className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-[11px] leading-4 text-emerald-900"
+            >
+              {feedbackSent}
+            </p>
+          )}
+        </Card>
+      )}
 
       {handover.recommendations?.length > 0 && (
         <Card className="mt-4 p-4">
@@ -544,6 +655,58 @@ export default function RecipientHandover({
           </Button>
         </div>
       )}
+
+      <Modal
+        open={Boolean(feedbackTarget)}
+        onClose={() => {
+          if (!feedbackSending) setFeedbackTarget(null);
+        }}
+        title={feedbackTarget?.claimId ? 'Flag this item' : 'Send a note to the project team'}
+        description={
+          feedbackTarget?.claimId
+            ? 'The note is attached to the item below so the lead can see exactly what needs checking.'
+            : 'The lead sees this note in the handover workspace. Please keep it to project details.'
+        }
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              disabled={feedbackSending}
+              onClick={() => setFeedbackTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button icon={Send} loading={feedbackSending} onClick={sendFeedback}>
+              Send note
+            </Button>
+          </>
+        }
+      >
+        {feedbackTarget?.statement && (
+          <div className="mb-4 rounded-md border border-line bg-slate-50 px-3 py-2">
+            <p className="font-mono text-[9px] uppercase tracking-wider text-ink-muted">Item</p>
+            <p className="mt-1 text-[12px] font-medium leading-5 text-ink-soft">
+              {feedbackTarget.statement}
+            </p>
+          </div>
+        )}
+        <Field
+          label="Your note"
+          hint="Plain text, up to 1000 characters. Emails, phone numbers and credentials are redacted before the note is stored."
+          error={feedbackError}
+          htmlFor="recipient-feedback-message"
+        >
+          <Textarea
+            id="recipient-feedback-message"
+            value={feedbackText}
+            onChange={(event) => setFeedbackText(event.target.value)}
+            maxLength={1000}
+            rows={5}
+            autoFocus
+            placeholder="What should the project team check?"
+          />
+        </Field>
+      </Modal>
 
       <EvidenceDrawer
         projectId={projectId}

@@ -167,6 +167,19 @@ Google Drive            chunk + offsets           extraction + quote       confl
    journey; every other project keeps the recipient-only rule. The recipient
    view adds a first-week summary of what they own, what is blocked and what to
    do first.
+6. **Hand over and close the loop** — both the reviewer and the recipient can
+   download the handover as Markdown, rendered from the same permission-filtered
+   view they are looking at. The sender sees how many times the share link was
+   opened, the first and last open times, and any recipient notes; the recipient
+   can flag a single item or send a general note. Notes are audited and the lead
+   can mark them resolved. Sharing, acknowledgement, clarification asks and
+   reminders are queued through one delivery service: with
+   `OUTBOUND_WEBHOOK_URL` set they are POSTed to that webhook and the result is
+   shown on the handover as `sent`, `failed` or `skipped`; with no URL every row
+   says `skipped` and that nothing left the server. A shared handover still
+   unacknowledged after `HANDOVER_REMINDER_DAYS` (default 3) produces one
+   in-app notice and one delivery row. The audit log exports to CSV from the
+   lead-only, redaction-filtered rows currently on screen.
 
 ---
 
@@ -253,11 +266,16 @@ production builds. `VITE_API_PROXY` overrides the local dev proxy target.
 
 ```bash
 cd backend
-npm test               # 124 Vitest + Supertest tests, 17 suites
+npm test               # 135 Vitest + Supertest tests, 18 suites
 npm run eval:quotes    # quote-accuracy report (rules extractor; Gemini when configured)
+
+cd ../frontend
+npm run build          # production build
+npm run smoke          # built page mounts, every asset resolves
+npm run e2e            # Playwright: four journeys against a fresh in-memory API
 ```
 
-**17 suites, 124 tests**, each against its own ephemeral MongoDB — no external
+**18 suites, 135 tests**, each against its own ephemeral MongoDB — no external
 services needed. The permission canary matrix and the Round 3 suite run in CI on
 every push and pull request.
 
@@ -282,6 +300,11 @@ every push and pull request.
 - **handover-workflow** — edit/submit/approve/share/acknowledge, version
   history, pending-item guard, transition guards, share rotation, and the public
   demo link (opens without sign-in, still refused for non-demo projects).
+- **handover-extras** — permission-filtered Markdown exports, access control on
+  exports, share-open counters and reset on rotation, recipient feedback
+  (including rejection of notes on items that became unreadable), honest
+  `skipped` / `sent` / `failed` delivery rows, and once-only reminders that
+  respect the delay, acknowledgement and switch.
 - **reconstruction** — supersession, conflicts, ownership gaps, readiness,
   next actions.
 - **redaction** — secrets and PII are replaced before reviewers or recipients
@@ -294,7 +317,13 @@ every push and pull request.
   scoped reset, role changes, and Gemini fallback on 404/429/503.
 
 The frontend is validated with `npm run build`, `npm run smoke` (the built page
-mounts and every bundled asset exists) and by the in-browser journeys in
+mounts and every bundled asset exists) and a Playwright run over the four core
+journeys: one-click lead sign-in, compose → approve → share, guest recipient
+opens the link, and acknowledges it. The same run downloads the Markdown copy,
+flags an item, resolves it as the lead, checks the `skipped` delivery row and
+exports the audit CSV. `npm run e2e` starts both servers itself against a fresh
+in-memory database and records traces, screenshots and video on failure; the
+green run is also summarized in
 [`docs/TESTING_NOTES.md`](docs/TESTING_NOTES.md). Quote accuracy is reported in
 [`docs/QUOTE_ACCURACY.md`](docs/QUOTE_ACCURACY.md): 29/29 rules-extracted claims
 and 35/35 Gemini-extracted claims matched their source verbatim (100% exact,
@@ -351,11 +380,14 @@ for backend detail:
   per-user OAuth consent flow.
 - **Conflict detection is topic-based.** It compares topic keys and explicit
   supersession phrases, not semantic entailment.
-- **There is no outbound notification.** Questions, approvals and
-  acknowledgements are pull-based; nothing is emailed or pushed.
-- **Frontend tests are limited to a smoke test.** The production build plus the
-  scripted browser journeys are the main UI gate; there is no component test
-  suite.
+- **Outbound delivery is webhook-only and opt-in.** Without
+  `OUTBOUND_WEBHOOK_URL` the product records `skipped` rows and sends nothing;
+  there is no bundled email provider. With a URL set, delivery is a single POST
+  with no retry queue.
+- **Browser automation covers one journey, not every screen.** Playwright runs
+  the lead-compose-share-recipient-acknowledge path plus export, feedback and
+  audit CSV; other screens remain covered by the scripted manual journeys. There
+  is no component test suite and the E2E run is not yet part of CI.
 - No embeddings/semantic retrieval; extraction is per chunk by design.
 - No SSO/SCIM, per-document ACLs or hard-erasure API; retention is soft delete
   plus audit history.

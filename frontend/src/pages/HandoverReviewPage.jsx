@@ -10,12 +10,14 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  Download,
   FileSignature,
   GitCompareArrows,
   History,
   Info,
   Link2Off,
   LockKeyhole,
+  MessageSquare,
   Pencil,
   RefreshCw,
   RotateCcw,
@@ -25,7 +27,7 @@ import {
   UserRound,
   X,
 } from 'lucide-react';
-import { api, errorMessage } from '../lib/api.js';
+import { api, downloadFile, errorMessage } from '../lib/api.js';
 import { useAsync } from '../hooks/useAsync.js';
 import { useProject } from './ProjectLayout.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -353,6 +355,7 @@ export default function HandoverReviewPage() {
   const [diff, setDiff] = useState({ loading: false, error: null, data: null });
   const [freshnessOpen, setFreshnessOpen] = useState(false);
   const [acceptAllOpen, setAcceptAllOpen] = useState(false);
+  const [resolvingFeedback, setResolvingFeedback] = useState(null);
 
   useEffect(() => {
     if (data?.handover) {
@@ -693,6 +696,38 @@ export default function HandoverReviewPage() {
     }
   };
 
+  const downloadHandover = async () => {
+    try {
+      await downloadFile(`/api/handovers/${handoverId}/export`, 'handover.md');
+      toast.success('Download started. The file matches the view on this screen.');
+    } catch (err) {
+      toast.error(errorMessage(err));
+    }
+  };
+
+  const sendRecipientFeedback = async ({ message, claimId }) => {
+    try {
+      await api.post(`/api/handovers/${handoverId}/feedback`, { message, claimId });
+      toast.success('Your note was sent to the project team.');
+    } catch (err) {
+      toast.error(errorMessage(err));
+      throw err;
+    }
+  };
+
+  const resolveFeedback = async (entry) => {
+    setResolvingFeedback(entry.id);
+    try {
+      await api.patch(`/api/handovers/${handoverId}/feedback/${entry.id}`, {});
+      toast.success('Feedback marked as resolved.');
+      await reload();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setResolvingFeedback(null);
+    }
+  };
+
   if (loading && !handover) {
     return (
       <div className="space-y-4">
@@ -740,6 +775,8 @@ export default function HandoverReviewPage() {
           projectId={projectId}
           onAcknowledge={acknowledge}
           acknowledging={acknowledging}
+          onDownload={downloadHandover}
+          onFeedback={sendRecipientFeedback}
         />
       </div>
     );
@@ -761,6 +798,9 @@ export default function HandoverReviewPage() {
   const snapshot = handover.snapshot || {};
   const withheld = handover.withheld || { total: 0, byType: {}, byReason: {} };
   const decisionsLeft = counts.pending + counts.rejected;
+  const openFeedbackCount = (handover.feedback || []).filter(
+    (entry) => entry.status === 'open',
+  ).length;
 
   return (
     <div>
@@ -786,6 +826,14 @@ export default function HandoverReviewPage() {
                 History
               </Button>
             )}
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={Download}
+              onClick={downloadHandover}
+            >
+              Download
+            </Button>
             <Button
               variant="secondary"
               size="sm"
@@ -1128,10 +1176,37 @@ export default function HandoverReviewPage() {
                   : 'At compose time'}
               </dd>
             </div>
-            {handover.lastAccessedAt && (
+            {handover.shareOpenCount > 0 ? (
               <div className="flex justify-between gap-2">
-                <dt className="text-ink-muted">Recipient opened</dt>
-                <dd className="font-medium">{formatRelative(handover.lastAccessedAt)}</dd>
+                <dt className="text-ink-muted">Share link</dt>
+                <dd className="font-medium">
+                  opened {handover.shareOpenCount}×
+                </dd>
+              </div>
+            ) : (
+              handover.shareActive && (
+                <div className="flex justify-between gap-2">
+                  <dt className="text-ink-muted">Share link</dt>
+                  <dd className="font-medium">not opened yet</dd>
+                </div>
+              )
+            )}
+            {handover.shareOpenedAt && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-ink-muted">First opened</dt>
+                <dd className="font-medium">{formatRelative(handover.shareOpenedAt)}</dd>
+              </div>
+            )}
+            {handover.shareLastOpenedAt && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-ink-muted">Last opened</dt>
+                <dd className="font-medium">{formatRelative(handover.shareLastOpenedAt)}</dd>
+              </div>
+            )}
+            {handover.reminderSentAt && (
+              <div className="flex justify-between gap-2">
+                <dt className="text-ink-muted">Reminder sent</dt>
+                <dd className="font-medium">{formatRelative(handover.reminderSentAt)}</dd>
               </div>
             )}
             <div className="flex justify-between gap-2">
@@ -1293,6 +1368,112 @@ export default function HandoverReviewPage() {
                 {handover.viewerLimits.note ||
                   'Some items reference sources you are not authorized to read. They are excluded from this view.'}
               </p>
+            </Card>
+          )}
+
+          <Card className="overflow-hidden" data-testid="handover-feedback">
+            <div className="flex items-center gap-2 border-b border-line bg-slate-50/80 px-4 py-2.5">
+              <MessageSquare className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+              <p className="text-[11.5px] font-semibold">Recipient feedback</p>
+              <Badge tone={openFeedbackCount > 0 ? 'amber' : 'slate'} className="ml-auto">
+                {openFeedbackCount > 0 ? `${openFeedbackCount} open` : 'none open'}
+              </Badge>
+            </div>
+            <div className="px-4 py-3">
+              {(handover.feedback || []).length === 0 ? (
+                <p className="text-[10.5px] leading-4 text-ink-muted">
+                  The recipient can flag an item or send a general note from the share link. Notes
+                  arrive here and in the notification bell.
+                </p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {handover.feedback.map((entry) => (
+                    <li
+                      key={entry.id}
+                      className="rounded-md border border-line bg-white px-2.5 py-2"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10.5px] font-semibold">{entry.authorName}</span>
+                        <span className="font-mono text-[9px] text-ink-faint">
+                          {formatRelative(entry.createdAt)}
+                        </span>
+                        {entry.claimId && (
+                          <span className="font-mono text-[9px] text-ink-faint">
+                            · item #{String(entry.claimId).slice(-6)}
+                          </span>
+                        )}
+                        <Badge
+                          tone={entry.status === 'resolved' ? 'green' : 'amber'}
+                          className="ml-auto"
+                        >
+                          {entry.status}
+                        </Badge>
+                      </div>
+                      <p className="mt-1 text-[11px] leading-4 text-ink-soft">{entry.message}</p>
+                      {entry.status === 'resolved' ? (
+                        <p className="mt-1 text-[9.5px] leading-4 text-emerald-800">
+                          Resolved
+                          {entry.resolutionNote ? ` · ${entry.resolutionNote}` : ''}
+                        </p>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          className="mt-1.5"
+                          loading={resolvingFeedback === entry.id}
+                          onClick={() => resolveFeedback(entry)}
+                        >
+                          Mark resolved
+                        </Button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </Card>
+
+          {(handover.deliveries || []).length > 0 && (
+            <Card className="overflow-hidden" data-testid="handover-deliveries">
+              <div className="flex items-center gap-2 border-b border-line bg-slate-50/80 px-4 py-2.5">
+                <Send className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
+                <p className="text-[11.5px] font-semibold">Outbound delivery</p>
+                <Badge tone="slate" className="ml-auto">
+                  webhook
+                </Badge>
+              </div>
+              <div className="px-4 py-3">
+                <p className="text-[10.5px] leading-4 text-ink-muted">
+                  In-app notices are always sent. The webhook mirror is optional and is only marked
+                  sent when a message actually left the server.
+                </p>
+                <ul className="mt-2.5 space-y-2">
+                  {handover.deliveries.map((entry) => (
+                    <li key={entry.id} className="rounded-md border border-line px-2.5 py-2">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <Badge
+                          tone={
+                            entry.status === 'sent'
+                              ? 'green'
+                              : entry.status === 'failed'
+                                ? 'red'
+                                : 'slate'
+                          }
+                        >
+                          {entry.status}
+                        </Badge>
+                        <span className="font-mono text-[9.5px] text-ink-muted">
+                          {entry.kind}
+                        </span>
+                        <span className="ml-auto font-mono text-[9px] text-ink-faint">
+                          {formatRelative(entry.createdAt)}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[10px] leading-4 text-ink-muted">{entry.detail}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             </Card>
           )}
 
