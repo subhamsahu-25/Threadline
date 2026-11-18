@@ -14,7 +14,7 @@ import {
   Source,
   User,
 } from '../../models/index.js';
-import { canManageProject, claimVisibleTo, isIncoming, roleOf, sourceVisibleTo } from '../access/policy.js';
+import { canContribute, canManageProject, claimVisibleTo, isIncoming, roleOf, sourceVisibleTo } from '../access/policy.js';
 import { recordAudit } from '../audit.js';
 import { deliverOutbound } from '../delivery.js';
 import { leadIds, notify } from '../notifications.js';
@@ -970,6 +970,9 @@ export async function rejectHandover({ handover, project, actor, note, req }) {
 }
 
 export async function reopenHandover({ handover, project, actor, req }) {
+  if (!canContribute(project, actor)) {
+    throw forbidden('Incoming recipients cannot reopen handovers');
+  }
   if (!canManageProject(project, actor) && String(handover.createdBy) !== String(actor._id)) {
     throw forbidden('Only the author or a project lead can reopen this handover');
   }
@@ -1012,6 +1015,9 @@ export async function shareHandover({
   }
   if (String(handover.recipient) === String(actor._id)) {
     throw forbidden('The recipient cannot share their own handover');
+  }
+  if (!canContribute(project, actor)) {
+    throw forbidden('Incoming recipients cannot share handovers');
   }
   if (!canManageProject(project, actor) && String(handover.createdBy) !== String(actor._id)) {
     throw forbidden('Only the author or a project lead can share this handover');

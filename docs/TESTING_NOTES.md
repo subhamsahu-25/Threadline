@@ -10,7 +10,7 @@ checked separately and called out where it differs.
 ## 1. Automated tests
 
 `cd backend && npm test` — **18 suites, 138 tests**, green on the last full run
-(18 Nov 2026, 136.47 s). Each suite boots its own ephemeral MongoDB
+(18 Nov 2026, 134.83 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |

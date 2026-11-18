@@ -53,7 +53,8 @@ async function loadContext(id) {
 
 function assertAuthorOrLead(handover, project, user, action = 'change') {
   const access = handoverAccess({ handover, project, user });
-  if (!(access.isCreator || access.isLead)) {
+  const allowed = canContribute(project, user) && (access.isCreator || access.isLead);
+  if (!allowed) {
     throw forbidden(`Only the author or a project lead can ${action} this handover`);
   }
   return access;

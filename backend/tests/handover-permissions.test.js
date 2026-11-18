@@ -250,6 +250,17 @@ describe('permission-aware handovers', () => {
       .get(`/api/handovers/${handoverId}/export`)
       .set(auth(rohanToken))
       .expect(403);
+    await request(app)
+      .post(`/api/handovers/${handoverId}/submit`)
+      .set(auth(rohanToken))
+      .expect(403);
+
+    await Handover.updateOne({ _id: handoverId }, { $set: { status: 'approved' } });
+    await request(app)
+      .post(`/api/handovers/${handoverId}/share`)
+      .set(auth(rohanToken))
+      .send({})
+      .expect(403);
   });
 
   it('does not leak a lead-only source into a contributor-authored handover', async () => {
