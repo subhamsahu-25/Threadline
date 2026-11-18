@@ -111,7 +111,9 @@ function ProjectSwitcher({ project, projects, onChange }) {
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-[12.5px] font-semibold leading-4">{project.name}</p>
-          <p className="text-[10.5px] text-ink-muted">{ROLE_LABELS[project.role] || 'Member'}</p>
+          <p className="text-[10.5px] text-ink-muted">
+            {project.incoming ? 'Incoming recipient' : ROLE_LABELS[project.role] || 'Member'}
+          </p>
         </div>
       </div>
       {projects.length > 1 && (
@@ -204,7 +206,11 @@ function Sidebar({ project, projects, user, logout, onNavigate }) {
             <nav className="mt-4" aria-label="Project sections">
               <p className="eyebrow px-3 pb-1.5">{project.key} workspace</p>
               <div className="space-y-0.5">
-                {PROJECT_NAV.filter((item) => !item.leadOnly || isLead).map((item) => (
+                {PROJECT_NAV.filter(
+                  (item) =>
+                    (!item.leadOnly || isLead) &&
+                    (!project.incoming || ['sources', 'handovers'].includes(item.to)),
+                ).map((item) => (
                   <NavItem
                     key={item.label}
                     item={item}
@@ -550,7 +556,7 @@ export default function AppShell() {
           {project && <Badge tone="navy">{project.key}</Badge>}
         </Link>
         <div className="flex items-center gap-1.5">
-          {departure !== null && departure >= 0 && (
+          {!project?.incoming && departure !== null && departure >= 0 && (
             <Badge tone="amber" title="Days until the planned departure">
               T-{departure}d
             </Badge>
@@ -592,7 +598,7 @@ export default function AppShell() {
             <>
               <span className="text-line-strong">/</span>
               <Link
-                to={`/projects/${project.id}`}
+                to={project.incoming ? `/projects/${project.id}/handovers` : `/projects/${project.id}`}
                 className="max-w-[320px] truncate font-medium text-ink-muted transition hover:text-ink"
               >
                 {project.name}
@@ -610,7 +616,7 @@ export default function AppShell() {
         </div>
         <div className="flex shrink-0 items-center gap-3">
           <NotificationBell />
-          {departure !== null && (
+          {!project?.incoming && departure !== null && (
             <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 font-mono text-[10.5px] font-medium text-amber-800">
               <CalendarClock className="h-3 w-3 shrink-0" aria-hidden="true" />
               {departure >= 0 ? `Handover due in ${departure}d` : `Handover ${Math.abs(departure)}d overdue`}
@@ -634,7 +640,11 @@ export default function AppShell() {
               <span className="leading-tight">
                 <span className="block text-[11.5px] font-semibold">{user?.name}</span>
                 <span className="block text-[10px] text-ink-muted">
-                  {project ? ROLE_LABELS[project.role] : 'Workspace member'}
+                  {project
+                    ? project.incoming
+                      ? 'Incoming recipient'
+                      : ROLE_LABELS[project.role]
+                    : 'Workspace member'}
                 </span>
               </span>
               <ChevronsUpDown className="h-3.5 w-3.5 text-ink-faint" aria-hidden="true" />
@@ -676,8 +686,13 @@ export default function AppShell() {
           className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
           aria-label="Project sections"
         >
-          <div className="mx-auto grid max-w-lg grid-cols-5">
-            {MOBILE_NAV.map((item) => {
+          <div
+            className={`mx-auto grid max-w-lg ${project?.incoming ? 'grid-cols-3' : 'grid-cols-5'}`}
+          >
+            {(project?.incoming
+              ? MOBILE_NAV.filter((item) => ['sources', 'handovers'].includes(item.to))
+              : MOBILE_NAV
+            ).map((item) => {
               const target = item.to
                 ? `/projects/${routeProjectId}/${item.to}`
                 : `/projects/${routeProjectId}`;

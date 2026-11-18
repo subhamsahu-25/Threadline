@@ -70,6 +70,7 @@ const membershipSchema = new Schema(
   {
     user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     role: { type: String, enum: ['lead', 'contributor', 'observer'], required: true },
+    incoming: { type: Boolean, default: false },
     joinedAt: { type: Date, default: Date.now },
   },
   { _id: false },

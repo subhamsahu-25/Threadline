@@ -62,7 +62,7 @@ Demo password for all accounts: `Threadline#2026`
 | --- | --- | --- |
 | Subham Sahu | lead | reviews, approves and shares handovers |
 | Rohan Mehta | contributor | outgoing team member |
-| Ananya Rao | contributor | incoming team member / recipient |
+| Ananya Rao | contributor (incoming) | recipient; read-only: shared handovers and permitted sources only, no handover creation or project actions |
 | Vikram Nair | observer | read-only stakeholder |
 
 Suggested walkthrough:

@@ -1,6 +1,6 @@
 import { env } from '../config/env.js';
 import { Claim, Document, Evidence, Source } from '../models/index.js';
-import { claimVisibleTo, roleOf } from './access/policy.js';
+import { canContribute, claimVisibleTo, isIncoming, roleOf } from './access/policy.js';
 import { deriveNextActions } from './reconstruction/nextActions.js';
 import { reconstructState } from './reconstruction/state.js';
 
@@ -14,9 +14,12 @@ export function serializeProject(project, user) {
     status: data.status,
     owner: String(data.owner?._id ?? data.owner),
     role: roleOf(project, user?._id),
+    incoming: isIncoming(project, user?._id),
+    canContribute: canContribute(project, user),
     members: (data.members || []).map((member) => ({
       userId: String(member.user?._id ?? member.user),
       role: member.role,
+      incoming: Boolean(member.incoming),
       name: member.user?.name,
       email: member.user?.email,
       joinedAt: member.joinedAt,

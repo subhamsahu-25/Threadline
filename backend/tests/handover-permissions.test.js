@@ -186,6 +186,52 @@ describe('permission-aware handovers', () => {
     expect(outgoingCreate.status).toBe(201);
   });
 
+  it('does not let the incoming recipient prepare a handover', async () => {
+    const byIncoming = await request(app)
+      .post('/api/handovers')
+      .set(auth(rohanToken))
+      .send({ projectId, recipientId: idOf(seeded, OUTGOING) });
+
+    expect(byIncoming.status).toBe(403);
+    expect(byIncoming.body.error.message).toMatch(/outgoing team|recipient/i);
+  });
+
+  it('limits the incoming recipient to the shared handover and readable sources', async () => {
+    const shell = await request(app)
+      .get(`/api/projects/${projectId}`)
+      .set(auth(rohanToken))
+      .expect(200);
+    expect(shell.body.project.incoming).toBe(true);
+    expect(shell.body.project.canContribute).toBe(false);
+
+    const draft = await createHandover();
+    expect(draft.status).toBe(201);
+
+    const drafts = await request(app)
+      .get(`/api/handovers?projectId=${projectId}&scope=all`)
+      .set(auth(rohanToken))
+      .expect(200);
+    expect(drafts.body.handovers).toHaveLength(0);
+
+    await request(app).get(`/api/projects/${projectId}/state`).set(auth(rohanToken)).expect(403);
+    await request(app).get(`/api/projects/${projectId}/claims`).set(auth(rohanToken)).expect(403);
+
+    const sources = await request(app)
+      .get(`/api/projects/${projectId}/sources`)
+      .set(auth(rohanToken))
+      .expect(200);
+    expect(sources.body.sources.length).toBeGreaterThan(0);
+
+    const { handoverId } = await publishHandover();
+    const shared = await request(app)
+      .get(`/api/handovers?projectId=${projectId}&scope=all`)
+      .set(auth(rohanToken))
+      .expect(200);
+    expect(shared.body.handovers.map((entry) => entry.id)).toEqual([handoverId]);
+    // Recipient list entries deliberately omit review and withholding counts.
+    expect(shared.body.handovers[0]).not.toHaveProperty('itemCount');
+  });
+
   it('does not leak a lead-only source into a contributor-authored handover', async () => {
     const outgoingToken = tokenOf(seeded, OUTGOING);
     const created = await request(app)

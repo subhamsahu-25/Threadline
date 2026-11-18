@@ -135,3 +135,57 @@ test('lead prepares and shares a handover that the recipient opens, flags and ac
 
   await guestContext.close();
 });
+
+test('the incoming recipient only sees the handover shared with them and the sources they may read', async ({
+  page,
+}) => {
+  let projectId;
+
+  await test.step('signing in lands on the shared handovers, not the outgoing record', async () => {
+    await page.goto('/');
+    await page
+      .getByRole('button', { name: /Enter the Atlas workspace as Ananya Rao/i })
+      .click();
+    await page
+      .locator('#main')
+      .getByRole('link', { name: /Project Atlas - Billing Service Migration/i })
+      .click();
+
+    await expect(page).toHaveURL(/\/projects\/[a-f0-9]{24}\/handovers$/);
+    projectId = new URL(page.url()).pathname.split('/')[2];
+    await expect(page.getByText('Incoming recipient').first()).toBeVisible();
+    await expect(
+      page.getByRole('heading', { name: 'Handover for Ananya Rao' }),
+    ).toBeVisible();
+  });
+
+  await test.step('cannot prepare a handover for any recipient', async () => {
+    await expect(page.getByRole('button', { name: 'New handover' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Prepare .*handover/i })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Mitigate' })).toHaveCount(0);
+  });
+
+  await test.step('the project navigation is limited to sources and handovers', async () => {
+    for (const label of ['Sources', 'Handovers']) {
+      await expect(page.getByRole('link', { name: label, exact: true }).first()).toBeVisible();
+    }
+    for (const label of ['Overview', 'Claims', 'Questions', 'People', 'Audit log']) {
+      await expect(page.getByRole('link', { name: label, exact: true })).toHaveCount(0);
+    }
+  });
+
+  await test.step('direct URLs for the outgoing record bounce back', async () => {
+    for (const section of ['', '/claims', '/questions', '/people']) {
+      await page.goto(`/projects/${projectId}${section}`);
+      await expect(page).toHaveURL(/\/projects\/[a-f0-9]{24}\/handovers$/);
+    }
+  });
+
+  await test.step('sources are readable but not editable', async () => {
+    await page.getByRole('link', { name: 'Sources', exact: true }).first().click();
+    await expect(page).toHaveURL(/\/sources$/);
+    await expect(page.getByRole('button', { name: 'Add source' })).toHaveCount(0);
+    await expect(page.getByText('Read-only role').first()).toBeVisible();
+    await expect(page.locator('#main h2').first()).toBeVisible();
+  });
+});

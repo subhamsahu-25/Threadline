@@ -156,7 +156,7 @@ export default function HandoversPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
-  const canPrepare = ['lead', 'contributor'].includes(project.role);
+  const canPrepare = project.canContribute;
   const recipients = project.members.filter((member) => String(member.userId) !== String(user.id));
   const handovers = data?.handovers || [];
 
@@ -251,7 +251,9 @@ export default function HandoversPage() {
                 New handover
               </Button>
             ) : (
-              <Badge tone="slate">Read-only role</Badge>
+              <Badge tone="slate">
+                {project.incoming ? 'Incoming recipient' : 'Read-only role'}
+              </Badge>
             )}
           </>
         }
@@ -262,18 +264,25 @@ export default function HandoversPage() {
           value={filter}
           onChange={setFilter}
           label="Filter handovers"
-          options={[
-            { value: 'all', label: 'All', count: counts.all },
-            { value: 'active', label: 'In progress', count: counts.active },
-            { value: 'shared', label: 'Shared', count: counts.shared },
-            { value: 'received', label: 'For me', count: counts.received },
-            { value: 'rejected', label: 'Rejected', count: counts.rejected },
-          ]}
+          options={
+            project.incoming
+              ? [
+                  { value: 'all', label: 'All', count: counts.all },
+                  { value: 'received', label: 'For me', count: counts.received },
+                ]
+              : [
+                  { value: 'all', label: 'All', count: counts.all },
+                  { value: 'active', label: 'In progress', count: counts.active },
+                  { value: 'shared', label: 'Shared', count: counts.shared },
+                  { value: 'received', label: 'For me', count: counts.received },
+                  { value: 'rejected', label: 'Rejected', count: counts.rejected },
+                ]
+          }
         />
         <SearchInput
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Search recipients"
+          placeholder={project.incoming ? 'Search handovers' : 'Search recipients'}
           className="w-full sm:w-64"
         />
       </div>
@@ -289,10 +298,18 @@ export default function HandoversPage() {
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={FileSignature}
-          title={handovers.length === 0 ? 'No handovers yet' : 'Nothing in this view'}
+          title={
+            handovers.length === 0
+              ? project.incoming
+                ? 'Nothing shared with you yet'
+                : 'No handovers yet'
+              : 'Nothing in this view'
+          }
           description={
             handovers.length === 0
-              ? 'Create a handover for an incoming team member. The draft is composed from the current state of record and filtered to their permissions.'
+              ? project.incoming
+                ? 'A lead will share your onboarding handover here. Until then you can read the sources shared with you.'
+                : 'Create a handover for an incoming team member. The draft is composed from the current state of record and filtered to their permissions.'
               : 'Try another filter or clear the recipient search.'
           }
           action={
@@ -327,22 +344,24 @@ export default function HandoversPage() {
         </div>
       )}
 
-      <div className="mt-6 grid gap-2.5 sm:grid-cols-4">
-        {[
-          { icon: FileSignature, title: 'Draft', body: 'Author accepts, edits or rejects each item.' },
-          { icon: Send, title: 'Submit', body: 'At least one item must be accepted or edited.' },
-          { icon: CheckCircle2, title: 'Approve', body: 'A lead approves; the recipient cannot self-approve.' },
-          { icon: Share2, title: 'Share', body: 'A 7-day link is issued. Access is rechecked at open.' },
-        ].map((step) => (
-          <div key={step.title} className="rounded-lg border border-line bg-white/60 px-3 py-2.5">
-            <p className="flex items-center gap-1.5 text-[10.5px] font-semibold text-ink-soft">
-              <step.icon className="h-3 w-3 text-ink-faint" aria-hidden="true" />
-              {step.title}
-            </p>
-            <p className="mt-1 text-[10px] leading-4 text-ink-muted">{step.body}</p>
-          </div>
-        ))}
-      </div>
+      {!project.incoming && (
+        <div className="mt-6 grid gap-2.5 sm:grid-cols-4">
+          {[
+            { icon: FileSignature, title: 'Draft', body: 'Author accepts, edits or rejects each item.' },
+            { icon: Send, title: 'Submit', body: 'At least one item must be accepted or edited.' },
+            { icon: CheckCircle2, title: 'Approve', body: 'A lead approves; the recipient cannot self-approve.' },
+            { icon: Share2, title: 'Share', body: 'A 7-day link is issued. Access is rechecked at open.' },
+          ].map((step) => (
+            <div key={step.title} className="rounded-lg border border-line bg-white/60 px-3 py-2.5">
+              <p className="flex items-center gap-1.5 text-[10.5px] font-semibold text-ink-soft">
+                <step.icon className="h-3 w-3 text-ink-faint" aria-hidden="true" />
+                {step.title}
+              </p>
+              <p className="mt-1 text-[10px] leading-4 text-ink-muted">{step.body}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Modal
         open={createOpen}

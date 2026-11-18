@@ -58,7 +58,11 @@ function ProjectCard({ project }) {
           <span className="inline-flex h-7 items-center rounded-md bg-brand-900 px-2 font-mono text-[10.5px] font-semibold tracking-wide text-white">
             {project.key}
           </span>
-          <RoleBadge role={project.role} />
+          {project.incoming ? (
+            <Badge tone="green">Incoming recipient</Badge>
+          ) : (
+            <RoleBadge role={project.role} />
+          )}
         </div>
         <span className="flex h-7 w-7 items-center justify-center rounded-full border border-line bg-white text-ink-faint transition group-hover:border-brand-200 group-hover:text-brand-700">
           <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />

@@ -345,7 +345,7 @@ export default function SourcesPage() {
   const [syncError, setSyncError] = useState('');
 
   const sources = data?.sources || [];
-  const canContribute = project.role !== 'observer';
+  const canContribute = project.canContribute;
   const canManage = project.role === 'lead';
   const active = sources.some((source) => ['queued', 'processing'].includes(source.status));
 

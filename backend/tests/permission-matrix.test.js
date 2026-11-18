@@ -315,6 +315,7 @@ describe('permission canary matrix', () => {
         token: tokens.recipient,
         userId: userIds.recipient,
         member: true,
+        incoming: true,
       },
       { key: 'outgoing', token: tokens.outgoing, userId: userIds.outgoing, member: true },
       {
@@ -453,23 +454,36 @@ describe('permission canary matrix', () => {
 
     const visibleClaims = visibleClaimIds(facts, userId);
 
-    const stateRes = await request(app)
-      .get(`/api/projects/${projectId}/state`)
-      .set(auth(token))
-      .expect(200);
-    expect(stateRes.body.visibleClaimCount).toBe(visibleClaims.size);
-    expect(stateRes.body.summary.counts.total).toBe(visibleClaims.size);
-    assertAbsent(stateRes.body, forbidden);
-    assertAbsent(stateRes.body.nextActions, forbidden);
-    assertPresent(stateRes.body, canariesInSourceSet(facts, readable));
+    if (context.incoming) {
+      // An incoming recipient receives the shared handover, not the outgoing
+      // team's working record: state and claims close, sources stay readable.
+      for (const path of [
+        `/api/projects/${projectId}/state`,
+        `/api/projects/${projectId}/claims`,
+      ]) {
+        const res = await request(app).get(path).set(auth(token));
+        expect(res.status).toBe(403);
+        assertAbsent(res.body, all);
+      }
+    } else {
+      const stateRes = await request(app)
+        .get(`/api/projects/${projectId}/state`)
+        .set(auth(token))
+        .expect(200);
+      expect(stateRes.body.visibleClaimCount).toBe(visibleClaims.size);
+      expect(stateRes.body.summary.counts.total).toBe(visibleClaims.size);
+      assertAbsent(stateRes.body, forbidden);
+      assertAbsent(stateRes.body.nextActions, forbidden);
+      assertPresent(stateRes.body, canariesInSourceSet(facts, readable));
 
-    const claimsRes = await request(app)
-      .get(`/api/projects/${projectId}/claims`)
-      .set(auth(token))
-      .expect(200);
-    expect(claimsRes.body.total).toBe(visibleClaims.size);
-    assertAbsent(claimsRes.body, forbidden);
-    assertPresent(claimsRes.body, canariesInSourceSet(facts, readable));
+      const claimsRes = await request(app)
+        .get(`/api/projects/${projectId}/claims`)
+        .set(auth(token))
+        .expect(200);
+      expect(claimsRes.body.total).toBe(visibleClaims.size);
+      assertAbsent(claimsRes.body, forbidden);
+      assertPresent(claimsRes.body, canariesInSourceSet(facts, readable));
+    }
 
     const sourcesRes = await request(app)
       .get(`/api/projects/${projectId}/sources`)

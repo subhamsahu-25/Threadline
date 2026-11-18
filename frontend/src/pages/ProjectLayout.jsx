@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Link, Outlet, useNavigate, useOutletContext, useParams } from 'react-router-dom';
+import { Link, Navigate, Outlet, useLocation, useNavigate, useOutletContext, useParams } from 'react-router-dom';
 import { ArrowUpRight, CalendarClock, FileSignature, ShieldAlert } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useAsync } from '../hooks/useAsync.js';
@@ -22,6 +22,7 @@ export function useProject() {
 export default function ProjectLayout() {
   const { projectId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const { setCurrentProject, upsertProject } = useWorkspace();
   const { data, error, loading, reload } = useAsync(
@@ -82,33 +83,51 @@ export default function ProjectLayout() {
 
   if (!project) return <ErrorState title="Project not found" error="The project could not be loaded." />;
 
+  const incoming = Boolean(project.incoming);
+  const section = location.pathname
+    .slice(`/projects/${project.id}`.length)
+    .replace(/^\/+/, '');
+  const sectionAllowed =
+    section === 'sources' ||
+    section.startsWith('sources/') ||
+    section === 'handovers' ||
+    section.startsWith('handovers/');
+  if (incoming && !sectionAllowed) {
+    return <Navigate to={`/projects/${project.id}/handovers`} replace />;
+  }
+
   const departure = daysUntil(project.transition?.plannedDepartureAt);
-  const canPrepare = ['lead', 'contributor'].includes(project.role);
+  const canPrepare = project.canContribute;
+  const projectHome = incoming ? `/projects/${project.id}/handovers` : `/projects/${project.id}`;
 
   return (
     <div>
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-card border border-line bg-white/80 px-4 py-3 shadow-sm backdrop-blur">
         <div className="flex min-w-0 flex-wrap items-center gap-2.5">
           <Link
-            to={`/projects/${project.id}`}
+            to={projectHome}
             className="inline-flex h-7 items-center rounded-md bg-brand-900 px-2 font-mono text-[10.5px] font-semibold tracking-wide text-white"
           >
             {project.key}
           </Link>
           <Link
-            to={`/projects/${project.id}`}
+            to={projectHome}
             className="max-w-[340px] truncate text-[13px] font-semibold text-ink transition hover:text-brand-800"
           >
             {project.name}
           </Link>
-          <RoleBadge role={project.role} />
+          {incoming ? (
+            <Badge tone="green">Incoming recipient</Badge>
+          ) : (
+            <RoleBadge role={project.role} />
+          )}
           <Badge tone={project.status === 'active' ? 'green' : 'slate'} dot>
             {project.status}
           </Badge>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {project.transition?.plannedDepartureAt && (
+          {!incoming && project.transition?.plannedDepartureAt && (
             <span
               className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-[10.5px] font-medium text-ink-muted"
               title={`${project.transition.outgoingName || 'Outgoing owner'} departs ${formatDate(project.transition.plannedDepartureAt)}`}

@@ -164,14 +164,14 @@ describe('claim actions from the overview deck', () => {
     await act(question.id, { status: 'resolved', note: '   ' }).expect(400);
   });
 
-  it('still lets the incoming member close a task', async () => {
+  it('rejects project actions from the incoming recipient', async () => {
     const before = await getState().expect(200);
     const task = before.body.timeline.find(
       (claim) => claim.type === 'task' && claim.status === 'open',
     );
     expect(task).toBeTruthy();
 
-    await act(task.id, { status: 'done', note: 'Handed over' }, incomingToken).expect(200);
+    await act(task.id, { status: 'done', note: 'Handed over' }, incomingToken).expect(403);
   });
 
   it('rejects an action with no owner or status', async () => {

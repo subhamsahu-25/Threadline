@@ -6,7 +6,7 @@ import { getProjectForUser } from '../middleware/project.js';
 import { DEMO_PROJECT_KEY } from '../demo/seed.js';
 import { validate } from '../middleware/validate.js';
 import { Delivery, Handover, HandoverFeedback, Project, User } from '../models/index.js';
-import { canManageProject, roleOf, sourceVisibleTo } from '../services/access/policy.js';
+import { canContribute, canManageProject, roleOf, sourceVisibleTo } from '../services/access/policy.js';
 import { recordAudit } from '../services/audit.js';
 import { composeHandover } from '../services/handover/compose.js';
 import { renderHandoverMarkdown } from '../services/handover/export.js';
@@ -193,15 +193,29 @@ router.get(
     const projects = await Project.find({ _id: { $in: projectIds } }).lean();
     const projectById = new Map(projects.map((project) => [String(project._id), project]));
 
+    // A recipient sees only what was actually given to them: the same
+    // read-time access check used by the detail route decides list membership,
+    // so an unshared draft never leaks through the list.
+    const visible = handovers
+      .map((handover) => ({
+        handover,
+        project: projectById.get(String(handover.project)),
+        isCreator: String(handover.createdBy) === String(userId),
+        isLead: canManageProject(projectById.get(String(handover.project)) || {}, req.user),
+      }))
+      .filter(
+        ({ handover, project, isCreator, isLead }) =>
+          isCreator ||
+          isLead ||
+          Boolean(project && handoverAccess({ handover, project, user: req.user }).canView),
+      );
+
     res.json({
-      handovers: handovers.map((handover) => {
-        const project = projectById.get(String(handover.project));
-        const isCreator = String(handover.createdBy) === String(userId);
-        const isLead = project ? canManageProject(project, req.user) : false;
-        return summarizeHandover(handover, {
+      handovers: visible.map(({ handover, isCreator, isLead }) =>
+        summarizeHandover(handover, {
           viewer: isCreator || isLead ? 'reviewer' : 'recipient',
-        });
-      }),
+        }),
+      ),
     });
   }),
 );
@@ -213,9 +227,8 @@ router.post(
     const { projectId, recipientId, roleTemplate } = req.body;
     const project = await getProjectForUser(projectId, req.user);
 
-    const role = roleOf(project, req.user._id);
-    if (!['lead', 'contributor'].includes(role)) {
-      throw forbidden('Observers cannot prepare handovers');
+    if (!canContribute(project, req.user)) {
+      throw forbidden('Only the outgoing team can prepare handovers; recipients receive them');
     }
 
     const recipient = await User.findById(recipientId);

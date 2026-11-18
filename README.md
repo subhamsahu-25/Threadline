@@ -91,7 +91,7 @@ switcher in the top-right corner moves between people without signing out.
 | --- | --- | --- |
 | **Subham Sahu** | lead | Create a handover for Ananya, review items, approve, share, restrict a source, read the audit log |
 | **Rohan Mehta** | contributor | The outgoing team member whose work is being handed over |
-| **Ananya Rao** | contributor | The incoming recipient — open the share link, acknowledge it |
+| **Ananya Rao** | contributor (incoming) | The recipient — sees only handovers shared with her and the sources she may read; cannot prepare a handover, act on claims or upload |
 | **Vikram Nair** | observer | Read-only; confirm that restricted sources and claims stay hidden |
 
 Rohan, Ananya and Vikram are **fictional demo profiles**. Only the author's name
@@ -266,7 +266,7 @@ production builds. `VITE_API_PROXY` overrides the local dev proxy target.
 
 ```bash
 cd backend
-npm test               # 135 Vitest + Supertest tests, 18 suites
+npm test               # 137 Vitest + Supertest tests, 18 suites
 npm run eval:quotes    # quote-accuracy report (rules extractor; Gemini when configured)
 
 cd ../frontend
@@ -275,7 +275,7 @@ npm run smoke          # built page mounts, every asset resolves
 npm run e2e            # Playwright: four journeys against a fresh in-memory API
 ```
 
-**18 suites, 135 tests**, each against its own ephemeral MongoDB — no external
+**18 suites, 137 tests**, each against its own ephemeral MongoDB — no external
 services needed. The permission canary matrix and the Round 3 suite run in CI on
 every push and pull request.
 

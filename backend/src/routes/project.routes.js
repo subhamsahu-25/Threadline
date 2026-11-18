@@ -11,6 +11,7 @@ import {
   assertSourceVisible,
   canManageProject,
   claimVisibleTo,
+  isIncoming,
   roleOf,
   sourceVisibleTo,
 } from '../services/access/policy.js';
@@ -341,6 +342,9 @@ router.get(
   '/:projectId/state',
   loadProject,
   asyncHandler(async (req, res) => {
+    if (isIncoming(req.project, req.user._id)) {
+      throw forbidden('Incoming recipients read the shared handover, not the outgoing team record');
+    }
     const result = await buildStateForUser({
       project: req.project,
       userId: req.user._id,
@@ -405,6 +409,9 @@ router.get(
   loadProject,
   validate({ query: listClaimsQuerySchema }),
   asyncHandler(async (req, res) => {
+    if (isIncoming(req.project, req.user._id)) {
+      throw forbidden('Incoming recipients read the shared handover, not the outgoing team record');
+    }
     const { type, limit } = req.query;
     const { claims, citationsByClaim } = await loadVisibleClaims({
       project: req.project,

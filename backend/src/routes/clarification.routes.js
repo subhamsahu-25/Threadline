@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { asyncHandler, forbidden } from '../lib/errors.js';
 import { getProjectForUser } from '../middleware/project.js';
 import { validate } from '../middleware/validate.js';
-import { roleOf } from '../services/access/policy.js';
+import { canContribute } from '../services/access/policy.js';
 import {
   answerClarification,
   declineClarification,
@@ -30,8 +30,8 @@ router.get(
     const { projectId, status } = req.query;
     if (projectId) {
       const project = await getProjectForUser(projectId, req.user);
-      if (!['lead', 'contributor'].includes(roleOf(project, req.user._id))) {
-        throw forbidden('Only leads and contributors can see the project clarification list');
+      if (!canContribute(project, req.user)) {
+        throw forbidden('Only the outgoing team can see the project clarification list');
       }
       return res.json({ clarifications: await listProjectClarifications({ project }) });
     }

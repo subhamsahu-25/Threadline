@@ -1,12 +1,19 @@
 import { forbidden } from '../../lib/errors.js';
 
-export function roleOf(project, userId) {
+function membershipOf(project, userId) {
   if (!project || !userId) return null;
   const id = String(userId);
-  const membership = (project.members || []).find(
-    (entry) => String(entry.user?._id ?? entry.user) === id,
+  return (
+    (project.members || []).find((entry) => String(entry.user?._id ?? entry.user) === id) || null
   );
-  return membership ? membership.role : null;
+}
+
+export function roleOf(project, userId) {
+  return membershipOf(project, userId)?.role ?? null;
+}
+
+export function isIncoming(project, userId) {
+  return Boolean(membershipOf(project, userId)?.incoming);
 }
 
 export function isMember(project, userId) {
@@ -22,9 +29,15 @@ export function canManageProject(project, user) {
   return isProjectOwner(project, id) || roleOf(project, id) === 'lead';
 }
 
+/**
+ * Incoming recipients hold a contributor seat for visibility only: they see
+ * what was handed to them, but they cannot change project content.
+ */
 export function canContribute(project, user) {
   const id = user?._id ?? user?.id ?? user;
-  return ['lead', 'contributor'].includes(roleOf(project, id));
+  const membership = membershipOf(project, id);
+  if (!membership) return false;
+  return ['lead', 'contributor'].includes(membership.role) && !membership.incoming;
 }
 
 /**

@@ -219,9 +219,9 @@ export default function OverviewPage() {
   const readiness = summary.readinessScore;
   const attentionCount =
     (data.conflicts?.length || 0) + (data.ownershipGaps?.length || 0) + (data.unverified?.length || 0);
-  const canPrepare = ['lead', 'contributor'].includes(project.role);
+  const canPrepare = project.canContribute;
   const canResolve = project.role === 'lead';
-  const canAct = ['lead', 'contributor'].includes(project.role);
+  const canAct = project.canContribute;
   const outgoingUserId = project.transition?.outgoingUserId
     ? String(project.transition.outgoingUserId)
     : null;
@@ -289,7 +289,7 @@ export default function OverviewPage() {
         }
       />
 
-      {checklistDone < checklist.length && (
+      {canPrepare && checklistDone < checklist.length && (
         <Card className="mb-4 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>

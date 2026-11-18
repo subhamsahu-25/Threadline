@@ -141,7 +141,7 @@ export default function QuestionsPage() {
   const [declineNote, setDeclineNote] = useState('');
   const [declineError, setDeclineError] = useState('');
 
-  const canAsk = ['lead', 'contributor'].includes(project.role);
+  const canAsk = project.canContribute;
 
   const loadMine = useCallback(async () => {
     try {

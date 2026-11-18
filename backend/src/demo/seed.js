@@ -20,7 +20,7 @@ export const DEMO_PROJECT_KEY = 'ATLAS';
 const DEMO_USERS = [
   { key: 'subham', name: 'Subham Sahu', email: 'subham@threadline.demo', role: 'lead' },
   { key: 'rohan', name: 'Rohan Mehta', email: 'rohan@threadline.demo', role: 'contributor' },
-  { key: 'ananya', name: 'Ananya Rao', email: 'ananya@threadline.demo', role: 'contributor' },
+  { key: 'ananya', name: 'Ananya Rao', email: 'ananya@threadline.demo', role: 'contributor', incoming: true },
   { key: 'vikram', name: 'Vikram Nair', email: 'vikram@threadline.demo', role: 'observer' },
 ];
 
@@ -203,6 +203,7 @@ export async function seedDemo({ reset = true } = {}) {
   const members = DEMO_USERS.map((definition) => ({
     user: users[definition.key]._id,
     role: definition.role,
+    incoming: Boolean(definition.incoming),
   }));
   const transition = {
     outgoingUserId: users.rohan._id,

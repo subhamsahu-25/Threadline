@@ -136,7 +136,7 @@ export default function ClaimsPage() {
     setSort('newest');
   };
 
-  const canPrepare = ['lead', 'contributor'].includes(project.role);
+  const canPrepare = project.canContribute;
 
   return (
     <div>

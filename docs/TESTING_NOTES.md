@@ -9,8 +9,8 @@ checked separately and called out where it differs.
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **18 suites, 135 tests**, green on the last full run
-(18 Nov 2026, 118.38 s). Each suite boots its own ephemeral MongoDB
+`cd backend && npm test` — **18 suites, 137 tests**, green on the last full run
+(18 Nov 2026, 135.04 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
@@ -19,9 +19,9 @@ checked separately and called out where it differs.
 | `round3-hardening.test.js` | 12 | Live status/owner refresh for recipients, source purge with `source_removed`, freshness compare + regenerate, hashed share tokens and revocation, expired share links, maker-checker approval, accept-without-evidence note, acknowledgement snapshots, logout token revocation, distinct executive/audit scopes, first-week view, readable version diffs |
 | `source-sync.test.js` | 7 | Interval scheduling, forced checks, checksum skip, outdated handovers with a diff (author and recipient), mocked Drive path, failure retention, sync settings rejected for uploads, collection-order-independent fingerprints |
 | `clarifications.test.js` | 7 | Askable gaps and answer options, ask-all dedupe, addressee-only answer/decline, refusal for unreadable items, person-confirmed claim clears the gap, recipient label after sharing, redaction of answers |
-| `claim-actions.test.js` | 10 | Owner assignment closes the gap, done tasks leave open work, question answers and mitigations, closure notes in the next draft, observer rejection, only the lead or departing member can answer a question, an answer note is required, validation and 404 guards |
+| `claim-actions.test.js` | 10 | Owner assignment closes the gap, done tasks leave open work, question answers and mitigations, closure notes in the next draft, observer and incoming-recipient rejection, only the lead or departing member can answer a question, an answer note is required, validation and 404 guards |
 | `conflict-resolution.test.js` | 6 | Lead confirms the current decision, the rest are superseded, conflict clears, drafts exclude superseded statements, audit event, contributor/observer rejection |
-| `handover-permissions.test.js` | 10 | Recipient-specific withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review boundaries, non-member rejection |
+| `handover-permissions.test.js` | 12 | Recipient-specific withholding, hidden-until-shared, live re-check after visibility changes, template exclusions, review boundaries, non-member rejection, refusal for incoming-recipient handover creation, and the incoming seat limited to the shared handover plus readable sources |
 | `handover-workflow.test.js` | 7 | Edit/submit/approve/share/acknowledge, version history and audit, pending-item guard, transition guards, share rotation, and the public demo link: anonymous read and acknowledgement, audited with `channel: public_share_link`, refused for non-demo projects |
 | `handover-extras.test.js` | 11 | Recipient and reviewer Markdown exports hide restricted evidence; export access control; share-open counts reset on rotation; feedback create/list/notify/resolve and rejection before sharing, from non-recipients, on items that became unreadable, and below the minimum length; honest `skipped`, `sent` and `failed` delivery rows with no webhook URL leaked; clarification delivery; reminder once-only, delay, acknowledgement and switch |
 | `ingest-hardening.test.js` | 11 | Low-confidence and injection-like flags, truncation warnings, re-ingest preserves IDs/owners/statuses/resolutions, extraction method counts, 409 while processing, connector allow-list, confidential uploads lead-only, large-upload reporting, failed re-ingest keeps content, hiding a source removes it and its claims from every reader |
@@ -105,17 +105,25 @@ in the release notes rather than duplicated here.
     share link opens read-only in a fresh tab: "Prepared for Ananya Rao", the
     full approved content and the evidence previews appear, and *Acknowledge
     receipt* records the acknowledgement (audit `channel: public_share_link`).
+13. **Incoming recipient is receive-only.** Signed in as Ananya, opening the
+    project lands on **Handovers**, the only sections are Sources and Handovers,
+    and the shared handover is the only one listed. There is no *New handover*,
+    no *Prepare handover* and no *Mitigate*; direct URLs for overview, claims,
+    questions and people redirect back to handovers; Sources shows the five
+    readable sources with a `READ-ONLY ROLE` badge and no add control. The API
+    returns 403 for project state, claims, clarifications and handover creation
+    (`handover-permissions.test.js`, `claim-actions.test.js`).
 
 ### 3.1 Recorded Playwright run — 18 Nov 2026
 
 Command (from `frontend/`):
 
 ```bash
-E2E_BACKEND_PORT=4100 E2E_FRONTEND_PORT=5273 npx playwright test
+E2E_BACKEND_PORT=4200 E2E_FRONTEND_PORT=5190 npx playwright test
 ```
 
-Result: **1 passed (27.6 s)**, test body 20.7 s, one Chromium worker, no retries.
-The single spec (`e2e/handover-journey.spec.js`) runs these steps in order:
+Result: **2 passed (34.3 s)**, one Chromium worker, no retries. The spec
+(`e2e/handover-journey.spec.js`) runs these steps in order:
 
 | Step | What it asserts |
 | --- | --- |
@@ -126,6 +134,10 @@ The single spec (`e2e/handover-journey.spec.js`) runs these steps in order:
 | 4. Acknowledge | **Acknowledge receipt** shows the acknowledged state |
 | Lead re-check | After reload: open count, the feedback text, a `skipped` delivery row, then **Mark resolved** changes the note to Resolved |
 | Audit CSV | **Export CSV** downloads `atlas-audit-YYYY-MM-DD.csv` containing `handover.feedback_received` and `handover.acknowledged` |
+| Incoming sign-in | One-click Ananya lands on `/handovers` with the **Incoming recipient** badge and the shared handover |
+| Receive-only | No **New handover**, no **Prepare handover**, no **Mitigate**; nav lists only Sources and Handovers |
+| Deep links | `/projects/:id`, `/claims`, `/questions` and `/people` all redirect to `/handovers` |
+| Read-only sources | Sources loads with a `READ-ONLY ROLE` badge and no **Add source** control |
 
 Artifacts on failure (trace, screenshot, video) are written under
 `frontend/test-results/`; a passing run keeps the HTML report under

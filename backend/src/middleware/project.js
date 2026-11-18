@@ -1,5 +1,5 @@
 import { AppError, asyncHandler, forbidden, notFound } from '../lib/errors.js';
-import { roleOf } from '../services/access/policy.js';
+import { canContribute, roleOf } from '../services/access/policy.js';
 import { Project } from '../models/index.js';
 
 export async function getProjectForUser(projectId, user) {
@@ -30,9 +30,8 @@ export const requireProjectLead = asyncHandler(async (req, _res, next) => {
 
 export const requireProjectContributor = asyncHandler(async (req, _res, next) => {
   if (!req.project) throw new AppError(500, 'missing_project', 'loadProject must run first');
-  const role = roleOf(req.project, req.user._id);
-  if (!['lead', 'contributor'].includes(role)) {
-    throw forbidden('Observers can read handovers but cannot change project content');
+  if (!canContribute(req.project, req.user)) {
+    throw forbidden('Read-only members can see the project but cannot change its content');
   }
   next();
 });
