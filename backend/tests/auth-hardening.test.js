@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { env } from '../src/config/env.js';
-import { AuditEvent, User } from '../src/models/index.js';
+import { AuditEvent, LoginThrottle, User } from '../src/models/index.js';
 import { listNotifications } from '../src/services/notifications.js';
 import { app, request, startDb, stopDb } from './helpers.js';
 
@@ -151,10 +151,7 @@ describe('account security', () => {
     expect(notifications[0].title).toMatch(/sign-in attempts/i);
 
     // A lockout expires; it must not become a permanent ban.
-    await User.updateOne(
-      { _id: user._id },
-      { $set: { lockedUntil: new Date(Date.now() - 60_000) } },
-    );
+    await LoginThrottle.deleteMany({ user: user._id });
     const recovered = await login(email);
     expect(recovered.status).toBe(200);
     expect(recovered.body.token).toBeTruthy();

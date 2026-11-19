@@ -1,5 +1,9 @@
 import { User } from '../models/index.js';
 
+// Observers read the workspace but cannot act on tasks or own work, so they
+// must never be linked as the owner of a claim.
+const ACTIONABLE_ROLES = new Set(['lead', 'contributor']);
+
 /**
  * Builds lookup tables for the people who can actually own work in a project.
  * Names are resolved once per ingest so every claim gets a stable member id
@@ -7,6 +11,7 @@ import { User } from '../models/index.js';
  */
 export async function loadOwnerDirectory(project) {
   const memberIds = (project.members || [])
+    .filter((member) => ACTIONABLE_ROLES.has(member.role))
     .map((member) => member.user?._id ?? member.user)
     .filter(Boolean);
   const users = await User.find({ _id: { $in: memberIds } })
@@ -32,29 +37,31 @@ export async function loadOwnerDirectory(project) {
 }
 
 /**
- * Resolves a free-text owner to a member id. Exact email and full name win;
- * a first name resolves only when it identifies exactly one member. Anything
- * ambiguous returns `{ userId: null, ambiguous: true }` so a reviewer assigns
- * it explicitly instead of the product guessing.
+ * Resolves a free-text owner to a member id. Only an exact email or an exact
+ * full name is trusted. A first name is kept as text and labelled unconfirmed:
+ * a note that says "Rohan will follow up" may name someone outside the
+ * project, so attributing it to the only project member called Rohan would
+ * invent an owner.
  */
 export function resolveOwnerName(directory, rawName) {
   const name = String(rawName ?? '').trim().replace(/^@/, '');
-  if (!name) return { userId: null, ambiguous: false };
+  if (!name) return { userId: null, ambiguous: false, unconfirmed: false };
   const lowered = name.toLowerCase();
 
   if (directory.byEmail.has(lowered)) {
-    return { userId: directory.byEmail.get(lowered), ambiguous: false };
+    return { userId: directory.byEmail.get(lowered), ambiguous: false, unconfirmed: false };
   }
   if (directory.byName.has(lowered)) {
     const ids = directory.byName.get(lowered);
     return ids.length === 1
-      ? { userId: ids[0], ambiguous: false }
-      : { userId: null, ambiguous: true };
+      ? { userId: ids[0], ambiguous: false, unconfirmed: false }
+      : { userId: null, ambiguous: true, unconfirmed: false };
   }
 
   const first = lowered.split(/\s+/)[0];
   const candidates = directory.byFirstName.get(first) || [];
-  if (candidates.length === 1) return { userId: candidates[0], ambiguous: false };
-  if (candidates.length > 1) return { userId: null, ambiguous: true };
-  return { userId: null, ambiguous: false };
+  if (candidates.length > 0) {
+    return { userId: null, ambiguous: candidates.length > 1, unconfirmed: true };
+  }
+  return { userId: null, ambiguous: false, unconfirmed: false };
 }

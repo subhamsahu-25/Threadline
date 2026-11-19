@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { env } from '../src/config/env.js';
 import { Source } from '../src/models/index.js';
@@ -82,7 +83,7 @@ describe('upload file lifecycle', () => {
 
     // A source whose ingest has not finished still needs its file, so the
     // janitor must keep anything a source row references.
-    const inFlightName = 'in-flight-reference.md';
+    const inFlightName = `${Date.now()}-${randomUUID()}.md`;
     const keptPath = path.join(env.uploadDir, inFlightName);
     await fs.writeFile(keptPath, 'pending');
     await Source.create({
@@ -96,8 +97,8 @@ describe('upload file lifecycle', () => {
       ],
     });
 
-    const orphanPath = path.join(env.uploadDir, 'orphan-stale.md');
-    const freshPath = path.join(env.uploadDir, 'orphan-fresh.md');
+    const orphanPath = path.join(env.uploadDir, `${Date.now()}-${randomUUID()}.md`);
+    const freshPath = path.join(env.uploadDir, `${Date.now()}-${randomUUID()}.md`);
     await fs.writeFile(orphanPath, 'orphan');
     await fs.writeFile(freshPath, 'fresh');
     const longAgo = new Date(Date.now() - 48 * 3_600_000);

@@ -89,3 +89,4 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/check-secrets.mjs
+      - run: node scripts/build-archive.mjs --out /tmp/release-check.zip

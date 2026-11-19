@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { Clarification, Handover, Notification, Project } from '../models/index.js';
-import { canManageProject, roleOf } from './access/policy.js';
+import { Clarification, Handover, Notification, Project, Source } from '../models/index.js';
+import { canManageProject, roleOf, sourceVisibleTo } from './access/policy.js';
 import { logger } from '../lib/logger.js';
 
 const ROLE_WORDS = { lead: 'lead', contributor: 'contributor', observer: 'observer' };
@@ -136,6 +136,13 @@ function handoverNotice({ type, handover, project, viewer, isLead, isAuthor }) {
         detail: `${project.name} · open the link and acknowledge it when you have read it`,
         href,
       };
+    case 'handover.expiry':
+      if (!isLead && !isRecipient) return null;
+      return {
+        title: isRecipient ? 'Your handover link expires tomorrow' : 'A handover link expires tomorrow',
+        detail: `${project.name} · reissue it in one click if the recipient still needs a link`,
+        href,
+      };
     case 'handover.feedback':
       if (!isLead && !isAuthor) return null;
       return {
@@ -248,8 +255,12 @@ export async function listNotifications({ user, limit = 50 }) {
     .filter((row) => row.entityType === 'clarification')
     .map((row) => row.entityId)
     .filter(Boolean);
+  const sourceIds = rows
+    .filter((row) => row.entityType === 'source')
+    .map((row) => row.entityId)
+    .filter(Boolean);
 
-  const [handovers, clarifications] = await Promise.all([
+  const [handovers, clarifications, sources] = await Promise.all([
     handoverIds.length
       ? Handover.find({ _id: { $in: handoverIds } })
           .select('recipient recipientSnapshot createdBy status shareTokenHash project')
@@ -260,10 +271,16 @@ export async function listNotifications({ user, limit = 50 }) {
           .select('askedBy askedOf kind status project')
           .lean()
       : [],
+    sourceIds.length
+      ? Source.find({ _id: { $in: sourceIds } })
+          .select('name project visibility sensitivity deletedAt hiddenAt')
+          .lean()
+      : [],
   ]);
 
   const handoverById = new Map(handovers.map((entry) => [String(entry._id), entry]));
   const clarificationById = new Map(clarifications.map((entry) => [String(entry._id), entry]));
+  const sourceById = new Map(sources.map((entry) => [String(entry._id), entry]));
 
   const stale = [];
   const notifications = [];
@@ -326,6 +343,25 @@ export async function listNotifications({ user, limit = 50 }) {
         viewer: user,
         isLead,
       });
+    } else if (row.entityType === 'source') {
+      const source = sourceById.get(String(row.entityId));
+      if (
+        !source ||
+        String(source.project) !== String(project._id) ||
+        source.deletedAt ||
+        // The notice names the source, so only its readers may receive it.
+        !sourceVisibleTo(source, project, user._id)
+      ) {
+        stale.push(row._id);
+        continue;
+      }
+      if (row.type === 'source.external_ai_enabled') {
+        notice = {
+          title: 'A confidential source may leave the server',
+          detail: `${source.name} now allows external AI · ${project.name}`,
+          href: `/projects/${project._id}/sources`,
+        };
+      }
     } else {
       notice = memberNotice({
         type: row.type,

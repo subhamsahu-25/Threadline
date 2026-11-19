@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { githubState, driveState } = vi.hoisted(() => ({
-  githubState: { documents: [], fail: null },
+const { githubState, driveState, ingestState } = vi.hoisted(() => ({
+  githubState: { documents: [], fail: null, etag: null },
   driveState: { documents: [], fail: null },
+  ingestState: { fail: false },
 }));
 
 function normalizedDocuments(documents) {
@@ -18,9 +19,21 @@ vi.mock('../src/services/ingest/github.js', async (importOriginal) => {
   const actual = await importOriginal();
   return {
     ...actual,
-    collectGithubDocuments: vi.fn(async () => {
+    collectGithubDocuments: vi.fn(async (_ref, { cache } = {}) => {
       if (githubState.fail) throw githubState.fail;
+      if (githubState.etag && cache) cache.README = githubState.etag;
       return normalizedDocuments(githubState.documents);
+    }),
+  };
+});
+
+vi.mock('../src/services/ai/extract.js', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    extractClaimsForDocuments: vi.fn(async (...args) => {
+      if (ingestState.fail) throw new Error('extraction unavailable');
+      return actual.extractClaimsForDocuments(...args);
     }),
   };
 });
@@ -96,8 +109,10 @@ describe('connected source sync', () => {
 
   beforeEach(async () => {
     githubState.fail = null;
+    githubState.etag = null;
     githubState.documents = documentSet();
     driveState.fail = null;
+    ingestState.fail = false;
     driveState.documents = driveDocumentSet();
     env.githubAllowedRepos = [GITHUB_REF];
     env.driveAllowedFolders = [DRIVE_REF];
@@ -276,6 +291,42 @@ describe('connected source sync', () => {
     const source = await Source.findById(sourceId).lean();
     expect(source.status).toBe('ready');
     expect(source.sync.lastError).toContain('network down');
+  });
+
+  it('keeps the old ETags when a re-ingest fails, so the change is retried', async () => {
+    githubState.etag = 'etag-v1';
+    const sourceId = await createGithubSource();
+    let source = await Source.findById(sourceId).lean();
+    expect(source.status).toBe('ready');
+    expect(source.sync.cursor.httpCache.README).toBe('etag-v1');
+    const originalChecksum = source.sync.cursor.checksum;
+
+    ingestState.fail = true;
+    githubState.etag = 'etag-v2';
+    githubState.documents = documentSet({ taskStatus: 'done' });
+    await request(app)
+      .post(`/api/projects/${projectId}/sources/${sourceId}/sync`)
+      .set(auth(leadToken))
+      .expect(202);
+    await whenIdle();
+
+    source = await Source.findById(sourceId).lean();
+    expect(source.status).toBe('failed');
+    // The new tag was never persisted: the next check must download again.
+    expect(source.sync.cursor.httpCache.README).toBe('etag-v1');
+    expect(source.sync.cursor.checksum).toBe(originalChecksum);
+
+    ingestState.fail = false;
+    await request(app)
+      .post(`/api/projects/${projectId}/sources/${sourceId}/sync`)
+      .set(auth(leadToken))
+      .expect(202);
+    await whenIdle();
+
+    source = await Source.findById(sourceId).lean();
+    expect(source.status).toBe('ready');
+    expect(source.sync.cursor.httpCache.README).toBe('etag-v2');
+    expect(source.sync.cursor.checksum).not.toBe(originalChecksum);
   });
 
   it('updates sync interval settings and rejects uploads', async () => {

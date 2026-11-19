@@ -47,6 +47,7 @@ import {
   SegmentedControl,
   Select,
   Spinner,
+  Textarea,
 } from '../components/ui.jsx';
 
 const VISIBILITY_SCOPES = [
@@ -336,6 +337,7 @@ export default function SourcesPage() {
     sensitivity: 'internal',
     visibility: EMPTY_VISIBILITY,
     allowExternal: true,
+    reason: '',
   });
   const [accessSaving, setAccessSaving] = useState(false);
   const [deleteSource, setDeleteSource] = useState(null);
@@ -459,17 +461,33 @@ export default function SourcesPage() {
         users: source.visibility?.users || [],
       },
       allowExternal: source.aiPolicy?.allowExternal ?? true,
+      reason: '',
     });
   };
 
+  const alreadyAllowsExternalConfidential =
+    accessSource?.sensitivity === 'confidential' &&
+    accessSource?.aiPolicy?.allowExternal === true;
+  const needsExternalReason =
+    accessForm.sensitivity === 'confidential' &&
+    accessForm.allowExternal &&
+    !alreadyAllowsExternalConfidential;
+
   const saveAccess = async () => {
     if (!accessSource) return;
+    if (needsExternalReason && accessForm.reason.trim().length < 3) {
+      toast.error(
+        'Write a short reason before a confidential source can be sent to the external model.',
+      );
+      return;
+    }
     setAccessSaving(true);
     try {
       await api.patch(`/api/projects/${projectId}/sources/${accessSource.id}`, {
         sensitivity: accessForm.sensitivity,
         visibility: accessForm.visibility,
         aiPolicy: { allowExternal: accessForm.allowExternal },
+        ...(accessForm.reason.trim() ? { reason: accessForm.reason.trim() } : {}),
       });
       toast.success('Source access updated. Shared handovers will re-check permissions at read time.');
       setAccessSource(null);
@@ -1165,6 +1183,24 @@ export default function SourcesPage() {
                 applies the next time this source is ingested, so use Re-ingest to apply it now.
               </span>
             </label>
+            {needsExternalReason && (
+              <Field
+                label="Why does this confidential source need the external model?"
+                htmlFor="access-reason"
+                hint="Recorded in the audit trail and shown to the people who can read this source."
+              >
+                <Textarea
+                  id="access-reason"
+                  rows={3}
+                  value={accessForm.reason}
+                  maxLength={600}
+                  placeholder="For example: the vendor contract needs a summary for the legal review."
+                  onChange={(event) =>
+                    setAccessForm({ ...accessForm, reason: event.target.value })
+                  }
+                />
+              </Field>
+            )}
           </div>
         )}
       </Modal>

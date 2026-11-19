@@ -1,13 +1,15 @@
 import path from 'node:path';
 import { Worker } from 'node:worker_threads';
+import { createInflateRaw } from 'node:zlib';
+import { env } from '../../config/env.js';
 import { AppError } from '../../lib/errors.js';
 import { normalizeWhitespace, truncate } from '../../lib/text.js';
 import {
-  MAX_DOC_CHARS,
   MAX_DOCX_ENTRIES,
   MAX_DOCX_RATIO,
   MAX_DOCX_UNCOMPRESSED_BYTES,
   PARSE_MEMORY_MB,
+  PARSE_RSS_LIMIT_MB,
   PARSE_TIMEOUT_MS,
 } from './limits.js';
 
@@ -144,19 +146,24 @@ function readDocxArchiveStats(buffer) {
   let entries = 0;
   let uncompressedBytes = 0;
   let hasDocumentPart = false;
+  const parts = [];
 
   while (offset + 46 <= directoryOffset + directorySize && entries < declaredEntries) {
     if (buffer.readUInt32LE(offset) !== 0x02014b50) break;
 
+    const flags = buffer.readUInt16LE(offset + 8);
+    const method = buffer.readUInt16LE(offset + 10);
     const compressedSize = buffer.readUInt32LE(offset + 20);
     const uncompressedSize = buffer.readUInt32LE(offset + 24);
     const nameLength = buffer.readUInt16LE(offset + 28);
     const extraLength = buffer.readUInt16LE(offset + 30);
     const commentLength = buffer.readUInt16LE(offset + 32);
+    const localOffset = buffer.readUInt32LE(offset + 42);
 
     if (
       compressedSize === 0xffffffff ||
-      uncompressedSize === 0xffffffff
+      uncompressedSize === 0xffffffff ||
+      localOffset === 0xffffffff
     ) {
       throw new AppError(422, 'invalid_document', 'This DOCX uses an unsupported ZIP layout. Re-save it and try again.');
     }
@@ -169,15 +176,123 @@ function readDocxArchiveStats(buffer) {
     const name = buffer.toString('utf8', nameStart, nameEnd).replace(/\\/g, '/');
     if (name === 'word/document.xml') hasDocumentPart = true;
 
+    parts.push({ name, flags, method, compressedSize, localOffset });
     entries += 1;
     uncompressedBytes += uncompressedSize;
     offset = nameEnd + extraLength + commentLength;
   }
 
-  return { entries, uncompressedBytes, hasDocumentPart };
+  return { entries, uncompressedBytes, hasDocumentPart, parts };
 }
 
-function assertDocxWithinLimits(buffer) {
+function zipEntryDataOffset(buffer, part) {
+  const local = part.localOffset;
+  if (local + 30 > buffer.length || buffer.readUInt32LE(local) !== 0x04034b50) {
+    throw new AppError(422, 'invalid_document', 'This DOCX archive is truncated or malformed.');
+  }
+  const nameLength = buffer.readUInt16LE(local + 26);
+  const extraLength = buffer.readUInt16LE(local + 28);
+  const start = local + 30 + nameLength + extraLength;
+  if (start > buffer.length) {
+    throw new AppError(422, 'invalid_document', 'This DOCX archive is truncated or malformed.');
+  }
+  return start;
+}
+
+/**
+ * The central directory is attacker-controlled metadata. Inflate each entry
+ * for real with a running byte counter, so a forged "small" declaration
+ * cannot smuggle a decompression bomb past the limit.
+ */
+function inflateWithinBudget(buffer, start, end, budget) {
+  return new Promise((resolve, reject) => {
+    if (budget <= 0) {
+      reject(
+        new AppError(
+          422,
+          'document_too_large',
+          'This DOCX expands to more content than the ingestion limit allows. Split it into smaller files and upload again.',
+        ),
+      );
+      return;
+    }
+
+    const inflate = createInflateRaw();
+    let total = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      inflate.destroy();
+      reject(error);
+    };
+
+    inflate.on('data', (chunk) => {
+      total += chunk.length;
+      if (total > budget) {
+        fail(
+          new AppError(
+            422,
+            'document_too_large',
+            'This DOCX expands to more content than the ingestion limit allows. Split it into smaller files and upload again.',
+          ),
+        );
+      }
+    });
+    inflate.on('error', () =>
+      fail(new AppError(422, 'invalid_document', 'This DOCX archive could not be read. Re-save it and try again.')),
+    );
+    inflate.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve(total);
+    });
+
+    const step = 64 * 1024;
+    try {
+      for (let offset = start; offset < end && !settled; offset += step) {
+        inflate.write(buffer.subarray(offset, Math.min(offset + step, end)));
+      }
+      inflate.end();
+    } catch {
+      fail(new AppError(422, 'invalid_document', 'This DOCX archive could not be read. Re-save it and try again.'));
+    }
+  });
+}
+
+async function assertDocxRealSize(buffer, parts) {
+  let total = 0;
+  for (const part of parts) {
+    if (part.name.endsWith('/')) continue;
+    if (part.flags & 0x1) {
+      throw new AppError(422, 'invalid_document', 'This DOCX is encrypted. Remove the password and upload it again.');
+    }
+
+    if (part.method === 0) {
+      total += part.compressedSize;
+    } else if (part.method === 8) {
+      const start = zipEntryDataOffset(buffer, part);
+      const end = part.compressedSize > 0 ? Math.min(buffer.length, start + part.compressedSize) : buffer.length;
+      total += await inflateWithinBudget(buffer, start, end, MAX_DOCX_UNCOMPRESSED_BYTES - total);
+    } else {
+      throw new AppError(
+        422,
+        'invalid_document',
+        'This DOCX uses a compression method the reader does not support. Re-save it and try again.',
+      );
+    }
+
+    if (total > MAX_DOCX_UNCOMPRESSED_BYTES) {
+      throw new AppError(
+        422,
+        'document_too_large',
+        'This DOCX expands to more content than the ingestion limit allows. Split it into smaller files and upload again.',
+      );
+    }
+  }
+}
+
+async function assertDocxWithinLimits(buffer) {
   const stats = readDocxArchiveStats(buffer);
   if (!stats.hasDocumentPart) {
     throw new AppError(
@@ -199,6 +314,8 @@ function assertDocxWithinLimits(buffer) {
       'This DOCX expands to more content than the ingestion limit allows. Split it into smaller files and upload again.',
     );
   }
+
+  await assertDocxRealSize(buffer, stats.parts);
 }
 
 function parseInWorker(kind, buffer) {
@@ -209,13 +326,32 @@ function parseInWorker(kind, buffer) {
     });
 
     let settled = false;
+    let rssWatch = null;
     const finish = (callback) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(rssWatch);
       worker.terminate();
       callback();
     };
+
+    // Buffer memory is allocated outside the worker's JavaScript heap, so the
+    // heap limit alone cannot stop a decompression bomb. A process-wide RSS
+    // sample ends the run when memory keeps climbing anyway.
+    rssWatch = setInterval(() => {
+      if (process.memoryUsage().rss <= PARSE_RSS_LIMIT_MB * 1024 * 1024) return;
+      finish(() =>
+        reject(
+          new AppError(
+            422,
+            'document_too_complex',
+            'This document needs more memory than the parser allows. Split it and upload again.',
+          ),
+        ),
+      );
+    }, 250);
+    rssWatch.unref?.();
 
     const timer = setTimeout(() => {
       finish(() =>
@@ -437,7 +573,7 @@ export async function parseFile({ buffer, filename }) {
   if (extension === '.pdf') {
     parsed = await parseInWorker('pdf', buffer);
   } else if (extension === '.docx') {
-    assertDocxWithinLimits(buffer);
+    await assertDocxWithinLimits(buffer);
     parsed = await parseInWorker('docx', buffer);
   } else {
     parsed = await parsePlain(buffer, extension);
@@ -445,11 +581,12 @@ export async function parseFile({ buffer, filename }) {
 
   let text = normalizeWhitespace(parsed.text);
   const warnings = [...(parsed.warnings || [])];
-  if (text.length > MAX_DOC_CHARS) {
+  const maxChars = env.maxDocumentChars;
+  if (text.length > maxChars) {
     warnings.push(
-      `Truncated from ${text.length.toLocaleString('en-US')} to ${MAX_DOC_CHARS.toLocaleString('en-US')} characters`,
+      `Truncated from ${text.length.toLocaleString('en-US')} to ${maxChars.toLocaleString('en-US')} characters`,
     );
-    text = truncate(text, MAX_DOC_CHARS);
+    text = truncate(text, maxChars);
   }
   if (text.length < 20) {
     const message =

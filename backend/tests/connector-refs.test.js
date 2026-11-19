@@ -49,6 +49,22 @@ describe('GitHub reference parsing', () => {
     });
   });
 
+  it('accepts a dot-prefixed repository name but never a dot path segment', () => {
+    const previous = env.githubAllowedRepos;
+    env.githubAllowedRepos = ['acme/.github', 'acme/.devcontainer'];
+    try {
+      expect(parseRepoRef('acme/.github').fullName).toBe('acme/.github');
+      expect(parseRepoRef('https://github.com/acme/.devcontainer/tree/main').fullName).toBe(
+        'acme/.devcontainer',
+      );
+      expect(() => parseRepoRef('acme/.')).toThrow(/cannot be "\." or "\.\."/);
+      expect(() => parseRepoRef('acme/..')).toThrow();
+      expect(() => parseRepoRef('.acme/.github')).toThrow();
+    } finally {
+      env.githubAllowedRepos = previous;
+    }
+  });
+
   it('enforces GitHub length and character limits', () => {
     withAllowlist(() => {
       expect(() => parseRepoRef(`${'a'.repeat(40)}/repo`)).toThrow();

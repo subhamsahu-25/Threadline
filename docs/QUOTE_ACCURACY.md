@@ -8,6 +8,13 @@ document, either character-for-character (`exact`) or after whitespace/case norm
 for review. Person-confirmed answers are excluded from this report because they are confirmed by
 a named teammate, not validated against a document quote.
 
+Quotes that contain redaction markers (`[REDACTED: kind]`) cannot be compared literally with the
+raw document, so they are checked differently: a linear scan locates the passages around each
+marker within a fixed time budget, and the quote is accepted only when re-running the redactor on
+the located passage reproduces the model's quote exactly. A marker quote whose located passage
+does not re-redact to the same text, or that resolves to a single short fragment, is recorded as
+`failed` rather than credited at the wrong offset.
+
 The corpus is the ATLAS demo documents (six labelled uploads) plus `messy-standup-dump.txt`, a
 deliberately unlabelled chat export with no decision/task prefixes. A single claim is counted under
 its best evidence: `exact` if any quote matched exactly, else `normalized`, else `failed`.

@@ -86,9 +86,10 @@ existing project. Rebuilding with `?reset=true` requires the Atlas lead's
 bearer token.
 
 Pick any of the four demo profiles on the sign-in screen — one click, no
-password, no registration. The same password (`Threadline#2026`) still works
-for the API, but the UI signs seeded accounts in automatically. The profile
-switcher in the top-right corner moves between people without signing out.
+password, no registration. The pickers call `POST /api/demo/session`, which
+exists only while demo seeding is enabled; seeded accounts get random passwords
+that are never written to the bundle or the docs. The profile switcher in the
+top-right corner moves between people without signing out.
 
 | Person | Role | What to try |
 | --- | --- | --- |
@@ -234,10 +235,11 @@ fails the build if any restricted string appears on any surface for any role.
 │   │       ├── ai/          Gemini + heuristic extraction, quote validation
 │   │       ├── reconstruction/  supersession, state, next actions
 │   │       └── handover/    compose, workflow, permission re-check
-│   ├── tests/               Vitest + Supertest suites (17 files, 124 tests)
+│   ├── tests/               Vitest + Supertest suites (56 files, 374 tests)
 │   └── README.md            Full API reference and backend documentation
 ├── docs/                    Architecture, testing, quote accuracy, sync and
-│                            clarification evidence, roadmap, improvement map
+│                            clarification evidence, roadmap, improvement map,
+│                            the Round 3 report (HTML, DOCX, PDF) and screenshots
 └── frontend/                React 18 + Vite + Tailwind SPA
     └── src/
         ├── pages/           Login, Projects, Overview, Sources, Claims,
@@ -270,7 +272,7 @@ production builds. `VITE_API_PROXY` overrides the local dev proxy target.
 
 ```bash
 cd backend
-npm test               # 281 Vitest + Supertest tests, 30 suites
+npm test               # 374 Vitest + Supertest tests, 56 suites
 npm run eval:quotes    # quote-accuracy report (rules extractor; Gemini when configured)
 
 cd ../frontend
@@ -279,7 +281,7 @@ npm run smoke          # built page mounts, every asset resolves
 npm run e2e            # Playwright: four journeys against a fresh in-memory API
 ```
 
-**30 suites, 281 tests**, each against its own ephemeral MongoDB — no external
+**56 suites, 374 tests**, each against its own ephemeral MongoDB — no external
 services needed. CI runs every suite on each push and pull request, alongside
 the Playwright journeys, a production-dependency audit and a secret scan.
 
@@ -338,6 +340,10 @@ the Playwright journeys, a production-dependency audit and a secret scan.
   audit action labels, and a corpus of secrets and PII samples.
 - **demo-seed**, **membership**, **llm-fallback** — seed authorization and
   scoped reset, role changes, and Gemini fallback on 404/429/503.
+- **n2 … n23** — the re-audit regressions: demo lockout and sessions, bounded
+  marker-quote scanning, durable jobs, share expiry and purge, clarification
+  visibility, AI-policy reasons, the upload janitor, parser limits, PDF script
+  fonts, the gated demo sign-in route and release-archive hygiene.
 
 The frontend is validated with `npm run build`, `npm run smoke` (the built page
 mounts and every bundled asset exists) and a Playwright run over the four core
@@ -350,7 +356,9 @@ green run is also summarized in
 [`docs/TESTING_NOTES.md`](docs/TESTING_NOTES.md). Quote accuracy is reported in
 [`docs/QUOTE_ACCURACY.md`](docs/QUOTE_ACCURACY.md): 29/29 rules-extracted claims
 and 35/35 Gemini-extracted claims matched their source verbatim (100% exact,
-0 failed).
+0 failed). Quotes that contain redaction markers are verified separately: a
+bounded linear scan locates each passage, and the quote counts only when
+re-redacting that passage reproduces the model's text exactly.
 
 ---
 
@@ -373,6 +381,9 @@ and 35/35 Gemini-extracted claims matched their source verbatim (100% exact,
   source's role scope.
 - Share links are recipient-bound, expire after `SHARE_TTL_DAYS`, are stored only
   as a SHA-256 token hash, and can be revoked; rotation requires confirmation.
+  Once the link has expired it answers `410 Gone`. An acknowledged recipient
+  keeps signed-in access to the handover after expiry until the lead revokes
+  their access or the handover is superseded.
   The seeded demo workspace is the single exception: its links open read-only
   without sign-in so evaluators can try the recipient journey, and the audit
   trail marks those acknowledgements as `public_share_link`.
@@ -383,8 +394,10 @@ and 35/35 Gemini-extracted claims matched their source verbatim (100% exact,
   may not access are redacted. Actions that must not proceed without a trace
   fail closed if their audit row cannot be written; anonymous share-link views
   and acknowledgements are attributed to an anonymous actor.
-- Purging a source erases its text from claims, handover versions and questions,
-  not just its visibility.
+- Purging a source erases its text everywhere it was copied: claims are retired,
+  clarifications cleared, feedback scrubbed, handover items removed and every
+  handover version, document, option, summary and audit label scrubbed — not
+  just the source's own visibility.
 - Pipeline failures are logged without exposing document text.
 
 The full privacy, security, accessibility and responsible-design statement is
@@ -407,6 +420,16 @@ for backend detail:
 - **The demo workspace is shared.** Other evaluators can see and change the
   seeded Atlas data. The in-app notice says so; **Rebuild seeded data** only
   re-creates the seeded sources and preserves visitor uploads and handovers.
+- **One-click demo sign-in depends on demo seeding.** The profile pickers use
+  `POST /api/demo/session`, which answers only while seeding is enabled
+  (`DEMO_MODE=true` in production, or `ALLOW_DEMO_SEED=true` outside it) and
+  returns 404 otherwise; seeded accounts have random, unpublished passwords, so
+  a deployment with seeding off has no one-click sign-in and no demo credentials
+  to fall back on.
+- **The auth token lives in `localStorage`.** It is not an HttpOnly cookie, so a
+  script injection could read it; the app blocks that with a strict CSP and
+  never renders untrusted HTML, but this is a documented residual risk rather
+  than a cookie/CSRF design.
 - **The queue is in-process.** Jobs are lost if the server restarts; startup
   recovery only re-queues sources stuck for more than 10 minutes.
 - **Rules-only mode reads labelled lines only.** Without a Gemini key it

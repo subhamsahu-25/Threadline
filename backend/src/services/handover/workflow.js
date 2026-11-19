@@ -15,7 +15,7 @@ import {
   Source,
   User,
 } from '../../models/index.js';
-import { canContribute, canManageProject, claimVisibleTo, isIncoming, roleOf, sourceVisibleTo } from '../access/policy.js';
+import { canContribute, canManageProject, claimVisibleTo, isIncoming, isMember, roleOf, sourceVisibleTo } from '../access/policy.js';
 import { recordAudit } from '../audit.js';
 import { deliverOutbound } from '../delivery.js';
 import { leadIds, notify } from '../notifications.js';
@@ -44,12 +44,19 @@ export function handoverAccess({ handover, project, user }) {
   const isRecipient = String(handover.recipient) === String(user._id);
   const isCreator = String(handover.createdBy) === String(user._id);
   const isLead = canManageProject(project, user);
-  // A cancelled or expired link must close the recipient's own route in as
-  // well as the token route, otherwise the link can be bypassed by signing in.
+  // Acknowledgement is the recipient's own copy. A link expiring only closes
+  // anonymous access; the named member keeps reading until they leave the
+  // project. Before acknowledgement the live link is still the only proof
+  // that sharing was intended. A superseded handover stays readable as
+  // history, without a live link and without any write affordance.
   const recipientMayView =
     isRecipient &&
-    ['shared', 'acknowledged'].includes(handover.status) &&
-    shareIsActive(handover);
+    isMember(project, user._id) &&
+    (handover.status === 'acknowledged'
+      ? !handover.revokedAt
+      : handover.status === 'superseded'
+        ? true
+        : handover.status === 'shared' && shareIsActive(handover));
   // An incoming recipient only ever receives. Drafts or handovers they
   // authored under the old, looser seat are not theirs to read anymore.
   const canView = isIncoming(project, user._id)
@@ -62,6 +69,51 @@ export function handoverAccess({ handover, project, user }) {
     isLead,
     canView,
   };
+}
+
+/**
+ * Lifecycle pointers are references, never copies of another handover's
+ * content or acknowledgement. Views expose them so the UI can show a
+ * read-only banner and link to the current handover.
+ */
+async function lifecycleFields(handover) {
+  let supersededByVersion = null;
+  if (handover.supersededBy) {
+    const newer = await Handover.findById(handover.supersededBy).select('version').lean();
+    supersededByVersion = newer?.version ?? null;
+  }
+  return {
+    supersededAt: handover.supersededAt || null,
+    supersededById: handover.supersededBy ? String(handover.supersededBy) : null,
+    supersededByVersion,
+    acknowledgedFrom: handover.acknowledgedFrom ? String(handover.acknowledgedFrom) : null,
+  };
+}
+
+/** Earlier releases in the regeneration chain, oldest last. Metadata only. */
+async function predecessorHistory(handover, limit = 10) {
+  const history = [];
+  const seen = new Set([String(handover._id)]);
+  let cursor = handover.regeneratedFrom;
+  while (cursor && history.length < limit) {
+    const id = String(cursor);
+    if (seen.has(id)) break;
+    seen.add(id);
+    const prior = await Handover.findById(id)
+      .select('_id version status acknowledgedAt supersededAt createdAt regeneratedFrom')
+      .lean();
+    if (!prior) break;
+    history.push({
+      id: prior._id,
+      version: prior.version,
+      status: prior.status,
+      acknowledgedAt: prior.acknowledgedAt || null,
+      supersededAt: prior.supersededAt || null,
+      createdAt: prior.createdAt,
+    });
+    cursor = prior.regeneratedFrom;
+  }
+  return history;
 }
 
 export function renderItem(item, { recipient }) {
@@ -398,6 +450,8 @@ export async function buildReviewerView({ handover, project, user }) {
     permissionsCheckedAt: handover.permissionsCheckedAt,
     lastAccessedAt: handover.lastAccessedAt,
     freshness,
+    ...(await lifecycleFields(handover)),
+    history: await predecessorHistory(handover),
     counts: summarizeReview({ items: visibleItems }),
   };
 }
@@ -802,6 +856,8 @@ export async function buildRecipientView({ handover, project, user, req, auditAc
     },
     snapshot: recipientSnapshot,
     freshness,
+    ...(await lifecycleFields(handover)),
+    history: await predecessorHistory(handover),
     // The acknowledgement record belongs to the recipient, but its revoked
     // list names items they may no longer read. Keep only what they saw and
     // the integrity hashes of those statements.
@@ -1423,6 +1479,61 @@ export function hashShareToken(token) {
   return createHash('sha256').update(token).digest('hex');
 }
 
+/**
+ * Once the replacement is actually shared, every earlier released handover in
+ * its regeneration chain stops being current: it is marked superseded and its
+ * share link is revoked. The old records stay readable as history, but the
+ * recipient can no longer act on two live handovers at once.
+ */
+async function supersedeEarlierReleases({ handover, project, actor, req }) {
+  let cursor = handover.regeneratedFrom;
+  if (!cursor) return 0;
+  const seen = new Set([String(handover._id)]);
+  let superseded = 0;
+
+  for (let depth = 0; cursor && depth < 20; depth += 1) {
+    const id = String(cursor);
+    if (seen.has(id)) break;
+    seen.add(id);
+
+    const earlier = await Handover.findById(id);
+    if (!earlier) break;
+    const next = earlier.regeneratedFrom;
+    if (!['shared', 'acknowledged'].includes(earlier.status)) {
+      cursor = next;
+      continue;
+    }
+
+    const hadLink = Boolean(earlier.shareTokenHash);
+    earlier.status = 'superseded';
+    earlier.supersededAt = new Date();
+    earlier.supersededBy = handover._id;
+    earlier.shareToken = undefined;
+    earlier.shareTokenHash = undefined;
+    earlier.shareExpiresAt = undefined;
+    if (hadLink) {
+      earlier.revokedAt = new Date();
+      earlier.revokedReason = 'Superseded by a newer handover';
+    }
+    await saveVersion(earlier, actor, 'superseded by a newer handover');
+
+    await recordAudit({
+      projectId: project._id,
+      actor,
+      action: 'handover.superseded',
+      targetType: 'handover',
+      targetId: earlier._id,
+      targetLabel: `Handover v${earlier.version}`,
+      meta: { supersededBy: String(handover._id), shareRevoked: hadLink },
+      req,
+      critical: true,
+    });
+    superseded += 1;
+    cursor = next;
+  }
+  return superseded;
+}
+
 export async function shareHandover({
   handover,
   project,
@@ -1439,7 +1550,7 @@ export async function shareHandover({
   if (!canManageProject(project, actor) && String(handover.createdBy) !== String(actor._id)) {
     throw forbidden('Only the author or a project lead can share this handover');
   }
-  if (!['approved', 'shared'].includes(handover.status)) {
+  if (!['approved', 'shared', 'acknowledged'].includes(handover.status)) {
     throw badRequest(
       `Only an approved handover can be shared (current: ${handover.status})`,
     );
@@ -1454,7 +1565,9 @@ export async function shareHandover({
   }
 
   const token = randomBytes(24).toString('hex');
-  handover.status = 'shared';
+  // Re-issuing a link for an acknowledged handover renews access without
+  // demanding a new review and approval; the recipient keeps their copy.
+  if (handover.status !== 'acknowledged') handover.status = 'shared';
   handover.sharedAt = new Date();
   // Only the hash is persisted; the plaintext link is handed back once below.
   handover.shareToken = undefined;
@@ -1476,6 +1589,15 @@ export async function shareHandover({
       : 'shared with recipient',
   );
 
+  // A regenerated handover becomes current only when it is shared; the
+  // earlier release is closed at the same moment.
+  const supersededEarlier = await supersedeEarlierReleases({
+    handover,
+    project,
+    actor,
+    req,
+  });
+
   await recordAudit({
     projectId: project._id,
     actor,
@@ -1483,7 +1605,7 @@ export async function shareHandover({
     targetType: 'handover',
     targetId: handover._id,
     targetLabel: `Handover v${handover.version}`,
-    meta: { shareExpiresAt: handover.shareExpiresAt },
+    meta: { shareExpiresAt: handover.shareExpiresAt, supersededEarlier },
     req,
     critical: true,
   });
@@ -1913,10 +2035,11 @@ export async function regenerateHandover({ handover, project, actor, req }) {
       version: 1,
       generation: composition.generation,
       regeneratedFrom: handover._id,
-      // The recipient acknowledged a version of this handover; the record
-      // travels with the replacement so the approval history stays complete.
-      acknowledgement: handover.acknowledgement || undefined,
-      acknowledgedAt: handover.acknowledgedAt || undefined,
+      // The previous acknowledgement is referenced, not copied: this record
+      // is a draft and must not display data the recipient acknowledged on a
+      // different handover. The old record keeps its own acknowledgement.
+      acknowledgedFrom:
+        handover.status === 'acknowledged' ? handover._id : undefined,
       freshness: { status: 'current', checkedAt: new Date(), changes: [] },
     });
 
@@ -2225,6 +2348,9 @@ export function summarizeHandover(handover, { viewer = 'reviewer' } = {}) {
     approvedAt: handover.approvedAt,
     sharedAt: handover.sharedAt,
     acknowledgedAt: handover.acknowledgedAt,
+    supersededAt: handover.supersededAt || null,
+    supersededById: handover.supersededBy ? String(handover.supersededBy) : null,
+    acknowledgedFrom: handover.acknowledgedFrom ? String(handover.acknowledgedFrom) : null,
     // Lists show only the freshness state. The per-change diff can quote
     // statements whose sources a given viewer cannot read, so the detail view
     // rebuilds it against that viewer's permissions instead.

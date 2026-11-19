@@ -40,6 +40,9 @@ export default defineConfig({
         PORT: backendPort,
         JWT_SECRET: 'e2e-only-secret-not-for-production',
         ALLOW_DEMO_SEED: 'true',
+        // Keep the run deterministic and offline: with a key from a developer
+        // .env the seed and compose steps call Gemini and can outlast the test.
+        GEMINI_API_KEY: '',
         OUTBOUND_WEBHOOK_URL: '',
         HANDOVER_REMINDER_ENABLED: 'false',
       },

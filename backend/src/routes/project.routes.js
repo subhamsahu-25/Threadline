@@ -63,6 +63,7 @@ import {
   auditQuerySchema,
   createProjectSchema,
   createSourceSchema,
+  emailField,
   listClaimsQuerySchema,
   resolveClaimSchema,
   resolveConflictSchema,
@@ -98,11 +99,26 @@ function defaultSourceVisibility({ kind, sensitivity, visibility }) {
   return { scope: 'roles', roles: ['lead'], users: [] };
 }
 
+/**
+ * Access follows the mailbox, not the typed address. An account that never
+ * confirmed its address cannot receive a project membership, so a person who
+ * registered somebody else's email gains nothing.
+ */
+function assertEmailVerified(user) {
+  if (user.emailVerifiedAt) return;
+  throw new AppError(
+    409,
+    'email_unverified',
+    `${user.name} has not confirmed ${user.email} yet. They must open the verification link before they can join a project.`,
+    { email: user.email, emailVerified: false },
+  );
+}
+
 router.get(
   '/',
   asyncHandler(async (req, res) => {
     const projects = await Project.find({ 'members.user': req.user._id })
-      .populate('members.user', 'name email')
+      .populate('members.user', 'name email emailVerifiedAt')
       .sort({ createdAt: -1 });
     res.json({ projects: projects.map((project) => serializeProject(project, req.user)) });
   }),
@@ -126,10 +142,15 @@ router.post(
     memberMap.set(String(req.user._id), { user: req.user._id, role: 'lead' });
 
     const missing = [];
+    const unverified = [];
     for (const entry of members) {
       const user = await User.findOne({ email: entry.email });
       if (!user) {
         missing.push(entry.email);
+        continue;
+      }
+      if (!user.emailVerifiedAt) {
+        unverified.push(entry.email);
         continue;
       }
       if (!memberMap.has(String(user._id))) {
@@ -141,6 +162,14 @@ router.post(
         missingEmails: missing,
         hint: 'Ask them to register first, then add them to the project',
       });
+    }
+    if (unverified.length > 0) {
+      throw new AppError(
+        409,
+        'email_unverified',
+        'Some invited accounts have not confirmed their email address yet.',
+        { unverifiedEmails: unverified, hint: 'Ask them to open the link in their confirmation email' },
+      );
     }
 
     if (transition?.outgoingUserId && !memberMap.has(String(transition.outgoingUserId))) {
@@ -158,7 +187,7 @@ router.post(
       targetDate,
     });
 
-    await project.populate('members.user', 'name email');
+    await project.populate('members.user', 'name email emailVerifiedAt');
     await recordAudit({
       projectId: project._id,
       actor: req.user,
@@ -178,7 +207,7 @@ router.get(
   '/:projectId',
   loadProject,
   asyncHandler(async (req, res) => {
-    await req.project.populate('members.user', 'name email');
+    await req.project.populate('members.user', 'name email emailVerifiedAt');
     const sources = await Source.find({ project: req.project._id, deletedAt: null }).lean();
     const visibleSources = sources.filter((source) =>
       sourceVisibleTo(source, req.project, req.user._id),
@@ -271,8 +300,30 @@ router.patch(
       critical: true,
     });
 
-    await req.project.populate('members.user', 'name email');
+    await req.project.populate('members.user', 'name email emailVerifiedAt');
     res.json({ project: serializeProject(req.project, req.user) });
+  }),
+);
+
+router.get(
+  '/:projectId/member-lookup',
+  loadProject,
+  requireProjectLead,
+  asyncHandler(async (req, res) => {
+    const parsed = emailField.safeParse(req.query.email);
+    if (!parsed.success) throw badRequest('Enter a valid email address');
+    const user = await User.findOne({ email: parsed.data }).select(
+      'name email emailVerifiedAt',
+    );
+    res.json({
+      lookup: {
+        email: parsed.data,
+        found: Boolean(user),
+        name: user?.name || null,
+        emailVerified: Boolean(user?.emailVerifiedAt),
+        isMember: user ? Boolean(roleOf(req.project, user._id)) : false,
+      },
+    });
   }),
 );
 
@@ -292,6 +343,7 @@ router.post(
     if (roleOf(req.project, user._id)) {
       throw conflict(`${user.name} is already a member of this project`);
     }
+    assertEmailVerified(user);
 
     req.project.members.push({ user: user._id, role });
     await req.project.save();
@@ -316,7 +368,7 @@ router.post(
       actor: req.user,
     });
 
-    await req.project.populate('members.user', 'name email');
+    await req.project.populate('members.user', 'name email emailVerifiedAt');
     res.status(201).json({ project: serializeProject(req.project, req.user) });
   }),
 );
@@ -339,7 +391,7 @@ router.patch(
     if (member.role === role) {
       // Serialization reads member.user for names and emails, so the no-op
       // path must populate exactly like the changed path.
-      await req.project.populate('members.user', 'name email');
+      await req.project.populate('members.user', 'name email emailVerifiedAt');
       res.json({ project: serializeProject(req.project, req.user) });
       return;
     }
@@ -367,7 +419,7 @@ router.patch(
       actor: req.user,
     });
 
-    await req.project.populate('members.user', 'name email');
+    await req.project.populate('members.user', 'name email emailVerifiedAt');
     res.json({ project: serializeProject(req.project, req.user) });
   }),
 );
@@ -694,16 +746,24 @@ router.post(
     if (ownerName) {
       // A typed name is matched to a project member so the recipient's "you
       // own this" board and notifications target an account, not a string.
-      // An ambiguous first name is kept as text and flagged for a person.
+      // Only an exact email or full name links an account; a first name stays
+      // text and is flagged for a person to confirm.
       const directory = await loadOwnerDirectory(req.project);
       ownerResolution = resolveOwnerName(directory, ownerName);
       claim.ownerName = ownerName.trim().slice(0, 120);
       claim.ownerUser = ownerResolution.userId || undefined;
-      if (ownerResolution.ambiguous) {
+      if (ownerResolution.userId) {
+        claim.flags = (claim.flags || []).filter(
+          (flag) => flag !== 'ambiguous_owner' && flag !== 'owner_unconfirmed',
+        );
+      } else if (ownerResolution.unconfirmed || ownerResolution.ambiguous) {
         claim.state = 'needs_review';
-        claim.flags = [...new Set([...(claim.flags || []), 'ambiguous_owner'])];
-      } else if (ownerResolution.userId) {
-        claim.flags = (claim.flags || []).filter((flag) => flag !== 'ambiguous_owner');
+        claim.flags = [
+          ...new Set([
+            ...(claim.flags || []),
+            ownerResolution.unconfirmed ? 'owner_unconfirmed' : 'ambiguous_owner',
+          ]),
+        ];
       }
     }
 
@@ -743,6 +803,7 @@ router.post(
           ownerName,
           ownerUserId: ownerResolution.userId ? String(ownerResolution.userId) : null,
           ambiguous: ownerResolution.ambiguous,
+          unconfirmed: ownerResolution.unconfirmed,
           before: before.ownerName || null,
         },
         req,
@@ -983,10 +1044,28 @@ router.patch(
     const changesAccess =
       req.body.name !== undefined ||
       req.body.sensitivity !== undefined ||
-      req.body.visibility !== undefined;
+      req.body.visibility !== undefined ||
+      req.body.aiPolicy?.allowExternal !== undefined;
     if (changesAccess && !sourceVisibleTo(source, req.project, req.user._id)) {
       throw forbidden(
         'You can only change a source you are authorized to read. Use purge to remove it instead.',
+      );
+    }
+
+    // Sending a confidential source to a third-party model is a deliberate
+    // decision that has to be justified in writing. Re-saving a source that
+    // already allows it does not need a fresh reason.
+    const willBeConfidential = (req.body.sensitivity ?? source.sensitivity) === 'confidential';
+    const alreadyAllowedConfidential =
+      source.sensitivity === 'confidential' && allowsExternalAI(source);
+    const enablingExternalOnConfidential =
+      req.body.aiPolicy?.allowExternal === true &&
+      willBeConfidential &&
+      !alreadyAllowedConfidential;
+    const reason = redactText(String(req.body.reason || '').trim()).text;
+    if (enablingExternalOnConfidential && reason.length < 3) {
+      throw badRequest(
+        'A written reason is required before a confidential source can be sent to an external model',
       );
     }
 
@@ -1040,25 +1119,28 @@ router.patch(
 
     // Any access change (sensitivity, visibility or hidden state) alters what
     // a recipient can read, so live handovers are re-judged immediately.
-    if (
+    const accessChanged =
       source.sensitivity !== before.sensitivity ||
       JSON.stringify(source.visibility) !== JSON.stringify(before.visibility) ||
-      Boolean(source.hiddenAt) !== before.hidden
-    ) {
+      Boolean(source.hiddenAt) !== before.hidden;
+    if (accessChanged) {
       await refreshOutdatedHandovers({ projectId: req.project._id, req });
     }
+
+    const aiPolicyChanged = before.allowExternalAI !== allowsExternalAI(source);
+    const auditAction =
+      req.body.hidden !== undefined
+        ? source.hiddenAt
+          ? 'source.hidden'
+          : 'source.unhidden'
+        : aiPolicyChanged && !accessChanged
+          ? 'source.ai_policy_changed'
+          : 'source.access_changed';
 
     await recordAudit({
       projectId: req.project._id,
       actor: req.user,
-      action:
-        req.body.hidden !== undefined
-          ? source.hiddenAt
-            ? 'source.hidden'
-            : 'source.unhidden'
-          : before.allowExternalAI !== allowsExternalAI(source) && !changesAccess
-            ? 'source.ai_policy_changed'
-            : 'source.access_changed',
+      action: auditAction,
       targetType: 'source',
       targetId: source._id,
       targetLabel: source.name,
@@ -1069,11 +1151,32 @@ router.patch(
           sensitivity: source.sensitivity,
           hidden: Boolean(source.hiddenAt),
           allowExternalAI: allowsExternalAI(source),
+          reason: reason || null,
         },
       },
       req,
       critical: true,
     });
+
+    // The restricted audience is told when their confidential source is
+    // allowed to leave the server, so consent is not only the lead's.
+    if (
+      before.allowExternalAI !== allowsExternalAI(source) &&
+      allowsExternalAI(source) &&
+      source.sensitivity === 'confidential'
+    ) {
+      const audience = (req.project.members || [])
+        .map((member) => member.user?._id ?? member.user)
+        .filter((id) => id && sourceVisibleTo(source, req.project, id));
+      await notify({
+        project: req.project,
+        recipients: audience,
+        type: 'source.external_ai_enabled',
+        entityType: 'source',
+        entityId: source._id,
+        actor: req.user,
+      });
+    }
 
     res.json({ source: serializeSource(source) });
   }),

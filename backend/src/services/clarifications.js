@@ -77,8 +77,23 @@ async function visibleClaimIds({ project, userId, claimIds }) {
   );
 }
 
+function optionClaimIds(record) {
+  return (record.answerOptionClaimIds || []).map((id) => String(id));
+}
+
+/**
+ * A conflict question quotes several decisions, so it is readable only when
+ * every claim behind it (the question's own claim and each option's claim) is
+ * readable. One hidden decision is enough to hide the whole record: showing
+ * only the readable options would still reveal that a hidden one exists and
+ * what it was compared against.
+ */
 function isRestricted(record, visibleIds) {
-  return Boolean(record.claim) && !visibleIds.has(String(record.claim));
+  const ids = [
+    record.claim ? String(record.claim) : null,
+    ...optionClaimIds(record),
+  ].filter(Boolean);
+  return ids.some((id) => !visibleIds.has(id));
 }
 
 async function loadOutgoingMember(project) {
@@ -128,6 +143,7 @@ function promptForConflict(conflictEntry) {
 }
 
 export async function buildClarificationCandidates({ project, actor }) {
+  await recoverStaleAnswers({ projectId: project._id });
   const outgoing = await loadOutgoingMember(project);
   if (!outgoing) {
     return {
@@ -214,6 +230,7 @@ export async function buildClarificationCandidates({ project, actor }) {
       })),
       prompt: promptForConflict(entry),
       answerOptions: entry.statements.map((statement) => statement.statement),
+      answerOptionClaimIds: entry.statements.map((statement) => String(statement.claimId)),
       askable: readable,
       unaskableReason: readable ? null : 'outgoing_member_lacks_access',
       clarificationId: existing ? String(existing._id) : null,
@@ -255,6 +272,9 @@ async function createClarificationRecord({ project, actor, outgoing, candidate, 
     askedOf: outgoing.id,
     askedOfName: outgoing.name,
     answerOptions: (candidate.answerOptions || []).slice(0, 20),
+    answerOptionClaimIds: (candidate.answerOptionClaimIds || [])
+      .slice(0, 20)
+      .filter((id) => /^[a-f\d]{24}$/i.test(String(id))),
   });
 
   await recordAudit({
@@ -560,13 +580,75 @@ function restoreClaimState(claimId, previous) {
 async function releaseClarification(clarificationId) {
   await Clarification.updateOne(
     { _id: clarificationId, status: 'answering' },
-    { $set: { status: 'open' } },
+    { $set: { status: 'open', answeringAt: null } },
   ).catch(() => {});
 }
 
-export async function answerClarification({ clarificationId, actor, answer, req }) {
+// Long enough for a genuinely slow answer, short enough that a crashed worker
+// does not block the departing member for the rest of the handover.
+export const STALE_ANSWERING_MS = 5 * 60 * 1000;
+
+async function removeHalfCreatedConfirmation(clarification) {
+  const sources = await Source.find({
+    project: clarification.project,
+    kind: 'confirmation',
+    externalRef: String(clarification._id),
+  });
+  for (const source of sources) {
+    await Evidence.deleteMany({ source: source._id });
+    await Claim.deleteMany({ source: source._id });
+    await Document.deleteMany({ source: source._id });
+    await Source.deleteOne({ _id: source._id });
+  }
+  return sources.length;
+}
+
+/**
+ * A crash between flipping the question to "answering" and saving the answer
+ * used to leave it stuck there with no way to retry. Any row whose flip is
+ * older than the cutoff goes back to "open", and the confirmation records the
+ * interrupted attempt may have already created are removed so the retry starts
+ * clean. Rows written before answeringAt existed are judged by updatedAt.
+ */
+export async function recoverStaleAnswers({
+  projectId = null,
+  cutoffMs = STALE_ANSWERING_MS,
+  now = Date.now(),
+} = {}) {
+  const cutoff = new Date(now - cutoffMs);
+  const stale = await Clarification.find({
+    status: 'answering',
+    ...(projectId ? { project: projectId } : {}),
+    $or: [
+      { answeringAt: { $lt: cutoff } },
+      { answeringAt: null, updatedAt: { $lt: cutoff } },
+      { answeringAt: { $exists: false }, updatedAt: { $lt: cutoff } },
+    ],
+  });
+
+  let recovered = 0;
+  let scrubbed = 0;
+  for (const record of stale) {
+    scrubbed += await removeHalfCreatedConfirmation(record);
+    const result = await Clarification.updateOne(
+      { _id: record._id, status: 'answering' },
+      { $set: { status: 'open', answeringAt: null } },
+    );
+    if (result.modifiedCount > 0) recovered += 1;
+  }
+  return { recovered, scrubbed };
+}
+
+async function loadClarificationForAction(clarificationId) {
   const existing = await Clarification.findById(clarificationId);
   if (!existing) throw notFound('Clarification not found');
+  if (existing.status !== 'answering') return existing;
+  await recoverStaleAnswers({ projectId: existing.project });
+  return (await Clarification.findById(clarificationId)) || existing;
+}
+
+export async function answerClarification({ clarificationId, actor, answer, req }) {
+  const existing = await loadClarificationForAction(clarificationId);
 
   if (String(existing.askedOf) !== String(actor._id)) {
     throw forbidden('Only the person this question was addressed to can answer it');
@@ -589,7 +671,7 @@ export async function answerClarification({ clarificationId, actor, answer, req 
   // a double submission cannot create two confirmations or orphan records.
   const clarification = await Clarification.findOneAndUpdate(
     { _id: existing._id, status: 'open' },
-    { $set: { status: 'answering' } },
+    { $set: { status: 'answering', answeringAt: new Date() } },
     { new: true },
   );
   if (!clarification) {
@@ -791,8 +873,7 @@ export async function answerClarification({ clarificationId, actor, answer, req 
 }
 
 export async function declineClarification({ clarificationId, actor, note, req }) {
-  const existing = await Clarification.findById(clarificationId);
-  if (!existing) throw notFound('Clarification not found');
+  const existing = await loadClarificationForAction(clarificationId);
 
   if (String(existing.askedOf) !== String(actor._id)) {
     throw forbidden('Only the person this question was addressed to can decline it');
@@ -909,6 +990,7 @@ export async function closeOpenClarificationsForMember({ project, userId, actor,
 }
 
 export async function listMyClarifications({ user, status }) {
+  await recoverStaleAnswers();
   const projects = await Project.find({ 'members.user': user._id }).lean();
   const projectIds = projects.map((project) => project._id);
   const projectById = new Map(projects.map((project) => [String(project._id), project]));
@@ -917,7 +999,10 @@ export async function listMyClarifications({ user, status }) {
   if (status) query.status = status;
 
   const records = await Clarification.find(query).sort({ createdAt: -1 }).limit(100).lean();
-  const claimIds = records.filter((record) => record.claim).map((record) => record.claim);
+  const claimIds = records.flatMap((record) => [
+    ...(record.claim ? [record.claim] : []),
+    ...(record.answerOptionClaimIds || []),
+  ]);
   const claims = await Claim.find({ _id: { $in: claimIds } })
     .select('type statement topic status ownerName')
     .lean();
@@ -930,8 +1015,11 @@ export async function listMyClarifications({ user, status }) {
     const project = projectById.get(projectId);
     if (!project) continue;
     const requested = records
-      .filter((record) => String(record.project) === projectId && record.claim)
-      .map((record) => record.claim);
+      .filter((record) => String(record.project) === projectId)
+      .flatMap((record) => [
+        ...(record.claim ? [record.claim] : []),
+        ...(record.answerOptionClaimIds || []),
+      ]);
     visibleByProject.set(
       projectId,
       await visibleClaimIds({ project, userId: user._id, claimIds: requested }),
@@ -963,6 +1051,7 @@ export async function listMyClarifications({ user, status }) {
 }
 
 export async function listProjectClarifications({ project, viewer }) {
+  await recoverStaleAnswers({ projectId: project._id });
   const records = await Clarification.find({ project: project._id })
     .sort({ createdAt: -1 })
     .limit(100)
@@ -973,7 +1062,10 @@ export async function listProjectClarifications({ project, viewer }) {
   const visibleIds = await visibleClaimIds({
     project,
     userId: viewer._id,
-    claimIds: records.filter((record) => record.claim).map((record) => record.claim),
+    claimIds: records.flatMap((record) => [
+      ...(record.claim ? [record.claim] : []),
+      ...(record.answerOptionClaimIds || []),
+    ]),
   });
   return records.map((record) =>
     serializeClarification(record, {

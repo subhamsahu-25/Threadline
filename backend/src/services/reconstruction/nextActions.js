@@ -1,4 +1,4 @@
-import { truncate } from '../../lib/text.js';
+import { calendarDate, truncate } from '../../lib/text.js';
 
 const PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 
@@ -78,7 +78,7 @@ export function deriveNextActions({ state, now = new Date(), limit = 10 }) {
           kind: 'overdue_task',
           priority: 'high',
           title: `Follow up overdue task: ${truncate(claim.statement, 90)}`,
-          reason: `Due date passed on ${new Date(claim.dueAt).toISOString().slice(0, 10)}${
+          reason: `Due date passed on ${calendarDate(claim.dueAt)}${
             claim.ownerName ? `; owner recorded as ${claim.ownerName}` : ''
           }.`,
           claimIds: [claim._id],

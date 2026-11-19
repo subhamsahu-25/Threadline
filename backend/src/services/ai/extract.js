@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { env, llmEnabled } from '../../config/env.js';
 import { logger } from '../../lib/logger.js';
 import { redactText } from '../../lib/redaction.js';
-import { keyOf, keyOfOrHash, locateQuote, missingValueTokens, normalizeForMatch, normalizeWithMap, truncate } from '../../lib/text.js';
+import { keyOf, keyOfOrHash, locateMarkedQuoteSpans, locateQuote, missingValueTokens, normalizeForMatch, truncate } from '../../lib/text.js';
 import { Claim, Evidence, CLAIM_TYPES, CLAIM_STATUSES } from '../../models/index.js';
 import { contextBefore } from '../ingest/chunker.js';
 import { loadOwnerDirectory, resolveOwnerName } from '../owners.js';
@@ -270,34 +270,39 @@ async function extractItemsForChunk({ project, source, doc, chunk }) {
   return { items, method: 'heuristic', warnings: heuristic.warnings };
 }
 
-const REDACTION_MARKER = /\[REDACTED: [^\]]+\]/g;
-
 /**
  * Locates a quote that came back from the redacted model input. Between two
  * literal fragments the model saw a typed marker instead of the secret, so the
  * gap is allowed to span the original value and the offsets still map to the
  * real document.
+ *
+ * A marker quote only counts when re-redacting the located passage reproduces
+ * the model's quote. A quote that says "Contact: [REDACTED: email]" must not be
+ * satisfied by the first unrelated "Contact:" in the document, and a single
+ * short fragment is never enough to prove a redacted passage.
  */
-function locateModelQuote(haystack, quote) {
-  const direct = locateQuote(haystack, quote);
-  if (direct.ok || !String(quote).includes('[REDACTED:')) return direct;
+export function locateModelQuote(haystack, quote) {
+  const hasMarker = String(quote).includes('[REDACTED:');
+  const direct = hasMarker ? { ok: false } : locateQuote(haystack, quote);
+  if (direct.ok) return direct;
 
-  const parts = String(quote)
-    .split(REDACTION_MARKER)
-    .map((part) => normalizeForMatch(part))
-    .filter(Boolean);
-  if (parts.length === 0) return direct;
+  const located = locateMarkedQuoteSpans(haystack, quote);
+  if (!located.ok) return direct;
+  const singleFragment = located.fragments.length === 1;
+  if (singleFragment && located.fragments[0].split(' ').length < 8) return direct;
 
-  const normalized = normalizeWithMap(haystack);
-  const pattern = parts
-    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('.{0,3000}?');
-  const match = new RegExp(pattern).exec(normalized.text);
-  if (!match) return direct;
+  const lineStart = haystack.lastIndexOf('\n', located.start - 1) + 1;
+  const nextBreak = haystack.indexOf('\n', located.end);
+  const lineEnd = nextBreak === -1 ? haystack.length : nextBreak;
+  const passage = haystack.slice(lineStart, lineEnd);
+  // The model quoted one line; a scan that jumped across a line break found a
+  // coincidence, not the passage it saw.
+  if (!String(quote).includes('\n') && passage.includes('\n')) return direct;
 
-  const start = normalized.map[match.index];
-  const end = normalized.map[match.index + match[0].length - 1] + 1;
-  return { ok: true, start, end, match: 'normalized' };
+  const redacted = normalizeForMatch(redactText(passage).text);
+  if (!redacted.includes(normalizeForMatch(quote))) return direct;
+
+  return { ok: true, start: located.start, end: located.end, match: 'normalized' };
 }
 
 function resolveEvidence({ doc, chunk, quote }) {
@@ -457,7 +462,12 @@ export async function extractClaimsForDocuments({
     const ownerResolution = item.owner
       ? resolveOwnerName(ownerDirectory, item.owner)
       : { userId: null, ambiguous: false };
-    if (ownerResolution.ambiguous) {
+    if (ownerResolution.unconfirmed) {
+      // A first name may point at someone outside the project, so it stays
+      // text and goes to a reviewer instead of being linked to a member.
+      flags.add('owner_unconfirmed');
+      needsReview = true;
+    } else if (ownerResolution.ambiguous) {
       flags.add('ambiguous_owner');
       needsReview = true;
     }

@@ -16,7 +16,7 @@ import { useWorkspace } from '../context/WorkspaceContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { api, errorMessage } from '../lib/api.js';
 import { DEMO_PERSONAS, ROLE_LABELS } from '../lib/constants.js';
-import { daysUntil, formatDate, formatRelative } from '../lib/format.js';
+import { daysUntil, formatDate, formatIstIso, formatRelative } from '../lib/format.js';
 import { RoleBadge } from '../components/badges.jsx';
 import {
   Avatar,
@@ -39,7 +39,7 @@ const EMPTY_FORM = {
   key: '',
   name: '',
   description: '',
-  startedAt: new Date().toISOString().slice(0, 10),
+  startedAt: formatIstIso(new Date()).slice(0, 10),
   targetDate: '',
   outgoingName: '',
   plannedDepartureAt: '',
@@ -165,9 +165,9 @@ export default function ProjectsPage() {
   useEffect(() => {
     let active = true;
     api
-      .get('/api/health')
+      .get('/api/demo/status')
       .then((data) => {
-        if (active) setDemoSeedEnabled(data?.demoSeedEnabled === true);
+        if (active) setDemoSeedEnabled(data?.seedEnabled === true);
       })
       .catch(() => {
         if (active) setDemoSeedEnabled(false);

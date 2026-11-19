@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import {
   AlertTriangle,
@@ -154,6 +155,8 @@ export default function RecipientHandover({
   const [feedbackError, setFeedbackError] = useState('');
   const [feedbackSending, setFeedbackSending] = useState(false);
   const [feedbackSent, setFeedbackSent] = useState('');
+  const [showAllOwn, setShowAllOwn] = useState(false);
+  const [showAllBlocked, setShowAllBlocked] = useState(false);
 
   const counts = useMemo(() => {
     const result = {};
@@ -168,6 +171,8 @@ export default function RecipientHandover({
   );
 
   const acknowledged = handover.status === 'acknowledged';
+  const superseded = handover.status === 'superseded';
+  const canAct = !superseded;
   const snapshot = handover.snapshot || {};
   const contentChanged = Boolean(handover.permissionRecheck?.contentChanged);
   const firstWeek = handover.firstWeek;
@@ -217,6 +222,28 @@ export default function RecipientHandover({
 
   return (
     <div className="mx-auto max-w-4xl">
+      {superseded && (
+        <div
+          role="status"
+          className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] leading-5 text-amber-900"
+        >
+          <p className="font-semibold">This handover was superseded</p>
+          <p className="mt-0.5 text-amber-900/85">
+            A newer handover replaced it
+            {handover.supersededByVersion ? ` (v${handover.supersededByVersion})` : ''} and its
+            share link was revoked. It stays here as read-only history, so you cannot acknowledge
+            or comment on it.{' '}
+            {handover.supersededById && (
+              <Link
+                to={`/projects/${projectId}/handovers/${handover.supersededById}`}
+                className="font-semibold underline underline-offset-2"
+              >
+                Open the current handover
+              </Link>
+            )}
+          </p>
+        </div>
+      )}
       <div className="mb-5 overflow-hidden rounded-card border border-line bg-white shadow-card">
         <div className="border-b border-line bg-brand-950 px-5 py-5 text-white sm:px-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -233,10 +260,10 @@ export default function RecipientHandover({
               </p>
             </div>
             <Badge
-              tone={acknowledged ? 'green' : 'amber'}
+              tone={superseded ? 'slate' : acknowledged ? 'green' : 'amber'}
               className="border-white/20 bg-white/10 text-white"
             >
-              {acknowledged ? 'Acknowledged' : 'Shared with you'}
+              {superseded ? 'Superseded' : acknowledged ? 'Acknowledged' : 'Shared with you'}
             </Badge>
           </div>
         </div>
@@ -436,7 +463,7 @@ export default function RecipientHandover({
                 </p>
               ) : (
                 <ul className="space-y-1.5">
-                  {firstWeek.youOwn.slice(0, 6).map((entry) => (
+                  {firstWeek.youOwn.slice(0, showAllOwn ? undefined : 6).map((entry) => (
                     <li key={entry.claimId} className="rounded-md border border-line bg-slate-50/70 px-2.5 py-1.5">
                       <p className="text-[11.5px] font-medium leading-4">{entry.statement}</p>
                       <p className="mt-0.5 flex flex-wrap items-center gap-x-2 font-mono text-[9.5px] text-ink-muted">
@@ -448,6 +475,16 @@ export default function RecipientHandover({
                   ))}
                 </ul>
               )}
+              {firstWeek.youOwn.length > 6 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllOwn((value) => !value)}
+                  aria-expanded={showAllOwn}
+                  className="mt-1.5 text-[11px] font-semibold text-brand-700 hover:text-brand-900"
+                >
+                  {showAllOwn ? 'Show fewer' : `View all ${firstWeek.youOwn.length}`}
+                </button>
+              )}
             </div>
             <div>
               <p className="eyebrow mb-1.5">Blocked {firstWeek.blocked.length}</p>
@@ -457,7 +494,7 @@ export default function RecipientHandover({
                 </p>
               ) : (
                 <ul className="space-y-1.5">
-                  {firstWeek.blocked.slice(0, 6).map((entry) => (
+                  {firstWeek.blocked.slice(0, showAllBlocked ? undefined : 6).map((entry) => (
                     <li key={entry.claimId} className="rounded-md border border-line bg-slate-50/70 px-2.5 py-1.5">
                       <p className="text-[11.5px] font-medium leading-4">{entry.statement}</p>
                       <p className="mt-0.5 font-mono text-[9.5px] text-ink-muted">
@@ -466,6 +503,16 @@ export default function RecipientHandover({
                     </li>
                   ))}
                 </ul>
+              )}
+              {firstWeek.blocked.length > 6 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllBlocked((value) => !value)}
+                  aria-expanded={showAllBlocked}
+                  className="mt-1.5 text-[11px] font-semibold text-brand-700 hover:text-brand-900"
+                >
+                  {showAllBlocked ? 'Show fewer' : `View all ${firstWeek.blocked.length}`}
+                </button>
               )}
             </div>
           </div>
@@ -507,7 +554,7 @@ export default function RecipientHandover({
               Download PDF
             </Button>
           )}
-          {showAcknowledge && !acknowledged && (
+          {showAcknowledge && !acknowledged && canAct && (
             <Button
               icon={CheckCircle2}
               loading={acknowledging}
@@ -558,7 +605,7 @@ export default function RecipientHandover({
             key={item.claimId}
             item={item}
             onEvidence={setEvidenceId}
-            onFlag={onFeedback ? openFeedback : undefined}
+            onFlag={onFeedback && canAct ? openFeedback : undefined}
           />
         ))}
         {items.length === 0 && (
@@ -570,7 +617,7 @@ export default function RecipientHandover({
         )}
       </div>
 
-      {onFeedback && (
+      {onFeedback && canAct && (
         <Card className="mt-4 p-4" data-testid="recipient-feedback">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <SectionHeading
@@ -643,7 +690,7 @@ export default function RecipientHandover({
         </div>
       </div>
 
-      {showAcknowledge && !acknowledged && (
+      {showAcknowledge && !acknowledged && canAct && (
         <div className="mt-4 flex justify-end">
           <Button
             size="lg"

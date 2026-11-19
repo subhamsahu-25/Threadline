@@ -31,6 +31,9 @@ export function serializeProject(project, user) {
       incoming: Boolean(member.incoming),
       name: member.user?.name,
       email: member.user?.email,
+      // Leads see this before inviting or promoting somebody, and the add
+      // endpoint refuses an unconfirmed address outright.
+      emailVerified: Boolean(member.user?.emailVerifiedAt),
       joinedAt: member.joinedAt,
     })),
     transition: data.transition,

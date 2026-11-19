@@ -3,7 +3,6 @@ import { AppError } from '../../lib/errors.js';
 import { truncate } from '../../lib/text.js';
 
 const API = 'https://api.github.com';
-const MAX_DOC_CHARS = 40_000;
 // One page of 100 issues or 50 pull requests keeps the check at a handful of
 // calls while covering far more history than the old 25/15 caps.
 const MAX_ISSUES = 100;
@@ -37,11 +36,13 @@ export function assertRepoAllowed(fullName) {
   }
 }
 
-function assertSafeSegment(segment, label) {
+function assertSafeSegment(segment, label, { allowLeadingDot = false } = {}) {
   if (segment === '.' || segment === '..') {
     throw invalidRef(`The ${label} cannot be "." or ".."`);
   }
-  if (segment.startsWith('.') || segment.endsWith('.')) {
+  // GitHub repositories such as `.github` and `.devcontainer` are legitimate,
+  // while a leading dot on the owner is not part of any GitHub username.
+  if ((!allowLeadingDot && segment.startsWith('.')) || segment.endsWith('.')) {
     throw invalidRef(`The ${label} cannot start or end with a dot`);
   }
   if (segment.includes('%') || segment.includes('\\')) {
@@ -71,7 +72,7 @@ export function parseRepoRef(input) {
   const owner = segments[0];
   const repo = segments[1].replace(/\.git$/i, '');
   assertSafeSegment(owner, 'owner');
-  assertSafeSegment(repo, 'repository name');
+  assertSafeSegment(repo, 'repository name', { allowLeadingDot: true });
   if (!OWNER_RE.test(owner)) {
     throw invalidRef('The owner must be 1-39 letters, numbers or hyphens, without a leading or trailing hyphen');
   }
@@ -215,12 +216,13 @@ async function fetchPaged(path, { max, perPage = 100, cache = null, cacheKey = n
 
 function doc({ kind, title, rawText, author, occurredAt, url, meta = {}, warnings = [] }) {
   const fullText = String(rawText ?? '').replace(/\r\n?/g, '\n');
-  const truncated = fullText.length > MAX_DOC_CHARS;
-  const text = truncate(fullText, MAX_DOC_CHARS);
+  const maxChars = env.maxDocumentChars;
+  const truncated = fullText.length > maxChars;
+  const text = truncate(fullText, maxChars);
   const parseWarnings = [...warnings];
   if (truncated) {
     parseWarnings.push(
-      `Truncated from ${fullText.length.toLocaleString('en-US')} to ${MAX_DOC_CHARS.toLocaleString('en-US')} characters`,
+      `Truncated from ${fullText.length.toLocaleString('en-US')} to ${maxChars.toLocaleString('en-US')} characters`,
     );
   }
   return {

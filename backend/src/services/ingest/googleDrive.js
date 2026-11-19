@@ -8,7 +8,6 @@ const MAX_FILES = 200;
 const MAX_FOLDERS = 50;
 const MAX_FOLDER_DEPTH = 5;
 const PAGE_SIZE = 100;
-const MAX_DOC_CHARS = 40_000;
 const MAX_DOWNLOAD_BYTES = env.maxUploadMb * 1024 * 1024;
 
 const GOOGLE_DOC_MIME = 'application/vnd.google-apps.document';
@@ -276,15 +275,16 @@ export async function collectDriveDocuments(ref) {
         const parsed = await exportText(entry);
         if (!parsed) continue;
         const fullText = String(parsed.text ?? '');
-        const text = truncate(fullText, MAX_DOC_CHARS);
+        const maxChars = env.maxDocumentChars;
+        const text = truncate(fullText, maxChars);
         if (text.trim().length < 20) {
           notes.push(`${entry.name} was skipped: the exported text was too short to analyse`);
           continue;
         }
         const parseWarnings = [...(parsed.warnings || [])];
-        if (fullText.length > MAX_DOC_CHARS) {
+        if (fullText.length > maxChars) {
           parseWarnings.push(
-            `Truncated from ${fullText.length.toLocaleString('en-US')} to ${MAX_DOC_CHARS.toLocaleString('en-US')} characters`,
+            `Truncated from ${fullText.length.toLocaleString('en-US')} to ${maxChars.toLocaleString('en-US')} characters`,
           );
         }
         documents.push({

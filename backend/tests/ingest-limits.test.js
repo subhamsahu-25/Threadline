@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { env } from '../src/config/env.js';
 import { collectDriveDocuments } from '../src/services/ingest/googleDrive.js';
 import {
-  MAX_DOC_CHARS,
   MAX_DOCX_ENTRIES,
 } from '../src/services/ingest/limits.js';
 import { parseFile } from '../src/services/ingest/parsers.js';
@@ -221,10 +220,10 @@ describe('document parsing limits', () => {
 
   it('caps extracted characters and reports the truncation', async () => {
     const parsed = await parseFile({
-      buffer: Buffer.from('a'.repeat(MAX_DOC_CHARS + 50_000), 'utf8'),
+      buffer: Buffer.from('a'.repeat(env.maxDocumentChars + 50_000), 'utf8'),
       filename: 'long.txt',
     });
-    expect(parsed.text.length).toBeLessThanOrEqual(MAX_DOC_CHARS);
+    expect(parsed.text.length).toBeLessThanOrEqual(env.maxDocumentChars);
     expect(parsed.warnings.join(' ')).toMatch(/Truncated from/);
   });
 

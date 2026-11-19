@@ -16,7 +16,7 @@ import { Avatar, Badge, Button, Field, Input } from '../components/ui.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { api, errorMessage } from '../lib/api.js';
-import { DEMO_PASSWORD, DEMO_PERSONAS } from '../lib/constants.js';
+import { DEMO_PERSONAS } from '../lib/constants.js';
 import { wakeNoticeEnabled } from '../lib/wake.js';
 
 const PERSONA_RING = {
@@ -254,7 +254,7 @@ function CredentialsCard({
 }
 
 export default function LoginPage() {
-  const { user, login, register } = useAuth();
+  const { user, login, loginDemo, register } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -268,6 +268,7 @@ export default function LoginPage() {
   const [inviteCode, setInviteCode] = useState('');
   const [credentialPending, setCredentialPending] = useState(false);
   const [health, setHealth] = useState(null);
+  const [demoStatus, setDemoStatus] = useState(null);
   const [coldStartOpen, setColdStartOpen] = useState(shouldShowColdStart);
 
   const dismissColdStart = useCallback(() => {
@@ -303,13 +304,27 @@ export default function LoginPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+    api
+      .get('/api/demo/status')
+      .then((data) => {
+        if (active) setDemoStatus(data);
+      })
+      .catch(() => {
+        if (active) setDemoStatus({ available: false, ready: false, seedEnabled: false });
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
   if (user) return <Navigate to={destination} replace />;
 
   // The persona picker is a demo affordance. It appears when seeding is
   // enabled or when the demo workspace already exists, so the hosted demo
   // stays usable after seeding is switched off on the server.
-  const demoEnabled =
-    health?.demoSeedEnabled === true || health?.demoProjectReady === true;
+  const demoEnabled = demoStatus?.available === true;
 
   const enterAs = async (persona) => {
     if (pending) return;
@@ -318,12 +333,13 @@ export default function LoginPage() {
     try {
       let signedIn;
       try {
-        signedIn = await login(persona.email, DEMO_PASSWORD);
+        signedIn = await loginDemo(persona.email);
       } catch (err) {
-        if (err?.status !== 401) throw err;
-        // Seed only an empty workspace. A 401 must never wipe existing data.
+        if (err?.status !== 404) throw err;
+        // Seed only a missing workspace; the seed endpoint is create-only, so
+        // an existing one is never rebuilt by this path.
         await api.post('/api/demo/seed');
-        signedIn = await login(persona.email, DEMO_PASSWORD);
+        signedIn = await loginDemo(persona.email);
         toast.success('Atlas demo workspace created — six synthetic sources ingested.');
       }
       toast.success(`Signed in as ${signedIn.name}`);
@@ -346,7 +362,7 @@ export default function LoginPage() {
           ? 'Atlas demo workspace is already in place.'
           : 'Atlas demo workspace created — six synthetic sources ingested.',
       );
-      setHealth((current) => ({ ...(current || {}), demoSeedEnabled: true, demoProjectReady: true }));
+      setDemoStatus({ seedEnabled: true, ready: true, available: true });
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -371,7 +387,7 @@ export default function LoginPage() {
           : await login(email.trim(), password);
       toast.success(
         mode === 'register'
-          ? `Account created — signed in as ${signedIn.name}`
+          ? `Account created — signed in as ${signedIn.name}. Confirm your email before a lead can add you to a project.`
           : `Signed in as ${signedIn.name}`,
       );
       navigate(destination, { replace: true });
@@ -429,7 +445,7 @@ export default function LoginPage() {
                 <h2 id="personas-heading" className="eyebrow">
                   Demo profiles
                 </h2>
-                {health?.demoProjectReady === false && (
+                {demoStatus?.seedEnabled === true && demoStatus?.ready === false && (
                   <button
                     type="button"
                     onClick={prepareDemo}

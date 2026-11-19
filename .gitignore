@@ -46,3 +46,10 @@ tmp/
 
 # Word tooling locks
 .qoder-office-docx-locks/
+
+# Environment variants beyond the base names
+.env.*
+!.env.example
+
+# Qoder and editor workspace state
+.qoder-*

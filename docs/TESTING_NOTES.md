@@ -1,6 +1,6 @@
 # Testing Notes
 
-Living document — last updated 18 Nov 2026. Supersedes the Round 2 notes and the
+Living document — last updated 19 Nov 2026. Supersedes the Round 2 notes and the
 earlier Round 3 notes. All results below were observed directly; no metric is
 projected or estimated. Every automated result was produced on the local stack;
 the hosted deployment is checked separately and called out where it differs.
@@ -9,8 +9,8 @@ the hosted deployment is checked separately and called out where it differs.
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **30 suites, 281 tests**, green on the last full run
-(18 Nov 2026, Node 22, 291 s). Each suite boots its own ephemeral MongoDB
+`cd backend && npm test` — **56 suites, 374 tests**, green on the last full run
+(19 Nov 2026, Node 22, 296 s). Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
@@ -24,7 +24,7 @@ the hosted deployment is checked separately and called out where it differs.
 | `ingest-limits.test.js` | 12 | Real DOCX and PDF parsing in a worker process, page-count and uncompressed-size caps, magic-byte checks rejecting renamed binaries, and a huge declared DOCX size refused |
 | `ai-privacy.test.js` | 8 | Confidential sources default to local processing, ordinary sources stay external unless opted out, secrets and identifiers are redacted before text leaves the server, one random data block wraps context and chunk, and delimiter strings inside the document cannot break out |
 | `auth-hardening.test.js` | 7 | Identical answers for unknown addresses and wrong passwords, weak/short/personal passwords rejected with a reason, invite-only and approved-domain modes, lockout after repeated failures, and a strict API content security policy |
-| `source-sync.test.js` | 7 | Interval scheduling, forced checks, checksum skip, outdated handovers with a diff (author and recipient), mocked Drive path, failure retention, sync settings rejected for uploads, collection-order-independent fingerprints |
+| `source-sync.test.js` | 8 | Interval scheduling, forced checks, checksum skip, outdated handovers with a diff (author and recipient), mocked Drive path, failure retention, sync settings rejected for uploads, collection-order-independent fingerprints |
 | `clarifications.test.js` | 7 | Askable gaps and answer options, ask-all dedupe, addressee-only answer/decline, refusal for unreadable items, person-confirmed claim clears the gap, recipient label after sharing, redaction of answers |
 | `claim-actions.test.js` | 10 | Owner assignment closes the gap, done tasks leave open work, question answers and mitigations, closure notes in the next draft, observer and incoming-recipient rejection, only the lead or departing member can answer a question, an answer note is required, validation and 404 guards |
 | `conflict-resolution.test.js` | 8 | Lead confirms the current decision, the rest are superseded, conflict clears, drafts exclude superseded statements, audit event, contributor/observer rejection, and restore/supersede edge cases |
@@ -38,16 +38,42 @@ the hosted deployment is checked separately and called out where it differs.
 | `redaction-samples.test.js` | 36 | A corpus of 36 secrets and PII samples (GitHub, Stripe, AWS, private keys, emails, labelled Aadhaar numbers and more) replaced with typed placeholders and absent from the output |
 | `api-ingestion.test.js` | 3 | Auth, upload → ingestion → claims → evidence preview, role-restricted isolation, unsupported files, audit trail |
 | `upload-cleanup.test.js` | 3 | Written files deleted when request validation fails, when multer rejects before the handler, and when a successful upload is superseded while still referenced files are kept |
-| `connector-refs.test.js` | 14 | GitHub `owner/repo` and pasted URL forms, length and character limits, no network call for traversal references, and fail-closed behavior with no allowlist for GitHub and Drive |
+| `connector-refs.test.js` | 15 | GitHub `owner/repo` and pasted URL forms, length and character limits, no network call for traversal references, and fail-closed behavior with no allowlist for GitHub and Drive |
 | `share-audit.test.js` | 3 | Anonymous demo share-link views and acknowledgements attributed to an anonymous actor, one row per hour, repeated permission re-checks folded into one hourly row |
 | `audit-labels.test.js` | 2 | Every action the backend can write has a label, and no label exists for an action that is never written |
 | `demo-seed.test.js` | 13 | Public seed only when the workspace is missing, scoped reset requires the lead, retired accounts, stale membership/owner/outgoing repaired without losing content, startup reconciliation leaves a missing workspace alone, reset removes only flagged seeded sources and adopts pre-flag workspaces by content |
 | `membership.test.js` | 4 | Role changes and access boundaries, adding an existing account, duplicate and unknown invitations, and member removal |
 | `llm-fallback.test.js` | 3 | Gemini retry on 404 (retired model), 429 and 503 |
 | `notifications.test.js` | 10 | Notices routed by role and event, one per recipient and event, removed when access ends, read state isolated per user, payload limited to a title, detail, project key and link |
+| `n2-lockout.test.js` | 4 | Demo personas cannot be locked out by strangers; failures are charged per client, counted atomically, and cleared by a session the owner already holds |
+| `n3-quote-scan.test.js` | 6 | Marker-quote scanning is bounded: fails fast on a large document, caps markers, refuses distant fragments, short label-only matches and matches that re-redact differently or jump lines |
+| `n5-jobs.test.js` | 5 | An abandoned job runs once, live leases and future retries are untouched, orphan rows are dropped, and a recovered job keeps its durable id |
+| `n6-share-expiry.test.js` | 3 | An acknowledged recipient keeps access after the public link expires, revocation still closes the route, and the expiry warning fires once |
+| `n8-verification.test.js` | 6 | Unverified accounts cannot join or create a project, expired or misaddressed links fail, invite codes bind to one address, and responses never leak tokens |
+| `n9-purge.test.js` | 2 | Purging scrubs documents, options, feedback, audit labels, summaries and versions, and restores a decision the purged claim had superseded |
+| `n10-clarification-visibility.test.js` | 2 | Questions whose options quote an unreadable decision are hidden from both the project and personal lists |
+| `n11-answering-recovery.test.js` | 3 | A stale `answering` row re-opens on read, a fresh in-flight answer is left alone, and legacy rows without a timestamp recover |
+| `n12-external-ai.test.js` | 4 | AI-policy changes require a readable source and a written reason for confidential ones, notify other readers, and do not re-ask on a no-op save |
+| `n13-anonymous-feedback.test.js` | 3 | Anonymous feedback is labelled, capped per link, and never attributed to the recipient; signed-in notes keep their author |
+| `n14-demo-share-preview.test.js` | 3 | A different demo profile still gets the public preview, anonymous access remains, and a non-demo project keeps its 403 |
+| `n15-registration-limit.test.js` | 1 | Successful registrations are counted and the sixth in an hour stops |
+| `n16-job-timeout.test.js` | 2 | A hung job fails, frees its worker slot and marks the source failed; a job inside the deadline is untouched |
+| `n17-handover-supersession.test.js` | 3 | Regeneration references the previous acknowledgement, supersedes the old release, revokes its link and closes the whole chain |
+| `n18-owner-resolution.test.js` | 4 | Owners link only on an exact email or full name, observers are excluded, and first names stay unconfirmed |
+| `n19-upload-janitor.test.js` | 4 | The janitor deletes only generated upload names, supports dry-run, and refuses filesystem roots or directories it did not write |
+| `n20-handover-list-scan.test.js` | 2 | Recipient filtering happens in the query, and the scan stops after a fixed number of batches |
+| `n21-parser-limits.test.js` | 3 | Honest deflated DOCX reads succeed, real inflated size is measured rather than declared size, and one character cap covers every parser |
+| `n22-demo-dates.test.js` | 5 | Seed content is relative to the supplied day, never a frozen corpus; reset refreshes dates, and an older corpus is still adopted |
+| `n22-health.test.js` | 5 | The health answer is cached, degraded is reported when the probe fails, and demo availability exposes neither accounts nor secrets |
+| `n22-password-policy.test.js` | 6 | Passwords are capped at bcrypt's 72 bytes, breach checks send only a hash prefix and fail open, and over-long registration is refused |
+| `n22-pdf-fonts.test.js` | 2 | The handover PDF embeds Noto faces for Tamil, Bengali, Gujarati, Telugu and Devanagari; real text survives extraction with no missing glyphs |
+| `n22-sessions.test.js` | 3 | Sessions are cached after the first request, `lastSeenAt` is written at most once a minute, and device listing hides token ids while revoking immediately |
+| `n22-share-counter.test.js` | 1 | Concurrent share-link opens are counted without lost updates |
+| `n23-demo-session.test.js` | 6 | The demo sign-in route issues sessions for seeded personas only, disappears when demo mode is off, never returns a password, and no demo credential ships in browser sources |
+| `release-archive.test.js` | 3 | The archive flags environment files, dependencies, storage and build output, never tracks a real env file and contains tracked files only |
 
 Frontend validation: `npm run build` (clean Vite production build, 1,619 modules,
-524.06 kB JS with a size warning that predates this round), `npm run smoke`
+533.65 kB JS with the 500 kB size warning, 144.61 kB gzip; 50.35 kB CSS), `npm run smoke`
 (the built `index.html` mounts and every asset exists) and `npm run e2e`
 (Playwright/Chromium, one spec covering the four core journeys). The Playwright
 run starts its own backend on a spare port with an empty `MONGODB_URI` (fresh
@@ -69,7 +95,7 @@ CI (`.github/workflows/ci.yml`) runs on Node 22 on every push and pull request:
 | `audit` | `npm audit --omit=dev --audit-level=high` for backend and frontend |
 | `secrets` | `node scripts/check-secrets.mjs` over every tracked file |
 
-The secret scan checks 149 tracked files, skips dependencies, lockfiles, test
+The secret scan checks 178 tracked files, skips dependencies, lockfiles, test
 fixtures and binaries, flags private keys, cloud and API tokens, and fails if a
 non-example `.env` file is tracked.
 
@@ -140,15 +166,15 @@ in the release notes rather than duplicated here.
     returns 403 for project state, claims, clarifications and handover creation
     (`handover-permissions.test.js`, `claim-actions.test.js`).
 
-### 3.1 Recorded Playwright run — 18 Nov 2026
+### 3.1 Recorded Playwright run — 19 Nov 2026
 
 Command (from `frontend/`):
 
 ```bash
-E2E_BACKEND_PORT=4207 E2E_FRONTEND_PORT=5308 npx playwright test
+npm run e2e
 ```
 
-Result: **2 passed (51.8 s)**, one Chromium worker, no retries. The spec
+Result: **2 passed (18.2 s)**, one Chromium worker, no retries. The spec
 (`e2e/handover-journey.spec.js`) runs these steps in order:
 
 | Step | What it asserts |

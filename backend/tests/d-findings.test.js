@@ -240,7 +240,7 @@ describe('D4/D5 supersession restore over the database', () => {
 });
 
 describe('D9 owner resolution by identity', () => {
-  it('resolves unique names and emails, and flags ambiguous first names', () => {
+  it('links only exact matches and leaves first names unconfirmed', () => {
     const directory = {
       byEmail: new Map([['ananya@threadline.demo', 'email-id']]),
       byName: new Map([
@@ -253,19 +253,30 @@ describe('D9 owner resolution by identity', () => {
       ]),
     };
 
-    expect(resolveOwnerName(directory, 'Rohan')).toEqual({ userId: 'rohan-id', ambiguous: false });
+    expect(resolveOwnerName(directory, 'Rohan')).toEqual({
+      userId: null,
+      ambiguous: false,
+      unconfirmed: true,
+    });
     expect(resolveOwnerName(directory, 'Ananya Rao')).toEqual({
       userId: 'rao-id',
       ambiguous: false,
+      unconfirmed: false,
     });
     expect(resolveOwnerName(directory, 'ANANYA@THREADLINE.DEMO')).toEqual({
       userId: 'email-id',
       ambiguous: false,
+      unconfirmed: false,
     });
-    expect(resolveOwnerName(directory, 'Ananya')).toEqual({ userId: null, ambiguous: true });
+    expect(resolveOwnerName(directory, 'Ananya')).toEqual({
+      userId: null,
+      ambiguous: true,
+      unconfirmed: true,
+    });
     expect(resolveOwnerName(directory, 'Unknown Person')).toEqual({
       userId: null,
       ambiguous: false,
+      unconfirmed: false,
     });
   });
 });
@@ -467,7 +478,7 @@ describe('D6-D10 behaviour over the API', () => {
   it('stores the recipient owner id on the item, not just the display name', async () => {
     const handover = await composeHandover();
     const rohanId = idOf(seeded, 'rohan@threadline.demo');
-    const rohanItems = handover.items.filter((entry) => entry.ownerName === 'Rohan');
+    const rohanItems = handover.items.filter((entry) => entry.ownerName === 'Rohan Mehta');
     expect(rohanItems.length).toBeGreaterThan(0);
     for (const item of rohanItems) expect(item.ownerUserId).toBe(rohanId);
   });
@@ -514,10 +525,16 @@ describe('D6-D10 behaviour over the API', () => {
     );
     expect(carried.decision).toBe('accepted');
 
+    // The replacement is a draft: it references the acknowledged predecessor
+    // instead of copying data the recipient acknowledged on another record.
     const stored = await Handover.findById(regenerated.body.handover.id).lean();
-    expect(stored.acknowledgedAt).toBeTruthy();
-    expect(stored.acknowledgement?.at).toBeTruthy();
-    expect(new Date(stored.acknowledgement.at).toISOString()).toBe(
+    expect(stored.acknowledgedAt).toBeUndefined();
+    expect(stored.acknowledgement?.at).toBeFalsy();
+    expect(String(stored.acknowledgedFrom)).toBe(String(handover.id));
+
+    const original = await Handover.findById(handover.id).lean();
+    expect(original.status).toBe('acknowledged');
+    expect(new Date(original.acknowledgement.at).toISOString()).toBe(
       new Date(acknowledgementAt).toISOString(),
     );
   });

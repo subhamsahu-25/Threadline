@@ -1,5 +1,3 @@
-export const DEMO_PASSWORD = 'Threadline#2026';
-
 export const DEMO_PERSONAS = [
   {
     name: 'Subham Sahu',
@@ -90,6 +88,7 @@ export const HANDOVER_STATUS = {
   shared: { label: 'Shared', tone: 'blue' },
   acknowledged: { label: 'Acknowledged', tone: 'teal' },
   rejected: { label: 'Rejected', tone: 'red' },
+  superseded: { label: 'Superseded', tone: 'slate' },
 };
 
 export const TEMPLATES = {
@@ -141,6 +140,9 @@ export const AUDIT_ACTION_LABELS = {
   'auth.logged_out': 'Signed out',
   'auth.registered': 'Account registered',
   'auth.registration_duplicate': 'Registration attempted for an existing account',
+  'auth.email_verified': 'Email address confirmed',
+  'auth.session_revoked': 'Another device signed out',
+  'auth.verification_resent': 'Verification link re-sent',
   'claim.conflict_answer_received': 'Conflict answer received',
   'claim.conflict_resolved': 'Decision conflict resolved',
   'claim.note_added': 'Note added to item',
@@ -169,6 +171,7 @@ export const AUDIT_ACTION_LABELS = {
   'handover.share_rotated': 'Share link rotated',
   'handover.shared': 'Handover shared',
   'handover.submitted': 'Handover submitted',
+  'handover.superseded': 'Handover superseded by a newer version',
   'member.added': 'Member added',
   'member.removed': 'Member removed',
   'member.role_changed': 'Member role changed',

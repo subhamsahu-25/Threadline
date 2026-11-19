@@ -41,11 +41,13 @@ describe('permission canary matrix', () => {
   let userIds;
   let fixtures;
   let handover;
+  let demoProject;
 
   beforeAll(async () => {
     await startDb();
     const seeded = await seed();
     projectId = seeded.project.id;
+    demoProject = Boolean(seeded.project.isDemo);
 
     tokens = {
       lead: tokenOf(seeded, LEAD),
@@ -575,6 +577,33 @@ describe('permission canary matrix', () => {
     });
   }
 
+  async function assertPublicPreview(sharedRes, facts) {
+    expect(sharedRes.status).toBe(200);
+    expect(sharedRes.body.publicPreview).toBe(true);
+    const sharedDoc = await Handover.findById(handover.id).lean();
+    const sharedExpected = expectedHandoverItems(
+      sharedDoc,
+      facts,
+      userIds.recipient,
+      'recipient',
+    );
+    const sharedCanaries = new Set(
+      sharedExpected
+        .map((item) => facts.claimById.get(String(item.claimId))?.source)
+        .map((sourceId) => facts.sourceById.get(String(sourceId))?.name)
+        .filter((name) => CANARY_VALUES.includes(name)),
+    );
+    const sharedText = JSON.stringify(sharedRes.body);
+    for (const canary of CANARY_VALUES) {
+      if (sharedCanaries.has(canary)) expect(sharedText).toContain(canary);
+      else expect(sharedText).not.toContain(canary);
+    }
+    const previewForbidden = forbiddenCanaries(facts, userIds.recipient);
+    assertAbsent(sharedRes.body.handover.alerts, previewForbidden);
+    assertAbsent(sharedRes.body.handover.recommendations, previewForbidden);
+    assertAbsent(sharedRes.body.handover.firstWeek, previewForbidden);
+  }
+
   async function assertHandoverSurfaces(context, facts) {
     const { token, userId } = context;
     const all = CANARY_VALUES;
@@ -595,8 +624,12 @@ describe('permission canary matrix', () => {
       const sharedRes = await request(app)
         .get(`/api/handovers/shared/${handover.token}`)
         .set(auth(token));
-      expect(sharedRes.status).toBe(403);
-      assertAbsent(sharedRes.body, all);
+      if (demoProject) {
+        await assertPublicPreview(sharedRes, facts);
+      } else {
+        expect(sharedRes.status).toBe(403);
+        assertAbsent(sharedRes.body, all);
+      }
       return;
     }
 
@@ -630,8 +663,15 @@ describe('permission canary matrix', () => {
       const sharedRes = await request(app)
         .get(`/api/handovers/shared/${handover.token}`)
         .set(auth(token));
-      expect(sharedRes.status).toBe(403);
-      assertAbsent(sharedRes.body, all);
+      if (demoProject) {
+        // A demo link is a public preview: the viewer gets the named
+        // recipient's filtered view, so only the recipient's own access
+        // boundaries apply.
+        await assertPublicPreview(sharedRes, facts);
+      } else {
+        expect(sharedRes.status).toBe(403);
+        assertAbsent(sharedRes.body, all);
+      }
       return;
     }
 
@@ -684,6 +724,10 @@ describe('permission canary matrix', () => {
         'changedItemCount',
       );
       expect(sharedRes.body.handover.permissionRecheck).not.toHaveProperty('removed');
+    } else if (demoProject) {
+      // Demo links are advertised as public previews: any signed-in visitor
+      // gets the named recipient's filtered view, flagged as a preview.
+      await assertPublicPreview(sharedRes, facts);
     } else {
       expect(sharedRes.status).toBe(403);
       assertAbsent(sharedRes.body, all);

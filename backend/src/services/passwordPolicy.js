@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { env } from '../config/env.js';
+
 const BREACHED = new Set([
   '1234567890',
   '123456789',
@@ -58,6 +61,43 @@ function hasRun(value) {
   return /(.)\1{5,}/.test(value);
 }
 
+// bcrypt silently ignores everything after the 72nd byte, so two passwords
+// that share a 72-byte prefix would be interchangeable at sign-in. Measured in
+// UTF-8 bytes, not characters, because a non-Latin character costs more.
+export const BCRYPT_MAX_BYTES = 72;
+
+function sha1(value) {
+  return createHash('sha1').update(value, 'utf8').digest('hex').toUpperCase();
+}
+
+/**
+ * Asks the Have I Been Pwned range API whether a password has appeared in a
+ * breach. Only the first five SHA-1 characters are sent (k-anonymity); the
+ * full hash and the password never leave this server. Fails open so an
+ * unreachable API cannot block sign-up.
+ */
+export async function isBreachedOnline(password, { fetchImpl = globalThis.fetch } = {}) {
+  const value = String(password ?? '');
+  if (!env.breachCheckEnabled || !value || typeof fetchImpl !== 'function') return false;
+  const digest = sha1(value);
+  try {
+    const response = await fetchImpl(
+      `https://api.pwnedpasswords.com/range/${digest.slice(0, 5)}`,
+      {
+        headers: { 'Add-Padding': 'true', 'User-Agent': 'Threadline password policy' },
+        signal: AbortSignal.timeout(env.breachCheckTimeoutMs),
+      },
+    );
+    if (!response?.ok) return false;
+    const body = await response.text();
+    return body
+      .split('\n')
+      .some((line) => line.split(':')[0]?.trim().toUpperCase() === digest.slice(5));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Returns a human-readable reason a new password is not acceptable, or null.
  * Existing passwords are never re-checked, so a policy change cannot lock a
@@ -66,7 +106,9 @@ function hasRun(value) {
 export function passwordProblem(password, { email, name } = {}) {
   const value = String(password ?? '');
   if (value.length < 10) return 'Use at least 10 characters';
-  if (value.length > 128) return 'Use at most 128 characters';
+  if (Buffer.byteLength(value, 'utf8') > BCRYPT_MAX_BYTES) {
+    return 'Use at most 72 bytes of text; accented and non-Latin characters count for more than one';
+  }
 
   const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((pattern) =>
     pattern.test(value),

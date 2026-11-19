@@ -2,6 +2,7 @@ import app from './app.js';
 import { env } from './config/env.js';
 import { connectDB, disconnectDB, redactUri } from './db/connect.js';
 import { logger } from './lib/logger.js';
+import { recoverStaleAnswers } from './services/clarifications.js';
 import { processSourceJob, recoverInterruptedSources } from './services/ingest/index.js';
 import { startSyncScheduler } from './services/ingest/sync.js';
 import { startUploadJanitor } from './services/ingest/uploadJanitor.js';
@@ -23,6 +24,15 @@ await connectDB();
 
 const recovered = await recoverInterruptedSources();
 if (recovered > 0) logger.info({ recovered }, 'Re-queued interrupted ingestion jobs');
+
+try {
+  const stale = await recoverStaleAnswers();
+  if (stale.recovered > 0) {
+    logger.info(stale, 'Re-opened clarifications stuck mid-answer');
+  }
+} catch (error) {
+  logger.warn({ err: error }, 'Could not recover interrupted clarification answers');
+}
 
 try {
   const durable = await recoverDurableJobs();

@@ -2,19 +2,16 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
-import mongoose from 'mongoose';
 import { env, isTest } from './config/env.js';
-import { DEMO_PROJECT_KEY } from './demo/seed.js';
 import { authenticate } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
-import { Project } from './models/index.js';
 import authRoutes from './routes/auth.routes.js';
 import clarificationRoutes from './routes/clarification.routes.js';
 import demoRoutes from './routes/demo.routes.js';
 import handoverRoutes, { sharedHandoverRouter } from './routes/handover.routes.js';
 import notificationRoutes from './routes/notification.routes.js';
 import projectRoutes from './routes/project.routes.js';
-import { llmStatus } from './services/ai/llm.js';
+import { healthSnapshot } from './services/health.js';
 import { processSourceJob } from './services/ingest/index.js';
 import { setJobHandler } from './services/queue.js';
 
@@ -74,28 +71,11 @@ app.get('/', (_req, res) => {
 app.get('/api/health', async (_req, res) => {
   // A process that cannot reach its database is not healthy. Reporting 503
   // lets the platform's probe restart or drain this instance instead of
-  // routing traffic to an API that can only return errors.
-  const databaseUp = mongoose.connection.readyState === 1;
-  let demoProjectReady = false;
-  if (databaseUp) {
-    try {
-      demoProjectReady = Boolean(
-        await Project.exists({ key: DEMO_PROJECT_KEY, isDemo: true }),
-      );
-    } catch {
-      demoProjectReady = false;
-    }
-  }
-  res.status(databaseUp ? 200 : 503).json({
-    status: databaseUp ? 'ok' : 'degraded',
-    service: 'threadline-api',
-    version: '0.1.0',
-    time: new Date().toISOString(),
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-    extraction: llmStatus(),
-    demoSeedEnabled: env.allowDemoSeed,
-    demoProjectReady,
-  });
+  // routing traffic to an API that can only return errors. The body is cached
+  // and deliberately carries liveness only; configuration lives on endpoints
+  // that authenticated users can reach.
+  const snapshot = await healthSnapshot();
+  res.status(snapshot.status === 'ok' ? 200 : 503).json(snapshot);
 });
 
 app.use('/api/auth', authRoutes);

@@ -25,10 +25,15 @@ export function normalizeWhitespace(value) {
  * can still produce exact character offsets for citations.
  */
 export function normalizeWithMap(input) {
+  return normalizeIndexed(input, true);
+}
+
+function normalizeIndexed(input, withMap) {
   const source = String(input ?? '');
   const map = [];
-  let out = '';
+  const pieces = [];
   let index = 0;
+  let pendingSpace = false;
   // Iterate by code point so astral characters (emoji) stay together, and
   // push one map entry per UTF-16 unit so offsets always line up with indexOf.
   for (const char of source) {
@@ -38,25 +43,75 @@ export function normalizeWithMap(input) {
       continue;
     }
     if (/\s/u.test(ch)) {
-      if (out.length > 0 && out[out.length - 1] !== ' ') {
-        out += ' ';
-        map.push(index);
-      }
+      if (pieces.length > 0) pendingSpace = true;
       index += char.length;
       continue;
     }
+    if (pendingSpace) {
+      pieces.push(' ');
+      if (withMap) map.push(index);
+      pendingSpace = false;
+    }
     const lowered = ch.toLowerCase();
     for (let unit = 0; unit < lowered.length; unit += 1) {
-      out += lowered[unit];
-      map.push(index);
+      pieces.push(lowered[unit]);
+      if (withMap) map.push(index);
     }
     index += char.length;
   }
-  return { text: out, map };
+  return { text: pieces.join(''), map };
 }
 
 export function normalizeForMatch(value) {
   return normalizeWithMap(String(value ?? '')).text.trim();
+}
+
+export const MAX_REDACTION_MARKERS = 6;
+const MARKER_GAP = 3000;
+const MARKER_BUDGET_MS = 50;
+const REDACTION_MARKER = /\[REDACTED: [^\]]+\]/g;
+
+/**
+ * Locates a quote that contains redaction markers with a linear scan instead of
+ * a regex. Joining fragments with lazy wildcards made a hostile document with
+ * several markers backtrack for minutes; indexOf over the normalized text
+ * cannot, because every fragment advances the cursor once.
+ */
+export function locateMarkedQuoteSpans(haystack, quote) {
+  const text = String(quote ?? '');
+  const markers = text.match(REDACTION_MARKER)?.length ?? 0;
+  if (markers === 0) return { ok: false, reason: 'no_markers' };
+  if (markers > MAX_REDACTION_MARKERS) return { ok: false, reason: 'too_many_markers' };
+
+  const fragments = text
+    .split(REDACTION_MARKER)
+    .map((part) => normalizeForMatch(part))
+    .filter(Boolean);
+  if (fragments.length === 0) return { ok: false, reason: 'no_fragments' };
+
+  const normalized = normalizeIndexed(haystack, false);
+  const deadline = Date.now() + MARKER_BUDGET_MS;
+  const first = normalized.text.indexOf(fragments[0]);
+  if (first < 0) return { ok: false, reason: 'not_found' };
+
+  let cursor = first + fragments[0].length;
+  for (let index = 1; index < fragments.length; index += 1) {
+    if (Date.now() > deadline) return { ok: false, reason: 'budget_exceeded' };
+    const found = normalized.text.indexOf(fragments[index], cursor);
+    if (found < 0) return { ok: false, reason: 'not_found' };
+    if (found - cursor > MARKER_GAP) return { ok: false, reason: 'gap_too_large' };
+    cursor = found + fragments[index].length;
+  }
+
+  // The index map is only needed once a match exists.
+  const mapped = normalizeIndexed(haystack, true);
+  return {
+    ok: true,
+    start: mapped.map[first],
+    end: mapped.map[cursor - 1] + 1,
+    fragments,
+    markers,
+  };
 }
 
 /**
@@ -198,6 +253,18 @@ export function toIsoDate(value) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   return date.toISOString();
+}
+
+/** Calendar date (YYYY-MM-DD) as seen in India, for text shown to people. */
+export function calendarDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
 }
 
 export function daysBetween(a, b) {

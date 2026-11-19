@@ -1,5 +1,6 @@
 import { Claim, Source } from '../../models/index.js';
 import { valueTokens } from '../../lib/text.js';
+import { useSession } from '../../lib/transactions.js';
 
 const AUTO_SUPERSEDE_FLAG = 'superseded_by_newer';
 const REVIEWER_SUPERSEDE_FLAG = 'superseded_by_reviewer';
@@ -165,14 +166,29 @@ export function hasContradiction(left, right) {
  * editing the newer decision brings the older one back, and a restricted
  * source can never hide a decision from people who cannot read it.
  */
-export async function linkSupersessions(projectId) {
+export async function linkSupersessions(projectId, { session = null } = {}) {
   const [claims, sources] = await Promise.all([
-    Claim.find({ project: projectId, type: 'decision', retiredAt: null }),
-    Source.find({ project: projectId }).select('visibility sensitivity deletedAt hiddenAt').lean(),
+    useSession(Claim.find({ project: projectId, type: 'decision', retiredAt: null }), session),
+    useSession(
+      Source.find({ project: projectId }).select('visibility sensitivity deletedAt hiddenAt').lean(),
+      session,
+    ),
   ]);
   const sourceById = new Map(sources.map((source) => [String(source._id), source]));
 
-  // 1. Undo the previous automatic pass. Reviewer resolutions are left alone.
+  // Snapshot what is stored so only real differences are written at the end.
+  const before = new Map();
+  for (const claim of claims) {
+    before.set(String(claim._id), {
+      status: claim.status,
+      supersededBy: claim.supersededBy ? String(claim.supersededBy) : null,
+      supersededPriorStatus: claim.supersededPriorStatus ?? null,
+      flags: [...(claim.flags || [])].sort().join('|'),
+    });
+  }
+
+  // 1. Undo the previous automatic pass in memory. Reviewer resolutions are
+  // left alone.
   const restoredIds = new Set();
   for (const claim of claims) {
     const flags = claim.flags || [];
@@ -181,7 +197,6 @@ export async function linkSupersessions(projectId) {
     claim.supersededBy = undefined;
     claim.supersededPriorStatus = undefined;
     claim.flags = flags.filter((flag) => flag !== AUTO_SUPERSEDE_FLAG);
-    await claim.save();
     restoredIds.add(String(claim._id));
   }
   for (const claim of claims) {
@@ -189,7 +204,6 @@ export async function linkSupersessions(projectId) {
     if (!restoredIds.has(String(claim.supersededBy))) continue;
     if ((claim.flags || []).includes(REVIEWER_SUPERSEDE_FLAG)) continue;
     claim.supersededBy = undefined;
-    await claim.save();
   }
 
   const audienceOf = (claim) => {
@@ -238,11 +252,45 @@ export async function linkSupersessions(projectId) {
         claim.status = 'superseded';
         claim.supersededBy = newer._id;
         claim.flags = [...new Set([...(claim.flags || []), AUTO_SUPERSEDE_FLAG])];
-        await claim.save();
         applied += 1;
       }
     }
   }
+
+  // 2. Write the recomputed state in one round trip. Readers never observe the
+  // restore-then-reapply window that the previous per-document saves created.
+  const operations = [];
+  for (const claim of claims) {
+    const original = before.get(String(claim._id));
+    const set = {};
+    const unset = {};
+
+    if (claim.status !== original.status) set.status = claim.status;
+    const flags = [...(claim.flags || [])].sort().join('|');
+    if (flags !== original.flags) set.flags = claim.flags;
+
+    const supersededBy = claim.supersededBy ? String(claim.supersededBy) : null;
+    if (supersededBy !== original.supersededBy) {
+      if (supersededBy) set.supersededBy = claim.supersededBy;
+      else unset.supersededBy = '';
+    }
+
+    const prior = claim.supersededPriorStatus ?? null;
+    if (prior !== original.supersededPriorStatus) {
+      if (prior) set.supersededPriorStatus = prior;
+      else unset.supersededPriorStatus = '';
+    }
+
+    if (Object.keys(set).length === 0 && Object.keys(unset).length === 0) continue;
+    const update = {};
+    if (Object.keys(set).length > 0) update.$set = set;
+    if (Object.keys(unset).length > 0) update.$unset = unset;
+    operations.push({ updateOne: { filter: { _id: claim._id }, update } });
+  }
+  if (operations.length > 0) {
+    await Claim.bulkWrite(operations, session ? { session } : {});
+  }
+
   return applied;
 }
 

@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import mongoose from 'mongoose';
 import { env } from '../../config/env.js';
 import { AppError } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { normalizeWhitespace, truncate } from '../../lib/text.js';
+import { withOptionalTransaction } from '../../lib/transactions.js';
 import { Claim, Document, Evidence, Project, Source } from '../../models/index.js';
 import { recordAudit } from '../audit.js';
 import { extractClaimsForDocuments, refreshClaims } from '../ai/extract.js';
@@ -162,17 +162,27 @@ async function syncSourceJob(sourceId) {
   const checksum = documentsChecksum(documents);
   const checkedAt = new Date();
   const httpCache = source.sync?.cursor?.httpCache;
-  const cacheUpdate = httpCache ? { 'sync.cursor.httpCache': httpCache } : {};
   const previousChecksum = source.sync?.cursor?.checksum;
   if (previousChecksum && previousChecksum === checksum) {
+    // The content was fetched successfully and matches what was stored, so the
+    // new ETags are safe to keep: a later check can use them.
     await Source.updateOne(
       { _id: source._id },
-      { $set: { 'sync.lastCheckedAt': checkedAt, 'sync.lastError': null, ...cacheUpdate } },
+      {
+        $set: {
+          'sync.lastCheckedAt': checkedAt,
+          'sync.lastError': null,
+          ...(httpCache ? { 'sync.cursor.httpCache': httpCache } : {}),
+        },
+      },
     );
     return { changed: false };
   }
 
   logger.info({ source: String(source._id) }, 'Connected source changed; re-ingesting');
+  // The new ETags stay in memory until ingestion commits. Saving them here
+  // meant a failed re-ingest was never retried: the next check got 304 and
+  // compared the old stored text with itself.
   await Source.updateOne(
     { _id: source._id },
     {
@@ -181,13 +191,12 @@ async function syncSourceJob(sourceId) {
         statusMessage: 'Source changed; refreshing knowledge',
         'sync.lastCheckedAt': checkedAt,
         'sync.lastError': null,
-        ...cacheUpdate,
       },
     },
   );
   await ingestSourceJob({
     name: 'ingest_source',
-    payload: { sourceId: String(source._id), documents },
+    payload: { sourceId: String(source._id), documents, pendingHttpCache: httpCache || null },
     attempts: 1,
   });
   return { changed: true };
@@ -310,22 +319,6 @@ async function rollbackRun({ source, documentIds, snapshotClaims }) {
     }
     const survivors = await Claim.find({ _id: { $in: previousIds } });
     await refreshClaims(survivors);
-  }
-}
-
-async function withOptionalTransaction(work) {
-  const session = await mongoose.startSession();
-  try {
-    await session.withTransaction(async () => work(session));
-    return true;
-  } catch (error) {
-    if (/Transaction numbers are only allowed|does not support transactions|replica set/i.test(error.message)) {
-      await work(null);
-      return false;
-    }
-    throw error;
-  } finally {
-    await session.endSession();
   }
 }
 
@@ -579,7 +572,12 @@ async function ingestSourceJob(job) {
     const connectorChanged =
       source.kind !== 'upload' && Boolean(previousChecksum) && previousChecksum !== contentChecksum;
     if (source.kind !== 'upload') {
-      source.sync.cursor = { ...(source.sync.cursor || {}), checksum: contentChecksum };
+      const pendingHttpCache = job.payload?.pendingHttpCache;
+      source.sync.cursor = {
+        ...(source.sync.cursor || {}),
+        checksum: contentChecksum,
+        ...(pendingHttpCache ? { httpCache: pendingHttpCache } : {}),
+      };
       source.sync.lastCheckedAt = new Date();
       source.sync.lastError = undefined;
       if (connectorChanged || !previousChecksum) source.sync.lastChangedAt = new Date();

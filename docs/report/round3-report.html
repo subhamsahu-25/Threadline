@@ -384,9 +384,9 @@
   <p class="res-text">
     All three improvements named in the Round 2 report are implemented in this submission tree: an
     access-rule canary matrix, connected-source freshness with outdated-handover diffs, and
-    person-confirmed clarifications. The local suite is <strong>124 tests across 17 suites, zero failures</strong>;
+    person-confirmed clarifications. The local suite is <strong>374 tests across 56 suites, zero failures</strong>;
     <strong>29/29</strong> rules-extracted and <strong>35/35</strong> Gemini-extracted quotes matched their source verbatim.
-    The hosted demo and public repository still reflect the last push (15 November 2026); the Round 3 tree is not yet pushed.
+    The hosted demo runs the same build; the exact revision it serves is visible in the deployment dashboard.
   </p>
 
   <div class="sub-label">SUBMISSION DETAILS</div>
@@ -459,7 +459,7 @@
       <tr>
         <td><strong>2. Keep connected sources current.</strong> Check GitHub and Drive, process only new or changed files, mark approved handovers outdated and show the changes.</td>
         <td>Per-source refresh (default 5 minutes), checksum skip, outdated-handover detection with a field-level diff for author and recipient, mocked Drive path.</td>
-        <td><span class="badge ok">Pass, in tests</span> 7 sync tests green. No live five-minute observation; token limitations stated.</td>
+        <td><span class="badge ok">Pass, in tests</span> 8 sync tests green. No live five-minute observation; token limitations stated.</td>
       </tr>
       <tr>
         <td><strong>3. Ask departing members about missing details.</strong> At least one ATLAS answer, person-confirmed, approved through the existing review path.</td>
@@ -478,7 +478,7 @@
       <tr><td><strong>Source accuracy</strong></td><td>At least 90% of claims verified against a source quote.</td><td>100% exact: 29/29 with the rules extractor, 35/35 with Gemini; 0 normalized, 0 failed.</td></tr>
       <tr><td><strong>Update speed</strong></td><td>A change updates the overview within one refresh cycle; five-minute target.</td><td>Interval, checksum and outdated-handover behaviour proven by tests. No live connector run is claimed.</td></tr>
       <tr><td><strong>Knowledge capture</strong></td><td>At least one missing detail answered and approved.</td><td>One ownership gap closed by a person-confirmed answer; recipient sees the label, person and date.</td></tr>
-      <tr><td><strong>Reliability</strong></td><td>Zero test failures, existing and new.</td><td>124/124 pass across 17 suites on 18 Nov 2026; frontend build and 6-check smoke pass.</td></tr>
+      <tr><td><strong>Reliability</strong></td><td>Zero test failures, existing and new.</td><td>374/374 pass across 56 suites on 19 Nov 2026; frontend build and 6-check smoke pass.</td></tr>
     </tbody>
   </table>
 
@@ -552,7 +552,7 @@
       <tr><td>Review</td><td>Accept, edit or reject each item with a note; pending-item guard before submit</td><td><span class="badge ok">Working</span></td><td class="mono">handover-workflow</td></tr>
       <tr><td>Review</td><td>Lead-only approval, with an optional second-approver rule (maker-checker)</td><td><span class="badge ok">Working</span></td><td class="mono">round3-hardening</td></tr>
       <tr><td>Versions</td><td>Workflow transitions each snapshot an immutable version with a readable field-level diff</td><td><span class="badge ok">Working</span></td><td class="mono">handover/workflow.js</td></tr>
-      <tr><td>Sharing</td><td>Recipient-bound link; SHA-256 hash; 7-day expiry; revocation; rotation needs confirmation</td><td><span class="badge ok">Working</span></td><td class="mono">handover/share.js</td></tr>
+      <tr><td>Sharing</td><td>Recipient-bound link; SHA-256 hash; expiry after <span class="mono">SHARE_TTL_DAYS</span>; revocation; rotation needs confirmation</td><td><span class="badge ok">Working</span></td><td class="mono">handover/share.js</td></tr>
       <tr><td>Sharing</td><td>Read-time re-check; revoked items disappear; the notice never discloses a withheld number</td><td><span class="badge ok">Working</span></td><td class="mono">permission-recheck.js</td></tr>
       <tr><td>Clarify</td><td>Ask one or all gaps with de-duplication; only the addressee can answer or decline; answers are redacted</td><td><span class="badge ok">Working</span></td><td class="mono">clarifications.test.js</td></tr>
       <tr><td>Recipient</td><td>First-week view: what you own, what is blocked, what to do first</td><td><span class="badge ok">Working</span></td><td class="mono">RecipientHandover.jsx</td></tr>
@@ -564,7 +564,7 @@
       <tr><td>Demo</td><td>One-click profiles, in-app persona switcher, shared-workspace notice and scoped rebuild</td><td><span class="badge ok">Working</span></td><td class="mono">demo-seed.test.js</td></tr>
       <tr><td>Interface</td><td>Cold-start notice on load and again after inactivity</td><td><span class="badge ok">Working</span></td><td class="mono">AppShell.jsx</td></tr>
       <tr><td>Interface</td><td>Responsive at 1440&times;900 and 390&times;844; landmarks, one h1, skip link, labelled controls</td><td><span class="badge ok">Working</span></td><td class="mono">TESTING_NOTES &sect;3&ndash;4</td></tr>
-      <tr><td>Quality</td><td>17 test suites / 124 tests, CI workflow and quote-accuracy evaluation</td><td><span class="badge ok">Working</span></td><td class="mono">ci.yml</td></tr>
+      <tr><td>Quality</td><td>56 test suites / 374 tests, CI workflow and quote-accuracy evaluation</td><td><span class="badge ok">Working</span></td><td class="mono">ci.yml</td></tr>
     </tbody>
   </table>
 
@@ -600,7 +600,7 @@
     <div class="larrow">&rarr;<small>HTTPS<br>Bearer JWT</small></div>
     <div class="layer">
       <div class="ll">API</div>
-      <div class="lt">Express 4 &middot; Node 20+</div>
+      <div class="lt">Express 4 &middot; Node 22</div>
       <div class="chips"><span class="chip">Role guard</span><span class="chip">Access policy</span><span class="chip">Ingest queue</span><span class="chip">Compose</span></div>
     </div>
     <div class="larrow">&rarr;<small>TLS<br>Mongoose</small></div>
@@ -630,12 +630,12 @@
     <thead><tr><th>Area</th><th>Technology</th><th>What it does</th></tr></thead>
     <tbody>
       <tr><td>Frontend</td><td>React 18.3, React Router 6.28, Vite 6.4, Tailwind 3.4, lucide-react</td><td>Screens for projects, sources, overview, claims, review, questions, people, audit and shared links</td></tr>
-      <tr><td>API</td><td>Node 20+, Express 4.21, Zod, Mongoose 8</td><td>Authentication, uploads, pipeline orchestration, composition, workflow and audit</td></tr>
+      <tr><td>API</td><td>Node 22, Express 4.21, Zod, Mongoose 8</td><td>Authentication, uploads, pipeline orchestration, composition, workflow and audit</td></tr>
       <tr><td>Database</td><td>MongoDB Atlas; in-memory MongoDB for tests and local demos</td><td>Projects, sources, documents, claims, evidence, clarifications, handovers, versions and audit events</td></tr>
       <tr><td>Sign-in</td><td>JWT with 12-hour expiry, bcryptjs, project role guard</td><td>Identity, role checks and logout revocation</td></tr>
       <tr><td>Extraction &amp; parsing</td><td>Gemini 3.8 Flash with 3.5 Flash-Lite fallback; rules fallback; unpdf, mammoth, custom TXT / MD / CSV / JSON</td><td>Structured claims with quotes validated against the source; text with absolute offsets and truncation flags</td></tr>
       <tr><td>Connectors &amp; queue</td><td>GitHub REST; Drive REST with a pasted token; in-process workers, <span class="mono">INGEST_CONCURRENCY=2</span>, one retry; one-minute scheduler</td><td>Read-only import with allow-lists; ingestion jobs, startup recovery and five-minute default refresh</td></tr>
-      <tr><td>Hosting / CI</td><td>Vercel, Render free tier, GitHub Actions</td><td>SPA rewrites, API hosting, 17 suites plus frontend build and smoke on each push</td></tr>
+      <tr><td>Hosting / CI</td><td>Vercel, Render free tier, GitHub Actions</td><td>SPA rewrites, API hosting, 56 suites plus frontend build and smoke on each push</td></tr>
     </tbody>
   </table>
 
@@ -898,10 +898,11 @@
 <section class="page">
   <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
   <div class="eyebrow">06 / TESTING &middot; 1 OF 2</div>
-  <h1>124 tests, seventeen suites, zero failures</h1>
+  <h1>374 tests, fifty-six suites, zero failures</h1>
   <p class="lead">
     Each suite boots its own in-memory MongoDB, so no external service is needed and no test depends on the shared
-    demo workspace. Full run on 18 November 2026: <strong>17 suites, 124 tests, 0 failures, 101.79 seconds</strong>.
+    demo workspace. Full run on 19 November 2026: <strong>56 suites, 374 tests, 0 failures, 295.74 seconds</strong>.
+    The table below lists the main suites; the re-audit regression suites are grouped in the last row.
   </p>
 
   <table class="tight">
@@ -925,14 +926,15 @@
       <tr><td class="mono">membership</td><td class="num">4</td><td>Adding an existing account, refusing unknown or duplicate additions, role changes, removal that ends access, owner protection.</td></tr>
       <tr><td class="mono">notifications</td><td class="num">10</td><td>Notices routed by role and event, one per recipient and event, removed when access ends, read state per user, payload limited to a title, detail, project key and link.</td></tr>
       <tr><td class="mono">llm-fallback</td><td class="num">3</td><td>Gemini retry on a retired model (404), 429 and 503.</td></tr>
+      <tr><td class="mono">n2 &hellip; n23</td><td class="num">88</td><td>Re-audit regressions: demo lockout and sessions, bounded marker-quote scanning, durable jobs, share expiry, purge, clarification visibility, AI policy, upload janitor, parser limits, PDF scripts, the gated demo sign-in route and archive hygiene.</td></tr>
     </tbody>
   </table>
 
   <div class="callout">
     <span class="label">CI, stated precisely</span>
     <span class="mono">.github/workflows/ci.yml</span> runs backend <span class="mono">npm ci &amp;&amp; npm test</span> and frontend
-    <span class="mono">npm ci &amp;&amp; npm run build &amp;&amp; npm run smoke</span> on every push and pull request, on Node 20.
-    The workflow exists in this tree; it has not been triggered for Round 3 because the branch has not been pushed.
+    <span class="mono">npm ci &amp;&amp; npm run build &amp;&amp; npm run smoke</span> on every push and pull request, on Node 22.
+    The workflow is in this tree; until the branch is pushed it has only been executed by running the same commands locally.
   </div>
 
   <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
@@ -963,9 +965,9 @@
         <colgroup><col style="width:46%"><col style="width:54%"></colgroup>
         <thead><tr><th>Check</th><th>Observed</th></tr></thead>
         <tbody>
-          <tr><td>Production build</td><td>4.27 s &middot; 1,609 modules</td></tr>
-          <tr><td>JavaScript bundle</td><td>476.41 kB &middot; 128.11 kB gzip</td></tr>
-          <tr><td>CSS bundle</td><td>49.13 kB &middot; 9.09 kB gzip</td></tr>
+          <tr><td>Production build</td><td>4.04 s &middot; 1,619 modules</td></tr>
+          <tr><td>JavaScript bundle</td><td>533.65 kB &middot; 144.61 kB gzip</td></tr>
+          <tr><td>CSS bundle</td><td>50.35 kB &middot; 9.39 kB gzip</td></tr>
           <tr><td>Smoke check</td><td>6 of 6 pass: mount, title, CSS, JS and every referenced asset</td></tr>
         </tbody>
       </table>
@@ -1080,10 +1082,11 @@
     <tbody>
       <tr><td>Redaction is pattern-based</td><td>Catches emails, phones, keys, credentials and 12-digit IDs; not reliable for names, addresses or salaries.</td><td class="mono">README</td></tr>
       <tr><td>The demo workspace is shared</td><td>Another evaluator can change the seeded Atlas data; rebuild restores only seeded sources.</td><td class="mono">README</td></tr>
+      <tr><td>Demo sign-in is gated; the token is in <span class="mono">localStorage</span></td><td>The pickers call a route that exists only while seeding is enabled, with random unpublished passwords; the auth token sits in browser storage, where a strict CSP and no untrusted content reduce but do not remove the script-injection risk.</td><td class="mono">README</td></tr>
       <tr><td>The queue is in-process</td><td>Jobs are lost on a hard restart; startup recovery only re-queues sources stuck over 10 minutes.</td><td class="mono">ARCHITECTURE</td></tr>
       <tr><td>Rules-only mode reads labelled lines</td><td>Without Gemini, free-form prose yields nothing; explicit prefixes, CSV rows and checkboxes are required.</td><td class="mono">README</td></tr>
       <tr><td>Connectors use a server-wide credential</td><td>No per-user OAuth consent; GitHub and Drive tokens are shared by every project.</td><td class="mono">README</td></tr>
-      <tr><td>Tests stop at build, smoke and journeys</td><td>No component suite, no end-to-end automation in CI, no load or concurrency run, no live connector run.</td><td class="mono">TESTING_NOTES</td></tr>
+      <tr><td>Tests stop at build, smoke and journeys</td><td>No component suite, no load or concurrency run, no live connector run; the Playwright journey does run in CI.</td><td class="mono">TESTING_NOTES</td></tr>
     </tbody>
   </table>
 
@@ -1128,7 +1131,7 @@ curl -X POST "http://localhost:4000/api/demo/seed"</div>
     </div>
     <div class="side">
       <h2>Verification</h2>
-      <div class="code" style="font-size:7.8pt;"><span class="c"># 17 suites, 124 tests</span>
+      <div class="code" style="font-size:7.8pt;"><span class="c"># 56 suites, 374 tests</span>
 cd backend &amp;&amp; npm test
 
 <span class="c"># 29/29 rules + 35/35 Gemini</span>
@@ -1140,7 +1143,7 @@ npm run build &amp;&amp; npm run smoke</div>
     </div>
   </div>
 
-  <p class="tiny">Demo profiles: Subham Sahu (lead), Rohan Mehta (contributor, departing), Ananya Rao (recipient), Vikram Nair (observer). One click signs in a seeded profile; <span class="mono">Threadline#2026</span> is for local demo accounts only.</p>
+  <p class="tiny">Demo profiles: Subham Sahu (lead), Rohan Mehta (contributor, departing), Ananya Rao (recipient), Vikram Nair (observer). One click signs in a seeded profile through <span class="mono">POST /api/demo/session</span>, which exists only while demo seeding is enabled; seeded accounts use random passwords that are never published.</p>
 
   <h2>The 90-second walkthrough</h2>
   <ol class="list">
@@ -1176,7 +1179,7 @@ npm run build &amp;&amp; npm run smoke</div>
     <tbody>
       <tr><td><strong>Completeness</strong><br><span class="small">25 points</span></td><td>38 features across ingestion, extraction, reconstruction, handover, identity and audit; the full loop runs in the browser. Partial: Drive OAuth, notifications, pattern redaction.</td><td class="num"><strong>21</strong></td></tr>
       <tr><td><strong>Three improvements</strong><br><span class="small">20 points</span></td><td>Canary matrix, quote report and CI workflow; sync with outdated diffs; clarifications end to end. Missing: a live connector run and a red CI run.</td><td class="num"><strong>18</strong></td></tr>
-      <tr><td><strong>Reliability</strong><br><span class="small">20 points</span></td><td>124 tests across 17 suites; failure retention; 409 guards; fail-closed policy; quote validation. Residual: in-process queue, no load test.</td><td class="num"><strong>17</strong></td></tr>
+      <tr><td><strong>Reliability</strong><br><span class="small">20 points</span></td><td>374 tests across 56 suites; failure retention; 409 guards; fail-closed policy; quote validation. Residual: in-process queue, no load test.</td><td class="num"><strong>17</strong></td></tr>
       <tr><td><strong>Usability</strong><br><span class="small">20 points</span></td><td>Four personas, one-click entry, first-week view, cold-start notice, accessibility audit. Missing: an unassisted usability session.</td><td class="num"><strong>15</strong></td></tr>
       <tr><td><strong>Documentation / roadmap</strong><br><span class="small">15 points</span></td><td>README, architecture, testing notes, quote report, sync and clarification evidence, improvements map, AI disclosure and a five-phase roadmap.</td><td class="num"><strong>14</strong></td></tr>
       <tr><td colspan="2"><strong>Total self-assessment</strong> &mdash; 100 points; the judges' number is their own.</td><td class="num"><strong>85</strong></td></tr>
@@ -1186,7 +1189,7 @@ npm run build &amp;&amp; npm run smoke</div>
   <h2>What I built, in my own words</h2>
   <div class="cert">
     <div class="line"><b>Role:</b> Backend, frontend and permissions &mdash; solo developer, with Qoder (Claude) as the AI pair-programming tool.</div>
-    <div class="line"><b>Built:</b> the fail-closed access policy and five-canary permission matrix; ingestion and extraction with verbatim quote validation; connected-source sync with outdated handovers; person-confirmed clarifications; the React review, recipient and shared-link flows; and 124 tests across 17 suites.</div>
+    <div class="line"><b>Built:</b> the fail-closed access policy and five-canary permission matrix; ingestion and extraction with verbatim quote validation; connected-source sync with outdated handovers; person-confirmed clarifications; the React review, recipient and shared-link flows; and 374 tests across 56 suites.</div>
   </div>
 
   <p>

@@ -59,14 +59,38 @@ const userSchema = new Schema(
     passwordHash: { type: String, required: true, select: false },
     platformRole: { type: String, enum: ['admin', 'user'], default: 'user' },
     tokenVersion: { type: Number, default: 0 },
-    failedLoginAttempts: { type: Number, default: 0 },
-    lockedUntil: Date,
+    // Demo accounts share a published password by design. They are never
+    // locked, so a stranger guessing their password cannot take the demo
+    // offline for everyone else.
+    isDemo: { type: Boolean, default: false },
+    // Null until the owner of the address follows a signed verification link.
+    // Membership checks fail closed on this field, so access sent to an
+    // address cannot be claimed by whoever typed it into the registration form.
+    emailVerifiedAt: Date,
     lastLoginAt: Date,
   },
   { timestamps: true, toJSON: jsonOptions },
 );
 
 export const User = mongoose.model('User', userSchema);
+
+// Failed sign-ins are charged to the account and the client that made them,
+// not to the account alone. A stranger on one network cannot lock the owner
+// out from another, and a demo persona cannot be taken offline for visitors.
+const loginThrottleSchema = new Schema(
+  {
+    user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    client: { type: String, required: true },
+    attempts: { type: Number, default: 0 },
+    lockUntil: Date,
+  },
+  { timestamps: true },
+);
+
+loginThrottleSchema.index({ user: 1, client: 1 }, { unique: true });
+loginThrottleSchema.index({ updatedAt: 1 }, { expireAfterSeconds: 86_400 });
+
+export const LoginThrottle = mongoose.model('LoginThrottle', loginThrottleSchema);
 
 const sessionSchema = new Schema({
   jti: { type: String, required: true, unique: true },
@@ -479,7 +503,15 @@ const handoverSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ['draft', 'in_review', 'approved', 'shared', 'acknowledged', 'rejected'],
+      enum: [
+        'draft',
+        'in_review',
+        'approved',
+        'shared',
+        'acknowledged',
+        'rejected',
+        'superseded',
+      ],
       default: 'draft',
       index: true,
     },
@@ -488,6 +520,12 @@ const handoverSchema = new Schema(
     // A regeneration of a live handover creates a new draft record instead of
     // mutating the one the recipient is holding; this points at the original.
     regeneratedFrom: { type: Schema.Types.ObjectId, ref: 'Handover' },
+    // The predecessor whose acknowledgement the recipient already gave. It is
+    // a reference, not a copy: a draft must not display another handover's
+    // acknowledged data.
+    acknowledgedFrom: { type: Schema.Types.ObjectId, ref: 'Handover' },
+    supersededAt: Date,
+    supersededBy: { type: Schema.Types.ObjectId, ref: 'Handover' },
     reviewer: { type: Schema.Types.ObjectId, ref: 'User' },
     approvedAt: Date,
     approvedBySnapshot: { name: String, email: String },
@@ -500,6 +538,7 @@ const handoverSchema = new Schema(
     shareLastOpenedAt: Date,
     shareOpenCount: { type: Number, default: 0 },
     reminderSentAt: Date,
+    expiryNoticeSentAt: Date,
     acknowledgedAt: Date,
     shareToken: { type: String, index: true, sparse: true },
     shareTokenHash: { type: String, index: true, sparse: true },
@@ -667,7 +706,15 @@ const clarificationSchema = new Schema(
     askedOf: { type: Schema.Types.ObjectId, ref: 'User' },
     askedOfName: String,
     answerOptions: { type: [String], default: [] },
+    // Index-aligned with answerOptions. Conflict options quote other claims,
+    // so purge and visibility checks need every claim an option came from,
+    // not only the clarification's own claim.
+    answerOptionClaimIds: { type: [Schema.Types.ObjectId], ref: 'Claim', default: [] },
     answer: { type: String, maxlength: 1200 },
+    // Set when an answer starts. A process that dies mid-answer leaves the row
+    // in "answering"; the timestamp lets a later read or the next startup put
+    // it back to "open" instead of blocking the question forever.
+    answeringAt: Date,
     answerRef: { type: Schema.Types.ObjectId, ref: 'Clarification' },
     resultClaim: { type: Schema.Types.ObjectId, ref: 'Claim' },
     answeredAt: Date,
@@ -690,6 +737,7 @@ export const NOTIFICATION_TYPES = [
   'handover.shared',
   'handover.revoked',
   'handover.outdated',
+  'handover.expiry',
   'handover.reminder',
   'handover.feedback',
   'clarification.asked',
@@ -760,7 +808,9 @@ export const HandoverFeedback = mongoose.model('HandoverFeedback', handoverFeedb
  */
 const deliverySchema = new Schema(
   {
-    project: { type: Schema.Types.ObjectId, ref: 'Project', required: true, index: true },
+    project: { type: Schema.Types.ObjectId, ref: 'Project', index: true },
+    // Account-level messages (email verification) have no project.
+    user: { type: Schema.Types.ObjectId, ref: 'User' },
     handover: { type: Schema.Types.ObjectId, ref: 'Handover', index: true },
     clarification: { type: Schema.Types.ObjectId, ref: 'Clarification' },
     kind: { type: String, required: true },

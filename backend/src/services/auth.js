@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
+import { forgetSessionCache, forgetUserSessionCache } from '../lib/sessionCache.js';
 import { Session } from '../models/index.js';
 
 export async function hashPassword(password) {
@@ -55,6 +56,7 @@ export async function revokeSession(userId, jti) {
     { user: userId, jti, revokedAt: null },
     { $set: { revokedAt: new Date() } },
   );
+  forgetSessionCache(jti);
 }
 
 export async function revokeAllSessions(userId) {
@@ -62,6 +64,7 @@ export async function revokeAllSessions(userId) {
     { user: userId, revokedAt: null },
     { $set: { revokedAt: new Date() } },
   );
+  forgetUserSessionCache(userId);
 }
 
 export function publicUser(user) {

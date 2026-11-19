@@ -1,7 +1,23 @@
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import { AppError, asyncHandler, unauthorized } from '../lib/errors.js';
+import {
+  readSessionCache,
+  touchSessionCache,
+  writeSessionCache,
+} from '../lib/sessionCache.js';
 import { Session, User } from '../models/index.js';
+
+const LAST_SEEN_WRITE_MS = () => env.sessionLastSeenSeconds * 1_000;
+
+async function recordLastSeen(jti, lastSeenMs, now = Date.now()) {
+  if (lastSeenMs && now - lastSeenMs < LAST_SEEN_WRITE_MS()) return lastSeenMs;
+  await Session.updateOne(
+    { jti, revokedAt: null },
+    { $set: { lastSeenAt: new Date(now) } },
+  );
+  return now;
+}
 
 async function userFromRequest(req) {
   const header = req.get('authorization') || '';
@@ -19,6 +35,15 @@ async function userFromRequest(req) {
     throw unauthorized('Your session has ended. Sign in again.');
   }
 
+  // A recently validated session skips both reads. Revocation paths clear the
+  // entry, and the short TTL bounds staleness across processes.
+  const cached = readSessionCache(payload.jti);
+  if (cached && (payload.tv || 0) === (cached.user.tokenVersion || 0)) {
+    cached.lastSeenMs = await recordLastSeen(payload.jti, cached.lastSeenMs);
+    touchSessionCache(payload.jti, cached.lastSeenMs);
+    return { user: cached.user, payload };
+  }
+
   const user = await User.findById(payload.sub);
   if (!user) throw unauthorized('This account no longer exists');
   if ((payload.tv || 0) !== (user.tokenVersion || 0)) {
@@ -32,6 +57,11 @@ async function userFromRequest(req) {
   }).lean();
   if (!session) throw unauthorized('Your session has ended. Sign in again.');
 
+  const lastSeenMs = await recordLastSeen(
+    payload.jti,
+    session.lastSeenAt ? new Date(session.lastSeenAt).getTime() : 0,
+  );
+  writeSessionCache(payload.jti, { user, payload, lastSeenMs });
   return { user, payload };
 }
 

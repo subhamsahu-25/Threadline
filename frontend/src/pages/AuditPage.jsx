@@ -27,7 +27,7 @@ import { api } from '../lib/api.js';
 import { useAsync } from '../hooks/useAsync.js';
 import { useProject } from './ProjectLayout.jsx';
 import { AUDIT_ACTION_LABELS } from '../lib/constants.js';
-import { formatDateTime, formatRelative, pluralize } from '../lib/format.js';
+import { formatDate, formatDateTime, formatIstIso, formatRelative, pluralize } from '../lib/format.js';
 import {
   Badge,
   Button,
@@ -219,7 +219,7 @@ export default function AuditPage() {
   const grouped = useMemo(() => {
     const groups = new Map();
     for (const event of filtered) {
-      const key = new Date(event.createdAt).toDateString();
+      const key = formatDate(event.createdAt);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(event);
     }
@@ -242,7 +242,7 @@ export default function AuditPage() {
       'details',
     ];
     const rows = filtered.map((event) => [
-      event.createdAt,
+      formatIstIso(event.createdAt),
       event.actorName,
       event.action,
       event.targetLabel,
@@ -258,9 +258,7 @@ export default function AuditPage() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `${project.key.toLowerCase()}-audit-${new Date()
-      .toISOString()
-      .slice(0, 10)}.csv`;
+    anchor.download = `${project.key.toLowerCase()}-audit-${formatIstIso(new Date()).slice(0, 10)}.csv`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();

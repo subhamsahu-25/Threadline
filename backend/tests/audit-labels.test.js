@@ -27,7 +27,15 @@ async function emittedActions() {
   for (const file of await javascriptFiles(SOURCE_DIR)) {
     const source = await readFile(file, 'utf8');
     for (const match of source.matchAll(ACTION_VALUE)) {
-      for (const quoted of match[1].matchAll(/'([a-z]+\.[a-z_]+)'/g)) {
+      const value = match[1].trim();
+      // `action: auditAction` is resolved from the assignment in the same file,
+      // so refactoring a literal into a named variable cannot hide an action.
+      const scope = /^[A-Za-z_$][\w$]*$/.test(value)
+        ? source.match(
+            new RegExp(`(?:const|let|var)\\s+${value}\\s*=([\\s\\S]*?);\\s*\\n`),
+          )?.[1] || ''
+        : match[1];
+      for (const quoted of scope.matchAll(/'([a-z]+\.[a-z_]+)'/g)) {
         actions.add(quoted[1]);
       }
     }

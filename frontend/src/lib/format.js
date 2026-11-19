@@ -1,9 +1,14 @@
 import { OPEN_CLAIM_STATUSES } from './constants.js';
 
+// The workspace is operated from India; pin the clock so a reviewer abroad
+// still reads IST times rather than their own device's.
+const TIME_ZONE = 'Asia/Kolkata';
+
 const dateFormat = new Intl.DateTimeFormat('en-GB', {
   day: 'numeric',
   month: 'short',
   year: 'numeric',
+  timeZone: TIME_ZONE,
 });
 
 const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
@@ -12,6 +17,7 @@ const dateTimeFormat = new Intl.DateTimeFormat('en-GB', {
   year: 'numeric',
   hour: '2-digit',
   minute: '2-digit',
+  timeZone: TIME_ZONE,
 });
 
 const relativeFormat = new Intl.RelativeTimeFormat('en', { numeric: 'auto' });
@@ -28,6 +34,31 @@ export function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'Not recorded';
   return dateTimeFormat.format(date);
+}
+
+/**
+ * ISO 8601 with the IST offset (India has no daylight saving), so an exported
+ * audit trail stays sortable while matching the clock people see in the app.
+ */
+export function formatIstIso(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-GB', {
+      timeZone: TIME_ZONE,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}+05:30`;
 }
 
 export function formatRelative(value) {

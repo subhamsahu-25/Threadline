@@ -162,6 +162,8 @@ describe('handover downloads, feedback, delivery and reminders', () => {
     const flat = text.replace(/\s+/g, ' ');
     expect(flat).toContain('टीम ने नए खाते को मंजूरी दी');
     expect(flat).toContain('In review · version 1');
+    expect(flat).toMatch(/\d{2} \w{3} \d{4}, \d{2}:\d{2} IST/);
+    expect(flat).not.toContain('UTC');
     expect(flat).toContain('Page 1 of');
   });
 

@@ -1,7 +1,9 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import mongoose from 'mongoose';
 import { AppError, asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
 import { redactText } from '../lib/redaction.js';
+import { calendarDate } from '../lib/text.js';
 import { authenticateIfPresent } from '../middleware/auth.js';
 import { getProjectForUser } from '../middleware/project.js';
 import { validate } from '../middleware/validate.js';
@@ -83,7 +85,7 @@ function serializeFeedback(row) {
   };
 }
 
-async function createFeedbackRecord({ handover, project, recipient, body, req }) {
+async function createFeedbackRecord({ handover, project, recipient, body, req, viewer }) {
   if (
     !['shared', 'acknowledged'].includes(handover.status) ||
     !handover.shareTokenHash
@@ -105,36 +107,44 @@ async function createFeedbackRecord({ handover, project, recipient, body, req })
     claimId = item.claimId;
   }
 
+  // A share link can be opened without signing in. The link still names a
+  // recipient for access checks, but an anonymous visitor must never be
+  // recorded as that person.
+  const anonymous = !viewer;
   const record = await HandoverFeedback.create({
     project: project._id,
     handover: handover._id,
     claimId,
     author: recipient._id,
-    authorSnapshot: {
-      name: recipient.name,
-      role: roleOf(project, recipient._id) || 'member',
-    },
+    authorSnapshot: anonymous
+      ? { name: 'Anonymous demo visitor', role: 'visitor' }
+      : {
+          name: recipient.name,
+          role: roleOf(project, recipient._id) || 'member',
+        },
     message: redactText(body.message).text,
   });
 
   await recordAudit({
     projectId: project._id,
-    actor: recipient,
+    actor: viewer || null,
     action: 'handover.feedback_received',
     targetType: 'handover',
     targetId: handover._id,
     targetLabel: `Handover v${handover.version}`,
-    meta: { claimId: claimId ? String(claimId) : null },
+    meta: { claimId: claimId ? String(claimId) : null, anonymous },
     req,
   });
 
+  // notify() keeps one row per handover and recipient, so repeated notes do
+  // not stack up in the bell.
   await notify({
     project,
     recipients: [handover.createdBy, ...leadIds(project)],
     type: 'handover.feedback',
     entityType: 'handover',
     entityId: handover._id,
-    actor: recipient,
+    actor: viewer || null,
   });
 
   return record;
@@ -145,7 +155,7 @@ function exportFilename(handover) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
-  const day = new Date().toISOString().slice(0, 10);
+  const day = calendarDate(new Date());
   return `handover-${who || 'recipient'}-${day}.pdf`;
 }
 
@@ -160,6 +170,29 @@ async function sendPdf(res, { view, project, viewer, filename }) {
   res.setHeader('Content-Length', pdf.length);
   res.setHeader('Cache-Control', 'no-store');
   res.end(pdf);
+}
+
+// One list request may look through at most this many database batches. A
+// recipient whose rows keep failing the read-time check gets a cursor back
+// instead of an unbounded scan.
+export const HANDOVER_LIST_SCAN_BATCHES = 5;
+
+// The recipient's list rule, expressed as a query so unshared drafts and dead
+// links never enter the page loop at all.
+export function recipientVisibleFilter(userId, now = Date.now()) {
+  return {
+    recipient: userId,
+    status: { $in: ['shared', 'acknowledged'] },
+    $or: [
+      { status: 'acknowledged', revokedAt: null },
+      {
+        status: 'shared',
+        revokedAt: null,
+        shareTokenHash: { $exists: true, $ne: null },
+        shareExpiresAt: { $gt: new Date(now) },
+      },
+    ],
+  };
 }
 
 router.get(
@@ -177,8 +210,10 @@ router.get(
       // Scope always filters. A lead may pass scope=all to list the project's
       // handovers; every other value means exactly what it says for everyone.
       if (scope === 'created') query.createdBy = userId;
-      else if (scope === 'received') query.recipient = userId;
-      else if (!isLead) query.$or = [{ createdBy: userId }, { recipient: userId }];
+      else if (scope === 'received') Object.assign(query, recipientVisibleFilter(userId));
+      else if (!isLead) {
+        query.$or = [{ createdBy: userId }, recipientVisibleFilter(userId)];
+      }
     } else {
       const projects = await Project.find({ 'members.user': userId })
         .select('owner members')
@@ -190,19 +225,18 @@ router.get(
       if (scope === 'created') {
         query = { createdBy: userId };
       } else if (scope === 'received') {
-        query = { recipient: userId };
+        query = recipientVisibleFilter(userId);
       } else {
-        const or = [{ createdBy: userId }, { recipient: userId }];
+        const or = [{ createdBy: userId }, recipientVisibleFilter(userId)];
         if (leadProjectIds.length > 0) or.push({ project: { $in: leadProjectIds } });
         query = { $or: or };
       }
     }
 
-    // A recipient sees only what was actually given to them: the same
-    // read-time access check used by the detail route decides list membership,
-    // so an unshared draft never leaks through the list. The check happens per
-    // page, and a page can be shorter than the limit when a hidden row sits at
-    // the boundary.
+    // Visibility is filtered in the query above. This read-time check is the
+    // second line of defence: rows that still fail it (membership removed,
+    // permission changed) are dropped without letting the page loop walk the
+    // whole collection.
     const visibleRows = async (rows) => {
       if (rows.length === 0) return [];
       const projectIds = [...new Set(rows.map((handover) => String(handover.project)))];
@@ -211,14 +245,21 @@ router.get(
       return rows
         .map((handover) => {
           const project = projectById.get(String(handover.project));
+          const isCreator = String(handover.createdBy) === String(userId);
+          const isLead = canManageProject(project || {}, req.user);
+          const canView = Boolean(
+            project && handoverAccess({ handover, project, user: req.user }).canView,
+          );
+          // The recipient sees one current handover per share. Earlier
+          // releases stay reachable from the current handover's history list;
+          // the team still sees them here with a "superseded" label.
+          const hiddenHistory = handover.status === 'superseded' && !isCreator && !isLead;
           return {
             handover,
             project,
-            isCreator: String(handover.createdBy) === String(userId),
-            isLead: canManageProject(project || {}, req.user),
-            canView: Boolean(
-              project && handoverAccess({ handover, project, user: req.user }).canView,
-            ),
+            isCreator,
+            isLead,
+            canView: canView && !hiddenHistory,
           };
         })
         .filter(({ canView }) => canView);
@@ -227,11 +268,13 @@ router.get(
     let after = cursor ? new mongoose.Types.ObjectId(cursor) : null;
     let hasMore = false;
     let nextCursor = null;
+    let batches = 0;
     const visible = [];
 
     for (;;) {
       const filter = after ? { $and: [query, { _id: { $lt: after } }] } : query;
       const batch = await Handover.find(filter).sort({ _id: -1 }).limit(limit).lean();
+      batches += 1;
       if (batch.length === 0) break;
 
       visible.push(...(await visibleRows(batch)));
@@ -249,6 +292,14 @@ router.get(
 
       after = batch[batch.length - 1]._id;
       if (batch.length < limit) break;
+
+      if (batches >= HANDOVER_LIST_SCAN_BATCHES) {
+        // Resume from the last row examined: everything already scanned is
+        // older-_id territory, so the next page neither repeats nor skips it.
+        nextCursor = String(after);
+        hasMore = Boolean(await Handover.exists({ $and: [query, { _id: { $lt: after } }] }));
+        break;
+      }
     }
 
     res.json({
@@ -302,6 +353,41 @@ router.post(
  */
 export const sharedHandoverRouter = Router();
 
+/**
+ * Anonymous visitors can post feedback on a shared link, so the write is
+ * capped per link (one visitor cannot flood it) and per address (one client
+ * cannot flood many links). Signed-in recipients are not anonymous abuse and
+ * are exempt.
+ */
+function sharedFeedbackLimitHandler(_req, res) {
+  res.status(429).json({
+    error: {
+      code: 'too_many_posts',
+      message: 'Too many anonymous feedback posts on this link. Try again later.',
+    },
+  });
+}
+
+const sharedFeedbackLinkLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: (req) => Boolean(req.user),
+  keyGenerator: (req) => `link:${req.params.token || req.ip}`,
+  handler: sharedFeedbackLimitHandler,
+});
+
+const sharedFeedbackIpLimiter = rateLimit({
+  windowMs: 60 * 60_000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: (req) => Boolean(req.user),
+  keyGenerator: (req) => `ip:${req.ip}`,
+  handler: sharedFeedbackLimitHandler,
+});
+
 async function loadSharedHandover(token, viewer) {
   const handover = await Handover.findOne({ shareTokenHash: hashShareToken(token) });
   if (!handover) throw notFound('This share link is not valid');
@@ -320,36 +406,56 @@ async function loadSharedHandover(token, viewer) {
     throw forbidden('The recipient is no longer a member of this project');
   }
 
+  // Demo links are advertised as public previews. A visitor who happens to be
+  // signed in as somebody else still sees the preview instead of an error.
+  let publicPreview = false;
   if (viewer) {
     if (String(handover.recipient) !== String(viewer._id)) {
-      throw forbidden('This share link belongs to a different recipient');
+      if (!project.isDemo) {
+        throw forbidden('This share link belongs to a different recipient');
+      }
+      publicPreview = true;
     }
-  } else if (!project.isDemo) {
+  } else if (project.isDemo) {
+    publicPreview = true;
+  } else {
     throw forbidden('This share link opens only for the named recipient. Sign in to continue.');
   }
 
-  return { handover, project, recipient };
+  return { handover, project, recipient, publicPreview };
 }
 
 sharedHandoverRouter.get(
   '/:token',
   authenticateIfPresent,
   asyncHandler(async (req, res) => {
-    const { handover, project, recipient } = await loadSharedHandover(
+    const { handover, project, recipient, publicPreview } = await loadSharedHandover(
       req.params.token,
       req.user,
     );
 
     // The sender can see that the link was opened even before it is
     // acknowledged. Each open is counted, but only the first and last times
-    // are shown. A save here is safe: this document was just loaded and only
-    // these tracking fields change.
+    // are shown. The counter uses $inc (and the first-open timestamp $ifNull)
+    // so simultaneous opens cannot overwrite each other's counts.
     const openedAt = new Date();
-    if (!handover.shareOpenedAt) handover.shareOpenedAt = openedAt;
+    handover.shareOpenedAt = handover.shareOpenedAt || openedAt;
     handover.shareLastOpenedAt = openedAt;
     handover.shareOpenCount = (handover.shareOpenCount || 0) + 1;
     handover.lastAccessedAt = openedAt;
-    await handover.save();
+    await Handover.updateOne(
+      { _id: handover._id },
+      [
+        {
+          $set: {
+            shareOpenedAt: { $ifNull: ['$shareOpenedAt', openedAt] },
+            shareLastOpenedAt: openedAt,
+            shareOpenCount: { $add: [{ $ifNull: ['$shareOpenCount', 0] }, 1] },
+            lastAccessedAt: openedAt,
+          },
+        },
+      ],
+    );
 
     const view = await buildRecipientView({
       handover,
@@ -362,7 +468,7 @@ sharedHandoverRouter.get(
       handover: view,
       viewer: 'recipient',
       recipientName: recipient.name,
-      publicPreview: !req.user,
+      publicPreview,
     });
   }),
 );
@@ -394,9 +500,11 @@ sharedHandoverRouter.get(
 sharedHandoverRouter.post(
   '/:token/feedback',
   authenticateIfPresent,
+  sharedFeedbackLinkLimiter,
+  sharedFeedbackIpLimiter,
   validate({ body: handoverFeedbackSchema }),
   asyncHandler(async (req, res) => {
-    const { handover, project, recipient } = await loadSharedHandover(
+    const { handover, project, recipient, publicPreview } = await loadSharedHandover(
       req.params.token,
       req.user,
     );
@@ -406,6 +514,9 @@ sharedHandoverRouter.post(
       recipient,
       body: req.body,
       req,
+      // A signed-in visitor on somebody else's demo link is still a public
+      // preview viewer; do not sign the note with the recipient's name.
+      viewer: publicPreview ? null : req.user || null,
     });
     res.status(201).json({ feedback: serializeFeedback(record) });
   }),
@@ -415,7 +526,7 @@ sharedHandoverRouter.post(
   '/:token/acknowledge',
   authenticateIfPresent,
   asyncHandler(async (req, res) => {
-    const { handover, project, recipient } = await loadSharedHandover(
+    const { handover, project, recipient, publicPreview } = await loadSharedHandover(
       req.params.token,
       req.user,
     );
@@ -438,7 +549,7 @@ sharedHandoverRouter.post(
       handover: view,
       viewer: 'recipient',
       recipientName: recipient.name,
-      publicPreview: !req.user,
+      publicPreview,
     });
   }),
 );
@@ -517,6 +628,7 @@ router.post(
       recipient: req.user,
       body: req.body,
       req,
+      viewer: req.user,
     });
     res.status(201).json({ feedback: serializeFeedback(record) });
   }),

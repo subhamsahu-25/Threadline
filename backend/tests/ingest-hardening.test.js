@@ -268,22 +268,30 @@ describe('ingestion hardening over the API', () => {
       `Section ${index}. ${'lorem ipsum dolor sit amet consectetur adipiscing elit '.repeat(40)}`;
     const body = Array.from({ length: 340 }, (_, index) => paragraph(index)).join('\n\n');
 
-    const response = await request(app)
-      .post(`/api/projects/${projectId}/sources/upload`)
-      .set(auth(lead.token))
-      .field('name', 'Large handbook')
-      .attach('files', Buffer.from(`# Large handbook\n\n${body}\n`, 'utf8'), 'handbook.md');
-    expect(response.status).toBe(202);
-    await whenIdle({ timeoutMs: 120_000 });
+    // One configured cap applies to every kind of document. Lowering it keeps
+    // the test small while proving the source card reports the same number.
+    const capBefore = env.maxDocumentChars;
+    env.maxDocumentChars = 300_000;
+    try {
+      const response = await request(app)
+        .post(`/api/projects/${projectId}/sources/upload`)
+        .set(auth(lead.token))
+        .field('name', 'Large handbook')
+        .attach('files', Buffer.from(`# Large handbook\n\n${body}\n`, 'utf8'), 'handbook.md');
+      expect(response.status).toBe(202);
+      await whenIdle({ timeoutMs: 120_000 });
 
-    const source = await request(app)
-      .get(`/api/projects/${projectId}/sources/${response.body.source.id}`)
-      .set(auth(lead.token))
-      .expect(200);
+      const source = await request(app)
+        .get(`/api/projects/${projectId}/sources/${response.body.source.id}`)
+        .set(auth(lead.token))
+        .expect(200);
 
-    expect(source.body.source.status).toBe('ready');
-    const warnings = source.body.source.parseWarnings.join(' ');
-    expect(warnings).toMatch(/Truncated from [\d,]+ to 200,000 characters/);
+      expect(source.body.source.status).toBe('ready');
+      const warnings = source.body.source.parseWarnings.join(' ');
+      expect(warnings).toMatch(/Truncated from [\d,]+ to 300,000 characters/);
+    } finally {
+      env.maxDocumentChars = capBefore;
+    }
   });
 
   it('keeps previous content when a re-ingest fails', async () => {

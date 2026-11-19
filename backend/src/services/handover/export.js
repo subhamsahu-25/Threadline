@@ -13,8 +13,21 @@ const FONT_DIR = path.join(
 const FONTS = {
   body: 'NotoSans-Regular.ttf',
   bold: 'NotoSans-SemiBold.ttf',
-  deva: 'NotoSansDevanagari-Regular.ttf',
 };
+
+// One Noto family per Indian script. The Latin faces have no glyphs for any of
+// these, so text is split into script runs and each run uses its own font.
+const SCRIPT_FONTS = [
+  { key: 'deva', file: 'NotoSansDevanagari-Regular.ttf', test: /[\u0900-\u097F\uA8E0-\uA8FF]/ },
+  { key: 'beng', file: 'NotoSansBengali-Regular.ttf', test: /[\u0980-\u09FF]/ },
+  { key: 'guru', file: 'NotoSansGurmukhi-Regular.ttf', test: /[\u0A00-\u0A7F]/ },
+  { key: 'gujr', file: 'NotoSansGujarati-Regular.ttf', test: /[\u0A80-\u0AFF]/ },
+  { key: 'orya', file: 'NotoSansOriya-Regular.ttf', test: /[\u0B00-\u0B7F]/ },
+  { key: 'taml', file: 'NotoSansTamil-Regular.ttf', test: /[\u0B80-\u0BFF]/ },
+  { key: 'telu', file: 'NotoSansTelugu-Regular.ttf', test: /[\u0C00-\u0C7F]/ },
+  { key: 'knda', file: 'NotoSansKannada-Regular.ttf', test: /[\u0C80-\u0CFF]/ },
+  { key: 'mlym', file: 'NotoSansMalayalam-Regular.ttf', test: /[\u0D00-\u0D7F]/ },
+];
 
 const COLORS = {
   ink: '#12202f',
@@ -31,7 +44,8 @@ const COLORS = {
   warn: '#a16207',
 };
 
-const DEVANAGARI = /[\u0900-\u097F\uA8E0-\uA8FF]/;
+const TIME_ZONE = 'Asia/Kolkata';
+const TIME_ZONE_LABEL = 'IST';
 
 function formatDate(value) {
   const date = new Date(value);
@@ -40,7 +54,7 @@ function formatDate(value) {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-    timeZone: 'UTC',
+    timeZone: TIME_ZONE,
   });
 }
 
@@ -52,9 +66,9 @@ function formatDateTime(value) {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-    timeZone: 'UTC',
+    timeZone: TIME_ZONE,
   });
-  return `${day}, ${time} UTC`;
+  return `${day}, ${time} ${TIME_ZONE_LABEL}`;
 }
 
 function humanise(value) {
@@ -81,10 +95,22 @@ function measure(doc, text, { font = 'body', size = 9.5, width, lineGap = 0 } = 
   });
 }
 
+function scriptOf(char) {
+  for (const entry of SCRIPT_FONTS) {
+    if (entry.test.test(char)) return entry.key;
+  }
+  return 'latin';
+}
+
+const HAS_NON_LATIN = new RegExp(
+  SCRIPT_FONTS.map((entry) => entry.test.source).join('|'),
+  'u',
+);
+
 function scriptRuns(text) {
   const runs = [];
   for (const char of String(text)) {
-    const script = DEVANAGARI.test(char) ? 'deva' : 'latin';
+    const script = scriptOf(char);
     const last = runs[runs.length - 1];
     if (last && last.script === script) last.text += char;
     else runs.push({ script, text: char });
@@ -93,8 +119,8 @@ function scriptRuns(text) {
 }
 
 /**
- * Writes text with the right font per script. Devanagari has no glyphs in the
- * Latin face, so the string is split into runs and each run keeps the same
+ * Writes text with the right font per script. Latin faces carry no Indian
+ * script glyphs, so the string is split into runs and each run keeps the same
  * layout options; Latin runs honour the requested weight.
  */
 function writeText(doc, text, opts = {}) {
@@ -103,7 +129,7 @@ function writeText(doc, text, opts = {}) {
   const { font = 'body', size = 9.5, color = COLORS.ink, ...layout } = opts;
   const latin = font === 'bold' ? 'bold' : 'body';
 
-  if (!DEVANAGARI.test(value)) {
+  if (!HAS_NON_LATIN.test(value)) {
     doc.font(font).fontSize(size).fillColor(color).text(value, layout);
     return;
   }
@@ -111,7 +137,7 @@ function writeText(doc, text, opts = {}) {
   const runs = scriptRuns(value);
   runs.forEach((run, index) => {
     doc
-      .font(run.script === 'deva' ? 'deva' : latin)
+      .font(run.script === 'latin' ? latin : run.script)
       .fontSize(size)
       .fillColor(color)
       .text(run.text, { ...layout, continued: index < runs.length - 1 });
@@ -671,7 +697,9 @@ export async function renderHandoverPdf({ handover, projectName, viewer }) {
 
   doc.registerFont('body', path.join(FONT_DIR, FONTS.body));
   doc.registerFont('bold', path.join(FONT_DIR, FONTS.bold));
-  doc.registerFont('deva', path.join(FONT_DIR, FONTS.deva));
+  for (const script of SCRIPT_FONTS) {
+    doc.registerFont(script.key, path.join(FONT_DIR, script.file));
+  }
 
   drawCover(doc, model);
   drawMeta(doc, model.meta);

@@ -40,6 +40,10 @@ export const env = {
   jwtSecret: process.env.JWT_SECRET || DEV_JWT_SECRET,
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '12h',
   corsOrigins: list('CORS_ORIGINS'),
+  // The browser address used in emailed links. Falls back to the first
+  // allowed origin so a single-origin deployment needs no extra setting.
+  publicAppUrl: (process.env.PUBLIC_APP_URL || list('CORS_ORIGINS')[0] || 'http://localhost:5173').replace(/\/+$/, ''),
+  emailVerificationTtlHours: Math.max(1, int('EMAIL_VERIFICATION_TTL_HOURS', 48)),
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
   geminiFallbackModel: process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.5-flash-lite',
@@ -63,6 +67,9 @@ export const env = {
   uploadJanitorEnabled: bool('UPLOAD_JANITOR_ENABLED', true),
   uploadJanitorIntervalHours: Math.max(1, int('UPLOAD_JANITOR_INTERVAL_HOURS', 6)),
   uploadOrphanHours: Math.max(1, int('UPLOAD_ORPHAN_HOURS', 24)),
+  // Report which files would be deleted without unlinking them. Useful for a
+  // first run against an unfamiliar directory.
+  uploadJanitorDryRun: bool('UPLOAD_JANITOR_DRY_RUN', false),
   staleDays: int('STALE_DAYS', 30),
   // An open question older than this is counted as an old question in the
   // readiness score. Separate from the staleness window because an unanswered
@@ -89,6 +96,8 @@ export const env = {
   // Parsed here so a malformed value falls back to a sane number instead of
   // NaN, which used to stop the queue pump entirely.
   ingestConcurrency: Math.max(1, int('INGEST_CONCURRENCY', 2)),
+  // A handler that never settles would otherwise hold its worker forever.
+  ingestJobTimeoutMs: Math.max(10_000, int('INGEST_JOB_TIMEOUT_MS', 300_000)),
   extractTimeBudgetMs: Math.max(5_000, int('EXTRACT_TIME_BUDGET_MS', 120_000)),
   // The demo workspace is opt-in. In production only DEMO_MODE=true enables
   // it; elsewhere ALLOW_DEMO_SEED must also be set explicitly.
@@ -109,6 +118,18 @@ export const env = {
   ),
   loginMaxAttempts: Math.max(3, int('LOGIN_MAX_ATTEMPTS', 5)),
   loginLockoutMinutes: Math.max(1, int('LOGIN_LOCKOUT_MINUTES', 15)),
+  // New passwords are checked against the Have I Been Pwned range API. The
+  // check sends only the first five SHA-1 characters, so the password itself
+  // never leaves the server. Tests run offline unless explicitly enabled.
+  breachCheckEnabled: bool('BREACH_CHECK_ENABLED', nodeEnv !== 'test'),
+  breachCheckTimeoutMs: Math.max(250, int('BREACH_CHECK_TIMEOUT_MS', 1_500)),
+  // Authenticated requests reuse a validated session for this many seconds
+  // instead of reading the user and session rows each time. Revocation clears
+  // the entry in the process that handled it; the TTL bounds other processes.
+  sessionCacheSeconds: Math.max(0, int('SESSION_CACHE_SECONDS', 10)),
+  // lastSeenAt is written at most once per this window, however busy the
+  // session is.
+  sessionLastSeenSeconds: Math.max(10, int('SESSION_LAST_SEEN_SECONDS', 60)),
   rootDir,
 };
 

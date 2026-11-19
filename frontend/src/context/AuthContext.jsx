@@ -47,6 +47,15 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
+  // Demo personas have no published password. The API issues their session
+  // only while demo mode is on, and returns 404 everywhere else.
+  const loginDemo = useCallback(async (email) => {
+    const data = await api.post('/api/demo/session', { email });
+    setToken(data.token);
+    setUser(data.user);
+    return data.user;
+  }, []);
+
   const register = useCallback(
     async (payload) => {
       // Registration deliberately returns no session, so a new account signs
@@ -74,8 +83,8 @@ export function AuthProvider({ children }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, booting, login, register, logout, refresh }),
-    [user, booting, login, register, logout, refresh],
+    () => ({ user, booting, login, loginDemo, register, logout, refresh }),
+    [user, booting, login, loginDemo, register, logout, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

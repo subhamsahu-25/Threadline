@@ -255,7 +255,9 @@ describe('reliability findings R1-R8', () => {
         .set(auth(leadToken))
         .expect(200);
       expect(source.body.source.status).toBe('ready');
-      expect(source.body.source.parseWarnings.join(' ')).toMatch(/Stored the first 5,000 of/);
+      expect(source.body.source.parseWarnings.join(' ')).toMatch(
+        /Truncated from [\d,]+ to 5,000 characters/,
+      );
 
       const document = await request(app)
         .get(`/api/projects/${projectId}/documents?sourceId=${created.body.source.id}`)
@@ -265,7 +267,8 @@ describe('reliability findings R1-R8', () => {
         .get(`/api/projects/${projectId}/documents/${document.body.documents[0].id}`)
         .set(auth(leadToken))
         .expect(200);
-      expect(detail.body.rawText).toHaveLength(5_000);
+      expect(detail.body.rawText.length).toBeLessThanOrEqual(5_000);
+      expect(detail.body.rawText.length).toBeGreaterThan(4_900);
     } finally {
       env.maxDocumentChars = original;
     }

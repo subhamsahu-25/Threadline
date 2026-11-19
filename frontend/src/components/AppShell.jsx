@@ -14,6 +14,7 @@ import {
   Loader2,
   LogOut,
   MessageSquareText,
+  MonitorSmartphone,
   MoreHorizontal,
   RefreshCw,
   ScrollText,
@@ -25,8 +26,8 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { useWorkspace } from '../context/WorkspaceContext.jsx';
 import { api, errorMessage } from '../lib/api.js';
-import { daysUntil } from '../lib/format.js';
-import { DEMO_PASSWORD, DEMO_PERSONAS, ROLE_LABELS } from '../lib/constants.js';
+import { daysUntil, formatDateTime } from '../lib/format.js';
+import { DEMO_PERSONAS, ROLE_LABELS } from '../lib/constants.js';
 import NotificationBell from './NotificationBell.jsx';
 import { Avatar, Badge, Button, Modal } from './ui.jsx';
 
@@ -136,7 +137,7 @@ function ProjectSwitcher({ project, projects, onChange }) {
   );
 }
 
-function Sidebar({ project, projects, user, logout, onNavigate }) {
+function Sidebar({ project, projects, user, logout, onNavigate, onDevices }) {
   const navigate = useNavigate();
   const isLead = project?.role === 'lead';
   const [openQuestions, setOpenQuestions] = useState(0);
@@ -281,6 +282,15 @@ function Sidebar({ project, projects, user, logout, onNavigate }) {
           </div>
           <button
             type="button"
+            onClick={onDevices}
+            className="rounded-md p-1.5 text-ink-faint transition hover:bg-slate-100 hover:text-ink"
+            aria-label="Your devices"
+            title="Your devices"
+          >
+            <MonitorSmartphone className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
             onClick={logout}
             className="rounded-md p-1.5 text-ink-faint transition hover:bg-slate-100 hover:text-ink"
             aria-label="Sign out"
@@ -294,7 +304,7 @@ function Sidebar({ project, projects, user, logout, onNavigate }) {
   );
 }
 
-function MobileMoreSheet({ open, onClose, project, logout, isLead }) {
+function MobileMoreSheet({ open, onClose, project, logout, isLead, onDevices }) {
   const navigate = useNavigate();
   if (!open) return null;
   const go = (path) => {
@@ -353,6 +363,16 @@ function MobileMoreSheet({ open, onClose, project, logout, isLead }) {
             className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium text-ink-soft hover:bg-slate-50"
           >
             <ArrowLeftRight className="h-4 w-4 text-ink-muted" /> Switch project
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onDevices();
+            }}
+            className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium text-ink-soft hover:bg-slate-50"
+          >
+            <MonitorSmartphone className="h-4 w-4 text-ink-muted" /> Your devices
           </button>
           <button
             type="button"
@@ -468,13 +488,104 @@ function PersonaMenu({ open, onClose, user, switching, onSwitch, onReset, onLogo
   );
 }
 
+function DevicesDialog({ open, onClose }) {
+  const toast = useToast();
+  const [sessions, setSessions] = useState(null);
+  const [busy, setBusy] = useState(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    let active = true;
+    setSessions(null);
+    api
+      .get('/api/auth/sessions')
+      .then((data) => {
+        if (active) setSessions(data.sessions || []);
+      })
+      .catch((err) => {
+        if (!active) return;
+        setSessions([]);
+        toast.error(errorMessage(err));
+      });
+    return () => {
+      active = false;
+    };
+  }, [open, toast]);
+
+  const revoke = async (id) => {
+    setBusy(id);
+    try {
+      await api.del(`/api/auth/sessions/${id}`);
+      setSessions((current) => (current || []).filter((session) => session.id !== id));
+      toast.success('That device has been signed out.');
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Your devices"
+      description="Every browser signed in to your account. Sign out any device you do not recognise."
+      size="sm"
+    >
+      {sessions === null ? (
+        <p className="flex items-center gap-2 text-[12px] text-ink-muted">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> Loading sessions…
+        </p>
+      ) : sessions.length === 0 ? (
+        <p className="text-[12px] text-ink-muted">No active sessions were found.</p>
+      ) : (
+        <ul className="space-y-2">
+          {sessions.map((session) => (
+            <li
+              key={session.id}
+              className="flex items-start justify-between gap-3 rounded-lg border border-line px-3 py-2.5"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-[12px] font-semibold text-ink">
+                  {session.userAgent}
+                  {session.current && (
+                    <span className="ml-2 rounded bg-brand-50 px-1.5 py-0.5 text-[9.5px] font-semibold uppercase tracking-wide text-brand-700">
+                      This device
+                    </span>
+                  )}
+                </p>
+                <p className="text-[10.5px] leading-4 text-ink-muted">
+                  Last seen {formatDateTime(session.lastSeenAt)}
+                  {session.ip ? ` · ${session.ip}` : ''}
+                </p>
+              </div>
+              {!session.current && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  loading={busy === session.id}
+                  onClick={() => revoke(session.id)}
+                >
+                  Sign out
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Modal>
+  );
+}
+
 export default function AppShell() {
-  const { user, logout, login } = useAuth();
+  const { user, logout, loginDemo } = useAuth();
   const { projects, currentProject, reloadProjects } = useWorkspace();
   const toast = useToast();
   const navigate = useNavigate();
   const [moreOpen, setMoreOpen] = useState(false);
   const [personaOpen, setPersonaOpen] = useState(false);
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const [switching, setSwitching] = useState(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -497,11 +608,11 @@ export default function AppShell() {
   useEffect(() => {
     let active = true;
     api
-      .get('/api/health')
+      .get('/api/demo/status')
       .then((data) => {
         if (!active) return;
-        setDemoSeedEnabled(data?.demoSeedEnabled === true);
-        setDemoMode(data?.demoSeedEnabled === true || data?.demoProjectReady === true);
+        setDemoSeedEnabled(data?.seedEnabled === true);
+        setDemoMode(data?.available === true);
       })
       .catch(() => {
         if (!active) return;
@@ -525,7 +636,7 @@ export default function AppShell() {
     }
     setSwitching(persona.email);
     try {
-      const next = await login(persona.email, DEMO_PASSWORD);
+      const next = await loginDemo(persona.email);
       toast.success(`Now viewing as ${next.name} · ${persona.tag.toLowerCase()}`);
       setPersonaOpen(false);
       navigate(inProject ? `/projects/${routeProjectId}` : '/');
@@ -574,6 +685,7 @@ export default function AppShell() {
         projects={projects}
         user={user}
         logout={logout}
+        onDevices={() => setDevicesOpen(true)}
         onNavigate={() => setMoreOpen(false)}
       />
 
@@ -807,7 +919,10 @@ export default function AppShell() {
         project={project}
         logout={logout}
         isLead={isLead}
+        onDevices={() => setDevicesOpen(true)}
       />
+
+      <DevicesDialog open={devicesOpen} onClose={() => setDevicesOpen(false)} />
 
       <Modal
         open={resetOpen}

@@ -364,6 +364,7 @@ export default function HandoverReviewPage() {
   const [freshnessOpen, setFreshnessOpen] = useState(false);
   const [acceptAllOpen, setAcceptAllOpen] = useState(false);
   const [resolvingFeedback, setResolvingFeedback] = useState(null);
+  const [showAllRecommendations, setShowAllRecommendations] = useState(false);
 
   useEffect(() => {
     if (data?.handover) {
@@ -983,6 +984,28 @@ export default function HandoverReviewPage() {
         </div>
       </PageHeader>
 
+      {handover.status === 'superseded' && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-[12px] leading-5 text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+          <div>
+            <p className="font-semibold">This handover was superseded</p>
+            <p className="text-amber-800/90">
+              A newer handover replaced it
+              {handover.supersededByVersion ? ` (v${handover.supersededByVersion})` : ''} and its
+              share link was revoked. It stays read-only as history.{' '}
+              {handover.supersededById && (
+                <Link
+                  to={`/projects/${projectId}/handovers/${handover.supersededById}`}
+                  className="font-semibold underline underline-offset-2"
+                >
+                  Open the current handover
+                </Link>
+              )}
+            </p>
+          </div>
+        </div>
+      )}
+
       {handover.status === 'rejected' && (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3.5 py-2.5 text-[12px] leading-5 text-red-900">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" aria-hidden="true" />
@@ -1031,7 +1054,7 @@ export default function HandoverReviewPage() {
         </div>
       )}
 
-      {handover.freshness?.status === 'outdated' && (
+      {handover.freshness?.status === 'outdated' && handover.status !== 'superseded' && (
         <div className="mb-4 rounded-lg border border-orange-200 bg-orange-50 px-3.5 py-2.5 text-[12px] leading-5 text-orange-900">
           <div className="flex items-start gap-2">
             <GitCompareArrows className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" aria-hidden="true" />
@@ -1518,7 +1541,9 @@ export default function HandoverReviewPage() {
                 </Badge>
               </div>
               <div className="mt-2.5 divide-y divide-line">
-                {handover.recommendations.slice(0, 6).map((action) => (
+                {handover.recommendations
+                  .slice(0, showAllRecommendations ? undefined : 6)
+                  .map((action) => (
                   <div key={action.key} className="py-2 first:pt-0 last:pb-0">
                     <div className="flex items-start gap-1.5">
                       <Badge
@@ -1541,6 +1566,20 @@ export default function HandoverReviewPage() {
                     </p>
                   </div>
                 ))}
+                {handover.recommendations.length > 6 && (
+                  <div className="mt-1 border-t border-line pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAllRecommendations((value) => !value)}
+                      aria-expanded={showAllRecommendations}
+                      className="text-[11px] font-semibold text-brand-700 hover:text-brand-900"
+                    >
+                      {showAllRecommendations
+                        ? 'Show fewer'
+                        : `View all ${handover.recommendations.length} actions`}
+                    </button>
+                  </div>
+                )}
               </div>
             </Card>
           )}

@@ -329,12 +329,12 @@ describe('round 3 hardenings', () => {
 
   it('revokes only the signing-out session, and logout-all ends every session', async () => {
     const first = await request(app)
-      .post('/api/auth/login')
-      .send({ email: INCOMING, password: 'Threadline#2026' })
+      .post('/api/demo/session')
+      .send({ email: INCOMING })
       .expect(200);
     const second = await request(app)
-      .post('/api/auth/login')
-      .send({ email: INCOMING, password: 'Threadline#2026' })
+      .post('/api/demo/session')
+      .send({ email: INCOMING })
       .expect(200);
 
     await request(app).get('/api/auth/me').set(auth(first.body.token)).expect(200);

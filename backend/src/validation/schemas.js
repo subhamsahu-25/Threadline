@@ -33,7 +33,12 @@ export const registerSchema = z
   .object({
     email: emailField,
     name: z.string().trim().min(2).max(80),
-    password: z.string().min(10, 'Use at least 10 characters').max(128),
+    password: z
+      .string()
+      .min(10, 'Use at least 10 characters')
+      // bcrypt only honours the first 72 bytes; passwordProblem enforces the
+      // byte count, this is the matching character-level guard.
+      .max(72, 'Use at most 72 characters'),
     inviteCode: z.string().trim().max(200).optional(),
   })
   .superRefine((value, ctx) => {
@@ -49,6 +54,10 @@ export const registerSchema = z
 export const loginSchema = z.object({
   email: emailField,
   password: z.string().min(1).max(128),
+});
+
+export const resendVerificationSchema = z.object({
+  email: emailField,
 });
 
 const transitionSchema = z
@@ -122,6 +131,8 @@ export const updateSourceSchema = z.object({
   sensitivity: sensitivityField.optional(),
   hidden: z.boolean().optional(),
   aiPolicy: z.object({ allowExternal: z.boolean() }).optional(),
+  // Required when a lead allows a confidential source to leave the server.
+  reason: z.string().trim().max(600).optional(),
 });
 
 export const syncSourceSchema = z

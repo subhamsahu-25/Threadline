@@ -31,9 +31,9 @@ that keep a handover honest.
 - **Retention is explicit.** Sources are soft-deleted with revisions kept so
   history can be reconstructed; a formal retention policy and hard-erasure
   endpoint are future work (listed as a limitation, not claimed).
-- **Secrets are never committed.** `backend/.env` is gitignored; the demo
-  password `Threadline#2026` is scoped to seeded demo accounts only and is
-  never presented as a real credential.
+- **Secrets are never committed.** `backend/.env` is gitignored; seeded demo
+  accounts get random passwords that are never returned or published, and the
+  one-click demo sign-in route is gated on demo seeding being enabled.
 
 ### Data flow to the extraction model
 
@@ -70,8 +70,26 @@ that keep a handover honest.
   breached-password list, character variety and name/address reuse.
 - **Registration policy:** open sign-up is a demo affordance. Non-demo
   production deployments default to invite-only; `REGISTRATION_INVITE_CODES`
-  and `REGISTRATION_EMAIL_DOMAINS` narrow it further. New accounts hold no
-  project access until a lead adds them.
+  and `REGISTRATION_EMAIL_DOMAINS` narrow it further, and an invite entry may
+  bind one address as `CODE:alice@example.com` so forwarding the code does not
+  admit anybody else.
+- **Email verification:** new accounts start unconfirmed and hold no project
+  access. Registration issues a signed, expiring link (`EMAIL_VERIFICATION_TTL_HOURS`)
+  naming both the account and the address; verifying requires the signed token
+  to match the address on the account. A lead cannot add an unconfirmed
+  account to a project, and the people screen shows the confirmation state
+  before the add is attempted.
+- **Session token storage (accepted residual risk):** the browser keeps the
+  bearer token in `localStorage` under `threadline.token`. An HttpOnly,
+  Secure, SameSite=Lax cookie with a CSRF token would stop injected script
+  from reading the session; this build keeps the bearer flow and documents the
+  gap instead of shipping a half-migrated cookie path that would still read
+  the local token. What bounds the exposure: the frontend CSP sets
+  `script-src 'self'` with no `unsafe-inline`, every session is individually
+  revocable and listed under "Your devices", tokens expire after 12 hours, and
+  "sign out everywhere" bumps `tokenVersion`. Script that already executes in
+  the page can still read the token; cookie plus CSRF is the next step if this
+  deployment stops being a demo.
 - **Transport and headers:** Helmet security headers on every response,
   including a strict API CSP (`default-src 'none'`, `frame-ancestors 'none'`,
   `form-action 'none'`, no referrer); configurable CORS allow-list; JSON body
@@ -102,8 +120,10 @@ that keep a handover honest.
 - **Deployment:** production secrets live only in the hosting platform's
   environment configuration; the database is network-scoped to the backend.
 
-Known, accepted limitations (also in the README): there is no mail provider,
-so registration does not send a verification email; the invite/domain gate,
+Known, accepted limitations (also in the README): confirmation mail leaves
+only through the optional outbound webhook, so a deployment without a mail
+relay records `skipped` deliveries and new accounts stay unconfirmed;
+the invite/domain gate,
 the fact that new accounts start with no project access, and the demo-only
 public workspace bound the exposure. Session revocation is per-device, so a
 lost device must use "sign out everywhere" (or wait for the 12h expiry). An

@@ -10,6 +10,7 @@ import { Delivery } from '../models/index.js';
  */
 export async function deliverOutbound({
   projectId,
+  user,
   handoverId,
   clarificationId,
   kind,
@@ -49,6 +50,7 @@ export async function deliverOutbound({
   try {
     return await Delivery.create({
       project: projectId,
+      user,
       handover: handoverId,
       clarification: clarificationId,
       kind,

@@ -16,7 +16,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { useWorkspace } from '../context/WorkspaceContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { ROLE_LABELS } from '../lib/constants.js';
-import { formatDate, formatRelative, pluralize } from '../lib/format.js';
+import { formatDate, formatIstIso, formatRelative, pluralize } from '../lib/format.js';
 import { RoleBadge } from '../components/badges.jsx';
 import {
   Avatar,
@@ -61,10 +61,7 @@ const CAPABILITIES = [
 ];
 
 function toDateInput(value) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toISOString().slice(0, 10);
+  return formatIstIso(value).slice(0, 10);
 }
 
 function settingsForm(project) {
@@ -103,6 +100,7 @@ export default function PeoplePage() {
   const [addOpen, setAddOpen] = useState(false);
   const [invite, setInvite] = useState({ email: '', role: 'contributor' });
   const [inviteError, setInviteError] = useState(null);
+  const [lookup, setLookup] = useState(null);
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState(null);
   const [removeBusy, setRemoveBusy] = useState(false);
@@ -114,6 +112,31 @@ export default function PeoplePage() {
   useEffect(() => {
     setForm(settingsForm(project));
   }, [project]);
+
+  // Show the account's confirmation state before the lead commits, so an
+  // unverified address is understood as a person-side step, not a failed add.
+  useEffect(() => {
+    const email = invite.email.trim();
+    setLookup(null);
+    if (!addOpen || !email.includes('@')) return undefined;
+    let alive = true;
+    const timer = setTimeout(() => {
+      api
+        .get(`/api/projects/${projectId}/member-lookup?email=${encodeURIComponent(email)}`)
+        .then((data) => {
+          if (alive) setLookup(data.lookup);
+        })
+        .catch(() => {});
+    }, 350);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [addOpen, invite.email, projectId]);
+
+  const lookupBlocksAdd = Boolean(
+    lookup && (!lookup.found || !lookup.emailVerified || lookup.isMember),
+  );
 
   const members = useMemo(
     () =>
@@ -640,7 +663,7 @@ export default function PeoplePage() {
             >
               Cancel
             </Button>
-            <Button size="sm" icon={UserPlus} loading={adding} onClick={addMember}>
+            <Button size="sm" icon={UserPlus} loading={adding} onClick={addMember} disabled={lookupBlocksAdd}>
               Add member
             </Button>
           </>
@@ -658,6 +681,27 @@ export default function PeoplePage() {
               required
             />
           </Field>
+          {lookup && (
+            <p
+              className={`rounded-lg border px-2.5 py-2 text-[11px] leading-4 ${
+                lookup.isMember
+                  ? 'border-line bg-paper text-ink-muted'
+                  : !lookup.found
+                    ? 'border-amber-200 bg-amber-50 text-amber-800'
+                    : !lookup.emailVerified
+                      ? 'border-amber-200 bg-amber-50 text-amber-800'
+                      : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              }`}
+            >
+              {lookup.isMember
+                ? `${lookup.name || 'That account'} is already a member of this project.`
+                : !lookup.found
+                  ? 'No Threadline account uses this address yet. Ask them to register first.'
+                  : !lookup.emailVerified
+                    ? `${lookup.name} has not confirmed ${lookup.email} yet. Ask them to open the verification link before you add them.`
+                    : `${lookup.name} has confirmed ${lookup.email}. Ready to add.`}
+            </p>
+          )}
           <Field label="Role" htmlFor="invite-role">
             <div className="space-y-1.5">
               {ROLE_CHOICES.map((choice) => (

@@ -56,7 +56,11 @@ it does not sign anyone out.
 Rohan, Ananya and Vikram are fictional demo profiles; only the author's name is
 real.
 
-Demo password for all accounts: `Threadline#2026`
+Demo sign-in uses `POST /api/demo/session` with the profile's email. The route
+exists only while demo seeding is enabled (`DEMO_MODE=true` in production or
+`ALLOW_DEMO_SEED=true` in development), is rate limited, and returns a session
+for seeded personas only. Seeded accounts have random passwords that are never
+returned or published, so there is no shared demo password.
 
 | Person | Role | Purpose |
 | --- | --- | --- |
@@ -397,7 +401,7 @@ silently rewriting history.
 ## 8. Tests
 
 ```bash
-npm test          # 280 Vitest + Supertest tests across 30 suites
+npm test          # 374 Vitest + Supertest tests across 56 suites
 npm run test:watch
 npm run eval:quotes   # quote-accuracy report
 ```

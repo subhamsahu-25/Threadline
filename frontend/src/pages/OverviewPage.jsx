@@ -53,6 +53,19 @@ const ACTION_MODES = {
   resolve_conflict: { mode: 'jump', label: 'Review conflict', title: 'Confirm the current decision' },
 };
 
+function ShowAllButton({ expanded, total, noun, onToggle }) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className="mt-1 text-[11px] font-semibold text-brand-700 hover:text-brand-900"
+    >
+      {expanded ? 'Show fewer' : `View all ${total} ${noun}`}
+    </button>
+  );
+}
+
 function readinessCopy(score) {
   if (typeof score !== 'number') return 'No state to score yet';
   if (score >= 85) return 'Ready for reviewer sign-off';
@@ -73,6 +86,12 @@ export default function OverviewPage() {
   const [actionTarget, setActionTarget] = useState(null);
   const [actionForm, setActionForm] = useState({ ownerName: '', note: '' });
   const [savingAction, setSavingAction] = useState(false);
+  const [showAllActions, setShowAllActions] = useState(false);
+  const [showAllConflicts, setShowAllConflicts] = useState(false);
+  const [showAllQuestions, setShowAllQuestions] = useState(false);
+  const [showAllRisks, setShowAllRisks] = useState(false);
+  const [showAllBlockers, setShowAllBlockers] = useState(false);
+  const [showAllUnverified, setShowAllUnverified] = useState(false);
   const { data, error, loading, reload } = useAsync(
     () => api.get(`/api/projects/${projectId}/state`),
     [projectId],
@@ -492,7 +511,7 @@ export default function OverviewPage() {
               description="Threadline surfaces the disagreement. It never decides which statement is current — a human must confirm it."
               action={<Badge tone="red" dot>{data.conflicts.length} unresolved</Badge>}
             />
-            {data.conflicts.slice(0, 3).map((conflict) => (
+            {data.conflicts.slice(0, showAllConflicts ? undefined : 3).map((conflict) => (
               <Card
                 key={(conflict.claimIds || []).map(String).join('-') || conflict.topic}
                 className="overflow-hidden"
@@ -566,6 +585,14 @@ export default function OverviewPage() {
                 </div>
               </Card>
             ))}
+            {data.conflicts.length > 3 && (
+              <ShowAllButton
+                expanded={showAllConflicts}
+                total={data.conflicts.length}
+                noun="conflicts"
+                onToggle={() => setShowAllConflicts((value) => !value)}
+              />
+            )}
           </div>
         )}
 
@@ -623,7 +650,7 @@ export default function OverviewPage() {
                 <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
                   <CircleHelp className="h-3 w-3" aria-hidden="true" /> Open questions
                 </p>
-                {(data.openQuestions || []).slice(0, 3).map((claim) => (
+                {(data.openQuestions || []).slice(0, showAllQuestions ? undefined : 3).map((claim) => (
                   <button
                     key={claim.id}
                     type="button"
@@ -637,6 +664,14 @@ export default function OverviewPage() {
                     {truncate(claim.statement, 110)}
                   </button>
                 ))}
+                {(data.openQuestions || []).length > 3 && (
+                  <ShowAllButton
+                    expanded={showAllQuestions}
+                    total={data.openQuestions.length}
+                    noun="questions"
+                    onToggle={() => setShowAllQuestions((value) => !value)}
+                  />
+                )}
                 {(data.openQuestions || []).length === 0 && (
                   <p className="px-1.5 text-[11px] text-ink-muted">None recorded.</p>
                 )}
@@ -645,7 +680,7 @@ export default function OverviewPage() {
                 <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
                   <AlertTriangle className="h-3 w-3" aria-hidden="true" /> Open risks
                 </p>
-                {(data.openRisks || []).slice(0, 3).map((claim) => (
+                {(data.openRisks || []).slice(0, showAllRisks ? undefined : 3).map((claim) => (
                   <button
                     key={claim.id}
                     type="button"
@@ -659,6 +694,14 @@ export default function OverviewPage() {
                     {truncate(claim.statement, 110)}
                   </button>
                 ))}
+                {(data.openRisks || []).length > 3 && (
+                  <ShowAllButton
+                    expanded={showAllRisks}
+                    total={data.openRisks.length}
+                    noun="risks"
+                    onToggle={() => setShowAllRisks((value) => !value)}
+                  />
+                )}
                 {(data.openRisks || []).length === 0 && (
                   <p className="px-1.5 text-[11px] text-ink-muted">None recorded.</p>
                 )}
@@ -667,7 +710,7 @@ export default function OverviewPage() {
                 <p className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-faint">
                   <Ban className="h-3 w-3" aria-hidden="true" /> Blocked work
                 </p>
-                {(data.blockers || []).slice(0, 3).map((claim) => (
+                {(data.blockers || []).slice(0, showAllBlockers ? undefined : 3).map((claim) => (
                   <button
                     key={claim.id}
                     type="button"
@@ -681,6 +724,14 @@ export default function OverviewPage() {
                     {truncate(claim.statement, 110)}
                   </button>
                 ))}
+                {(data.blockers || []).length > 3 && (
+                  <ShowAllButton
+                    expanded={showAllBlockers}
+                    total={data.blockers.length}
+                    noun="blocked items"
+                    onToggle={() => setShowAllBlockers((value) => !value)}
+                  />
+                )}
                 {(data.blockers || []).length === 0 && (
                   <p className="px-1.5 text-[11px] text-ink-muted">None recorded.</p>
                 )}
@@ -768,7 +819,7 @@ export default function OverviewPage() {
               description="The extracted statement could not be matched to a verbatim passage. A reviewer must confirm or reject it."
               action={<Badge tone="orange" dot>{data.unverified.length}</Badge>}
             />
-            {data.unverified.slice(0, 4).map((claim) => (
+            {data.unverified.slice(0, showAllUnverified ? undefined : 4).map((claim) => (
               <Card key={claim.id} className="p-3.5">
                 <div className="flex items-start gap-2.5">
                   <FileWarning className="mt-0.5 h-4 w-4 shrink-0 text-orange-600" aria-hidden="true" />
@@ -793,6 +844,14 @@ export default function OverviewPage() {
                 </div>
               </Card>
             ))}
+            {data.unverified.length > 4 && (
+              <ShowAllButton
+                expanded={showAllUnverified}
+                total={data.unverified.length}
+                noun="items to verify"
+                onToggle={() => setShowAllUnverified((value) => !value)}
+              />
+            )}
           </div>
         )}
 
@@ -805,7 +864,7 @@ export default function OverviewPage() {
               action={<Badge tone="violet">{data.nextActions?.length || 0}</Badge>}
             />
             <div className="mt-3 divide-y divide-line">
-              {(data.nextActions || []).slice(0, 6).map((action) => {
+              {(data.nextActions || []).slice(0, showAllActions ? undefined : 6).map((action) => {
                 const claim = action.claimIds
                   ?.map((id) => derived.claimById.get(String(id)))
                   .find(Boolean);
@@ -855,6 +914,18 @@ export default function OverviewPage() {
                 <p className="py-3 text-[12px] text-ink-muted">
                   No follow-up actions inferred from the current state.
                 </p>
+              )}
+              {(data.nextActions || []).length > 6 && (
+                <div className="mt-1 border-t border-line pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAllActions((value) => !value)}
+                    aria-expanded={showAllActions}
+                    className="text-[11px] font-semibold text-brand-700 hover:text-brand-900"
+                  >
+                    {showAllActions ? 'Show fewer' : `View all ${data.nextActions.length} actions`}
+                  </button>
+                </div>
               )}
             </div>
           </Card>
