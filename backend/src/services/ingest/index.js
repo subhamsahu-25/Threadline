@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { env } from '../../config/env.js';
-import { AppError } from '../../lib/errors.js';
+import { AppError, IngestCancelledError } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { normalizeWhitespace, truncate } from '../../lib/text.js';
 import { withOptionalTransaction } from '../../lib/transactions.js';
@@ -103,7 +103,14 @@ async function loadConnectorDocuments(source, kinds) {
   }));
 }
 
-async function collectDocuments(source) {
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    throw new IngestCancelledError('Run was cancelled before it could finish');
+  }
+}
+
+async function collectDocuments(source, signal) {
+  throwIfAborted(signal);
   if (source.kind === 'upload') return collectUploadDocuments(source);
   if (source.kind === 'github') {
     // ETags live on the source cursor so an unchanged repository costs a few
@@ -111,12 +118,18 @@ async function collectDocuments(source) {
     source.sync.cursor = source.sync.cursor || {};
     const cache = source.sync.cursor.httpCache || {};
     source.sync.cursor.httpCache = cache;
-    return collectGithubDocuments(source.externalRef, {
+    const documents = await collectGithubDocuments(source.externalRef, {
       cache,
       loadPrevious: (kinds) => loadConnectorDocuments(source, kinds),
     });
+    throwIfAborted(signal);
+    return documents;
   }
-  if (source.kind === 'drive') return collectDriveDocuments(source.externalRef);
+  if (source.kind === 'drive') {
+    const documents = await collectDriveDocuments(source.externalRef);
+    throwIfAborted(signal);
+    return documents;
+  }
   throw new AppError(400, 'unknown_source', `Unsupported source kind: ${source.kind}`);
 }
 
@@ -308,7 +321,14 @@ async function rollbackRun({ source, documentIds, snapshotClaims }) {
 
   await Evidence.deleteMany({ document: { $in: documentIds } });
   const previousIds = snapshotClaims.map((claim) => claim._id);
-  await Claim.deleteMany({ source: source._id, _id: { $nin: previousIds } });
+  // Only claims whose document belongs to this run are removed. A superseded
+  // run can finish its rollback after a retry already wrote claims; deleting
+  // every unseen claim would take those with it.
+  await Claim.deleteMany({
+    source: source._id,
+    document: { $in: documentIds },
+    _id: { $nin: previousIds },
+  });
   await Document.deleteMany({ _id: { $in: documentIds } });
 
   if (snapshotClaims.length > 0) {
@@ -331,10 +351,12 @@ export async function processSourceJob(job) {
 
 async function ingestSourceJob(job) {
   const { sourceId } = job.payload || {};
+  const signal = job.signal || null;
 
   // Claim the job atomically so two queued runs cannot process the same source
   // concurrently and retire each other's output. Queue retries may resume a
   // source that the previous attempt marked as failed.
+  const runId = randomUUID();
   const claimFilter = {
     _id: sourceId,
     deletedAt: null,
@@ -342,19 +364,32 @@ async function ingestSourceJob(job) {
   };
   const source = await Source.findOneAndUpdate(
     claimFilter,
-    { $set: { status: 'processing', statusMessage: 'Collecting and reading source documents' } },
+    {
+      $set: {
+        status: 'processing',
+        statusMessage: 'Collecting and reading source documents',
+        ingestRunId: runId,
+      },
+    },
     { new: true },
   );
   if (!source) {
     logger.info({ source: sourceId }, 'Skipped source job because the source is not queued');
     return;
   }
+  // The queue needs the token to clear only the state its own abandoned run
+  // wrote, and the run needs it to fence every commit.
+  job.ingestRunId = runId;
 
   const project = await Project.findById(source.project);
   if (!project) {
-    source.status = 'failed';
-    source.statusMessage = 'Project no longer exists';
-    await source.save();
+    await Source.updateOne(
+      { _id: source._id, ingestRunId: runId },
+      {
+        $set: { status: 'failed', statusMessage: 'Project no longer exists' },
+        $unset: { ingestRunId: 1 },
+      },
+    );
     return;
   }
 
@@ -365,11 +400,21 @@ async function ingestSourceJob(job) {
   // before saving the failure state.
   let progressSave = Promise.resolve();
 
+  // Every write this run makes carries the token, so a retry that replaced it
+  // cannot be overwritten by a late segment of an abandoned run.
+  const stillOwned = async () => Boolean(await Source.exists({ _id: source._id, ingestRunId: runId }));
+  const writeOwned = (fields, unset = {}) =>
+    Source.updateOne(
+      { _id: source._id, ingestRunId: runId },
+      { $set: fields, $unset: { ingestRunId: 1, ...unset } },
+    );
+
   try {
+    throwIfAborted(signal);
     const precollected = Array.isArray(job.payload?.documents) ? job.payload.documents : null;
     // A sync already fetched the provider's documents to fingerprint them.
     // Reusing that set avoids paying for every GitHub/Drive call twice.
-    const documentInputs = precollected || (await collectDocuments(source));
+    const documentInputs = precollected || (await collectDocuments(source, signal));
     if (documentInputs.length === 0) {
       throw new AppError(422, 'no_documents', 'No readable documents were found for this source');
     }
@@ -425,13 +470,20 @@ async function ingestSourceJob(job) {
       source,
       documents,
       resume: resumeActive ? { chunkId: cursor.chunkId } : null,
+      signal,
       onProgress: ({ chunksProcessed, chunksTotal }) => {
         if (chunksProcessed - lastProgressSave < 15) return;
         lastProgressSave = chunksProcessed;
-        source.statusMessage = `Extracting knowledge (${chunksProcessed}/${chunksTotal} chunks)`;
-        // Serialise progress writes. Two concurrent source.save() calls made
-        // Mongoose throw ParallelSaveError and lose the later update.
-        progressSave = progressSave.then(() => source.save()).catch(() => {});
+        // Serialise progress writes and keep them token-gated: a run that
+        // lost the source must not keep writing its progress line.
+        progressSave = progressSave
+          .then(() =>
+            Source.updateOne(
+              { _id: source._id, ingestRunId: runId },
+              { $set: { statusMessage: `Extracting knowledge (${chunksProcessed}/${chunksTotal} chunks)` } },
+            ),
+          )
+          .catch(() => {});
       },
     });
 
@@ -466,7 +518,21 @@ async function ingestSourceJob(job) {
       ].slice(0, 10);
       source.lastIngestedAt = now;
       await progressSave;
-      await source.save();
+      const owned = await writeOwned({
+        stats: source.stats,
+        extractionCursor: source.extractionCursor,
+        status: source.status,
+        statusMessage: source.statusMessage,
+        parseWarnings: source.parseWarnings,
+        lastIngestedAt: source.lastIngestedAt,
+      });
+      if (!owned.matchedCount) {
+        logger.info(
+          { source: String(source._id), run: runId },
+          'Discarded partial progress from a run that no longer owns the source',
+        );
+        return;
+      }
 
       await recordAudit({
         projectId: project._id,
@@ -492,6 +558,10 @@ async function ingestSourceJob(job) {
     // this run are retired, and prior evidence for carried-over claims is
     // removed so citations resolve against the fresh documents. A resumed run
     // also counts the claims written by the earlier segment of the same run.
+    throwIfAborted(signal);
+    if (!(await stillOwned())) {
+      throw new IngestCancelledError('Another run claimed this source before the commit');
+    }
     const now = new Date();
     const runClaims =
       createdDocumentIds.length > 0
@@ -511,6 +581,18 @@ async function ingestSourceJob(job) {
     // transaction; on a standalone server the same steps run sequentially.
     await withOptionalTransaction(async (session) => {
       const use = (query) => (session ? query.session(session) : query);
+      // The first write of the commit re-asserts ownership, so a retry that
+      // claimed the source after the check above aborts this commit before any
+      // claim or document is touched.
+      const guard = await use(
+        Source.updateOne(
+          { _id: source._id, ingestRunId: runId },
+          { $set: { statusMessage: source.statusMessage } },
+        ),
+      );
+      if (!guard.matchedCount) {
+        throw new IngestCancelledError('Another run claimed this source during the commit');
+      }
       await use(
         Claim.updateMany(
           {
@@ -590,9 +672,35 @@ async function ingestSourceJob(job) {
     );
     source.parseWarnings = warnings;
     source.lastIngestedAt = new Date();
-    source.extractionCursor = undefined;
+    const syncFields =
+      source.kind === 'upload'
+        ? {}
+        : {
+            'sync.cursor': source.sync.cursor,
+            'sync.lastCheckedAt': source.sync.lastCheckedAt,
+            ...(connectorChanged || !previousChecksum
+              ? { 'sync.lastChangedAt': source.sync.lastChangedAt }
+              : {}),
+          };
     await progressSave;
-    await source.save();
+    const committed = await writeOwned(
+      {
+        stats: source.stats,
+        status: source.status,
+        statusMessage: source.statusMessage,
+        parseWarnings: source.parseWarnings,
+        lastIngestedAt: source.lastIngestedAt,
+        ...syncFields,
+      },
+      { extractionCursor: 1, ...(source.kind !== 'upload' ? { 'sync.lastError': 1 } : {}) },
+    );
+    if (!committed.matchedCount) {
+      logger.warn(
+        { source: String(source._id), run: runId },
+        'Refused to commit an ingest run that no longer owns the source',
+      );
+      return;
+    }
 
     // Uploaded originals are not needed after a successful ingest: the text is
     // stored with the document and re-ingest reuses it. This keeps
@@ -669,7 +777,20 @@ async function ingestSourceJob(job) {
     source.status = 'failed';
     source.statusMessage = truncate(error.message || 'Ingestion failed', 400);
     await progressSave;
-    await source.save();
+    // A failure only becomes visible if this run still owns the source. When a
+    // retry has replaced the token or the deadline handler already failed it,
+    // the abandoned run stays silent instead of overwriting the newer state.
+    const failed = await writeOwned({
+      status: source.status,
+      statusMessage: source.statusMessage,
+    });
+    if (!failed.matchedCount) {
+      logger.info(
+        { source: String(source._id), run: runId, error: error.message },
+        'Discarded a failure write from a run that no longer owns the source',
+      );
+      throw error;
+    }
 
     await recordAudit({
       projectId: project._id,
@@ -699,6 +820,9 @@ export async function recoverInterruptedSources() {
   for (const source of stuck) {
     source.status = 'queued';
     source.statusMessage = 'Re-queued after an interrupted run';
+    // The run that wrote the old token is gone; clearing it means a late
+    // wake-up from that process cannot commit over the fresh queue entry.
+    source.ingestRunId = undefined;
     await source.save();
     const { enqueue } = await import('../queue.js');
     enqueue('ingest_source', { sourceId: String(source._id) });

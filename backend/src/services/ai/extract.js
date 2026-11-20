@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { env, llmEnabled } from '../../config/env.js';
+import { IngestCancelledError } from '../../lib/errors.js';
 import { logger } from '../../lib/logger.js';
 import { redactText } from '../../lib/redaction.js';
 import { keyOf, keyOfOrHash, locateMarkedQuoteSpans, locateQuote, missingValueTokens, normalizeForMatch, truncate } from '../../lib/text.js';
@@ -408,9 +409,13 @@ export async function extractClaimsForDocuments({
   documents,
   resume = null,
   onProgress,
+  signal = null,
   concurrency = env.extractConcurrency,
   timeBudgetMs = env.extractTimeBudgetMs,
 }) {
+  if (signal?.aborted) {
+    throw new IngestCancelledError('Run was cancelled before extraction started');
+  }
   const method = llmEnabled && allowsExternalAI(source) ? 'llm' : 'heuristic';
   const model = method === 'llm' ? env.geminiModel : 'deterministic-heuristic';
   const existing = await Claim.find({ source: source._id, retiredAt: null });
@@ -555,6 +560,11 @@ export async function extractClaimsForDocuments({
   };
 
   for (let offset = startIndex; offset < tasks.length; offset += batchSize) {
+    // The queue aborts the signal when the deadline passes. Checking between
+    // batches stops the abandoned run instead of letting it write afterwards.
+    if (signal?.aborted) {
+      throw new IngestCancelledError('Run was cancelled while extracting');
+    }
     if (Date.now() - startedAt >= timeBudgetMs) {
       partial = true;
       stoppedBy = 'time_budget';
@@ -569,6 +579,9 @@ export async function extractClaimsForDocuments({
         result: await extractItemsForChunk({ project, source, doc, chunk }),
       })),
     );
+    if (signal?.aborted) {
+      throw new IngestCancelledError('Run was cancelled while extracting');
+    }
 
     for (const { doc, chunk, result } of results) {
       if (result.method === 'llm') llmChunks += 1;
@@ -590,6 +603,9 @@ export async function extractClaimsForDocuments({
   // provider's API rather than a sentence the author wrote. It is recorded
   // once per fresh run and labelled as metadata evidence.
   if (startIndex === 0) {
+    if (signal?.aborted) {
+      throw new IngestCancelledError('Run was cancelled before recording connector metadata');
+    }
     for (const doc of documents) {
       const connectorItems = Array.isArray(doc.meta?.connectorItems)
         ? doc.meta.connectorItems

@@ -17,6 +17,7 @@ import AuditPage from './pages/AuditPage.jsx';
 import PeoplePage from './pages/PeoplePage.jsx';
 import QuestionsPage from './pages/QuestionsPage.jsx';
 import SharedHandoverPage from './pages/SharedHandoverPage.jsx';
+import VerifyEmailPage from './pages/VerifyEmailPage.jsx';
 import NotFoundPage from './pages/NotFoundPage.jsx';
 
 function ScrollToTop() {
@@ -68,6 +69,7 @@ export default function App() {
       <IdleWakeNotice />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
         <Route path="/shared/:token" element={<SharedHandoverPage />} />
         <Route
           element={

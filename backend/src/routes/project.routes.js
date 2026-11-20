@@ -35,6 +35,7 @@ import {
 } from '../services/clarifications.js';
 import { redactText } from '../lib/redaction.js';
 import { locateQuote } from '../lib/text.js';
+import { mailConfigured } from '../services/mailer.js';
 import { enqueue } from '../services/queue.js';
 import {
   buildStateForUser,
@@ -130,6 +131,17 @@ router.post(
   asyncHandler(async (req, res) => {
     const { key, name, description, members, transition, startedAt, targetDate } = req.body;
     const normalizedKey = key.toUpperCase();
+
+    // The mailbox rule applies to the creator as well: an unconfirmed account
+    // cannot become the lead of a new project.
+    if (!req.user.emailVerifiedAt) {
+      throw new AppError(
+        409,
+        'email_unverified',
+        'Confirm your email address before you create a project. Open the link in the confirmation email, then try again.',
+        { email: req.user.email, emailVerified: false },
+      );
+    }
 
     if (normalizedKey === DEMO_PROJECT_KEY) {
       throw badRequest('The ATLAS key is reserved for the demo workspace');
@@ -322,6 +334,7 @@ router.get(
         name: user?.name || null,
         emailVerified: Boolean(user?.emailVerifiedAt),
         isMember: user ? Boolean(roleOf(req.project, user._id)) : false,
+        mailConfigured: mailConfigured(),
       },
     });
   }),

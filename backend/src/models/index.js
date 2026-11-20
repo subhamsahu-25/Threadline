@@ -183,6 +183,9 @@ const sourceSchema = new Schema(
       default: 'queued',
     },
     statusMessage: String,
+    // Set when a run claims the source. A retry writes a new value, so a run
+    // that was abandoned by the deadline can no longer commit over it.
+    ingestRunId: String,
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     files: {
       type: [
@@ -814,7 +817,7 @@ const deliverySchema = new Schema(
     handover: { type: Schema.Types.ObjectId, ref: 'Handover', index: true },
     clarification: { type: Schema.Types.ObjectId, ref: 'Clarification' },
     kind: { type: String, required: true },
-    channel: { type: String, enum: ['webhook'], default: 'webhook' },
+    channel: { type: String, enum: ['webhook', 'email'], default: 'webhook' },
     status: { type: String, enum: ['sent', 'skipped', 'failed'], required: true },
     detail: String,
     createdBy: { type: Schema.Types.ObjectId, ref: 'User' },

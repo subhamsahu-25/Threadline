@@ -22,6 +22,9 @@ describe('account security', () => {
     codes: env.registrationInviteCodes,
     domains: env.registrationEmailDomains,
     attempts: env.loginMaxAttempts,
+    mailProvider: env.mailProvider,
+    mailApiBase: env.mailApiBase,
+    resendApiKey: env.resendApiKey,
   };
 
   beforeAll(async () => {
@@ -37,14 +40,25 @@ describe('account security', () => {
     env.registrationInviteCodes = original.codes;
     env.registrationEmailDomains = original.domains;
     env.loginMaxAttempts = original.attempts;
+    env.mailProvider = original.mailProvider;
+    env.mailApiBase = original.mailApiBase;
+    env.resendApiKey = original.resendApiKey;
   });
 
   it('answers a new and an already registered address identically', async () => {
+    // A deployment that can send mail never puts the link in the response, so
+    // the two paths stay byte-identical. (Without a transport, non-production
+    // deliberately returns the link to the registrant; see P1.)
+    env.mailProvider = 'resend';
+    env.resendApiKey = 'test-key';
+    env.mailApiBase = 'http://127.0.0.1:1';
+
     const first = await register({ email: 'uniform@example.test' });
     expect(first.status).toBe(201);
     expect(first.body).toEqual({
       registered: true,
       message: 'Account created. Sign in with your email and password.',
+      mailConfigured: true,
     });
 
     const second = await register({ email: 'uniform@example.test' });

@@ -58,10 +58,9 @@ export function AuthProvider({ children }) {
 
   const register = useCallback(
     async (payload) => {
-      // Registration deliberately returns no session, so a new account signs
-      // in straight after creating one.
-      await api.post('/api/auth/register', payload);
-      return login(payload.email, payload.password);
+      // Registration deliberately returns no session. The caller first
+      // confirms the address (or opens the returned link), then signs in.
+      return api.post('/api/auth/register', payload);
     },
     [login],
   );

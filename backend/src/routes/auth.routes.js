@@ -3,6 +3,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { env, isTest } from '../config/env.js';
+import { DEMO_USERS } from '../demo/seed.js';
 import { AppError, asyncHandler, unauthorized } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 import { authenticate } from '../middleware/auth.js';
@@ -19,8 +20,10 @@ import {
 } from '../services/auth.js';
 import { notifyAccountLockout } from '../services/notifications.js';
 import { isBreachedOnline } from '../services/passwordPolicy.js';
+import { mailConfigured } from '../services/mailer.js';
 import {
-  issueEmailVerification,
+  returnsVerificationLink,
+  scheduleVerificationEmail,
   verifyEmailToken,
 } from '../services/verification.js';
 import {
@@ -35,11 +38,30 @@ const router = Router();
 // check. The value is a hash of a random phrase, never a usable password.
 const DUMMY_HASH = '$2b$12$dcZVVi8hyDKbvCwIF0GgJ.4AA9R1KE/wOJb9DwzPeKdSKR8//iVnm';
 
+// Test suites sign in many times from one address; production and development
+// keep every limiter on. A test that exercises the key turns it back on.
+let authLimitsEnabled = !isTest;
+
+export function setAuthLimitsEnabledForTests(enabled) {
+  authLimitsEnabled = Boolean(enabled);
+}
+
+function demoAddress(req) {
+  const email = String(req.body?.email || '').toLowerCase().trim();
+  return DEMO_USERS.some((persona) => persona.email === email);
+}
+
 /**
  * Credential endpoints are throttled twice: once per source IP so one client
- * cannot spray many accounts, and once per email so an account cannot be
- * attacked from many addresses. Successful requests are not counted, so the
- * demo's persona switcher and shared-NAT evaluators are not locked out.
+ * cannot spray many accounts, and once per client-and-address pair. The pair
+ * matters: keying on the address alone let a stranger 429 the real owner from
+ * anywhere. The per-address limiter skips the demo personas, whose entry point
+ * is the one-click route rather than a password. Successful requests are not
+ * counted, so shared-NAT evaluators are not locked out.
+ *
+ * Guessing is slowed by these limiters and the per-client lockout. A failure
+ * is not made to sleep inside the request: that pinned a connection per guess
+ * and let a stranger exhaust sockets while guessing.
  */
 function limitHandler(_req, res) {
   // Identical for both limiters and for unknown/wrong credentials.
@@ -56,7 +78,7 @@ const ipLimiter = rateLimit({
   limit: 30,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  skip: () => isTest,
+  skip: () => !authLimitsEnabled,
   skipSuccessfulRequests: true,
   keyGenerator: (req) => req.ip,
   handler: limitHandler,
@@ -67,11 +89,11 @@ const emailLimiter = rateLimit({
   limit: 10,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  skip: () => isTest,
+  skip: (req) => !authLimitsEnabled || demoAddress(req),
   skipSuccessfulRequests: true,
   keyGenerator: (req) => {
     const email = String(req.body?.email || '').toLowerCase().trim();
-    return email || `no-email:${req.ip}`;
+    return `${req.ip}:${email || '(none)'}`;
   },
   handler: limitHandler,
 });
@@ -87,7 +109,7 @@ const verificationLimiter = rateLimit({
   limit: 5,
   standardHeaders: 'draft-7',
   legacyHeaders: false,
-  skip: () => isTest,
+  skip: () => !authLimitsEnabled,
   keyGenerator: (req) => req.ip,
   handler: limitHandler,
 });
@@ -126,13 +148,15 @@ function clientKey(req) {
   return String(req.ip || req.socket?.remoteAddress || 'unknown').slice(0, 100);
 }
 
-function failureDelayMs(attempts) {
-  if (attempts < 2) return 0;
-  return Math.min(1500, 250 * 2 ** (attempts - 2));
-}
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Both registration paths wait out the same floor. Without it the insert and
+// the audit row made a new address measurably slower than a duplicate.
+async function waitForRegistrationFloor(startedAt) {
+  const remaining = env.registrationMinMs - (Date.now() - startedAt);
+  if (remaining > 0) await sleep(remaining);
 }
 
 /**
@@ -260,6 +284,7 @@ router.post(
   ipLimiter,
   validate({ body: registerSchema }),
   asyncHandler(async (req, res) => {
+    const startedAt = Date.now();
     const { email, name, password, inviteCode } = req.body;
     enforceRegistrationPolicy(email, inviteCode);
 
@@ -280,13 +305,18 @@ router.post(
     // caller whether the address was already registered. Neither path reveals
     // the difference in the response.
     const passwordHash = await hashPassword(password);
+    let verificationUrl;
     if (!existing) {
       // New accounts start unverified. They can sign in, but a lead cannot add
       // them to a project until the owner of the mailbox follows the link,
       // which is what stops a stranger claiming access sent to an address they
       // merely typed in.
       const user = await User.create({ email, name, passwordHash });
-      await issueEmailVerification(user);
+      // Delivery is scheduled after the response. Awaiting a provider here made
+      // the new-account path slower than the duplicate path, which disclosed
+      // whether the address already existed.
+      const issued = scheduleVerificationEmail(user);
+      if (returnsVerificationLink()) verificationUrl = issued.url;
       await recordAudit({
         actor: user,
         action: 'auth.registered',
@@ -309,9 +339,12 @@ router.post(
       });
     }
 
+    await waitForRegistrationFloor(startedAt);
     res.status(201).json({
       registered: true,
       message: 'Account created. Sign in with your email and password.',
+      mailConfigured: mailConfigured(),
+      ...(verificationUrl ? { verificationUrl } : {}),
     });
   }),
 );
@@ -352,7 +385,7 @@ router.post(
     // The response is the same for unknown, already-verified and demo
     // accounts, so the endpoint cannot be used to probe the address book.
     if (user && !user.isDemo && !user.emailVerifiedAt) {
-      await issueEmailVerification(user);
+      scheduleVerificationEmail(user);
       await recordAudit({
         actor: user,
         action: 'auth.verification_resent',
@@ -392,6 +425,11 @@ router.post(
       throttle?.lockUntil &&
       new Date(throttle.lockUntil).getTime() > Date.now();
 
+    // The password is checked before the lockout answer is chosen. A locked
+    // client therefore costs the same one bcrypt comparison as an unknown
+    // address or a wrong password, and timing cannot single out the account.
+    const valid = await verifyPassword(password, user.passwordHash);
+
     if (locked) {
       // Same shape as the rate limiter's response, so a locked client is not
       // distinguishable from a throttled address.
@@ -401,8 +439,6 @@ router.post(
         'Too many sign-in attempts. Try again in a few minutes.',
       );
     }
-
-    const valid = await verifyPassword(password, user.passwordHash);
 
     if (!valid) {
       if (!user.isDemo) {
@@ -424,8 +460,6 @@ router.post(
           });
           await notifyAccountLockout({ user });
         }
-        const delayMs = failureDelayMs(attempts);
-        if (delayMs > 0 && !isTest) await sleep(delayMs);
       }
       throw unauthorized('Email or password is incorrect');
     }

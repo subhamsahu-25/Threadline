@@ -90,6 +90,14 @@ export const env = {
   // a "skipped" delivery row; it never pretends a message was sent.
   outboundWebhookUrl: process.env.OUTBOUND_WEBHOOK_URL || '',
   outboundWebhookTimeoutMs: Math.max(1_000, int('OUTBOUND_WEBHOOK_TIMEOUT_MS', 5_000)),
+  // Transactional mail (verification links) goes to the address owner through
+  // a provider API, never to the operator webhook: a webhook is a shared
+  // channel, and a verification token must reach one mailbox only.
+  mailProvider: (process.env.MAIL_PROVIDER || '').trim().toLowerCase(),
+  mailApiBase: (process.env.MAIL_API_BASE || 'https://api.resend.com').replace(/\/+$/, ''),
+  resendApiKey: process.env.RESEND_API_KEY || '',
+  mailFrom: process.env.MAIL_FROM || 'Threadline <no-reply@threadline.example>',
+  mailTimeoutMs: Math.max(1_000, int('MAIL_TIMEOUT_MS', 10_000)),
   handoverReminderEnabled: bool('HANDOVER_REMINDER_ENABLED', true),
   handoverReminderDays: Math.max(1, int('HANDOVER_REMINDER_DAYS', 3)),
   extractConcurrency: Math.max(1, int('EXTRACT_CONCURRENCY', 3)),
@@ -118,6 +126,10 @@ export const env = {
   ),
   loginMaxAttempts: Math.max(3, int('LOGIN_MAX_ATTEMPTS', 5)),
   loginLockoutMinutes: Math.max(1, int('LOGIN_LOCKOUT_MINUTES', 15)),
+  // Registration answers new and already-registered addresses on one clock.
+  // The floor hides the cost of the insert and the audit row, so response time
+  // cannot be used to probe the address book.
+  registrationMinMs: Math.max(0, int('REGISTRATION_MIN_MS', nodeEnv === 'test' ? 0 : 150)),
   // New passwords are checked against the Have I Been Pwned range API. The
   // check sends only the first five SHA-1 characters, so the password itself
   // never leaves the server. Tests run offline unless explicitly enabled.

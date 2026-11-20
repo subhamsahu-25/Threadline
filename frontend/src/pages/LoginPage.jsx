@@ -269,6 +269,7 @@ export default function LoginPage() {
   const [credentialPending, setCredentialPending] = useState(false);
   const [health, setHealth] = useState(null);
   const [demoStatus, setDemoStatus] = useState(null);
+  const [confirmation, setConfirmation] = useState(null);
   const [coldStartOpen, setColdStartOpen] = useState(shouldShowColdStart);
 
   const dismissColdStart = useCallback(() => {
@@ -376,20 +377,27 @@ export default function LoginPage() {
     setCredentialPending(true);
     setError('');
     try {
-      const signedIn =
-        mode === 'register'
-          ? await register({
-              name: name.trim(),
-              email: email.trim(),
-              password,
-              inviteCode: inviteCode.trim() || undefined,
-            })
-          : await login(email.trim(), password);
-      toast.success(
-        mode === 'register'
-          ? `Account created — signed in as ${signedIn.name}. Confirm your email before a lead can add you to a project.`
-          : `Signed in as ${signedIn.name}`,
-      );
+      if (mode === 'register') {
+        const registered = await register({
+          name: name.trim(),
+          email: email.trim(),
+          password,
+          inviteCode: inviteCode.trim() || undefined,
+        });
+        toast.success('Account created — confirm your email before a lead can add you.');
+        setMode('signin');
+        setPassword('');
+        // No mail transport on this deployment, so the link is handed to the
+        // registering caller and only to them. With a transport, the message
+        // is addressed to the mailbox owner.
+        setConfirmation({
+          url: registered.verificationUrl || '',
+          mailConfigured: registered.mailConfigured !== false,
+        });
+        return;
+      }
+      const signedIn = await login(email.trim(), password);
+      toast.success(`Signed in as ${signedIn.name}`);
       navigate(destination, { replace: true });
     } catch (err) {
       setError(errorMessage(err));
@@ -570,6 +578,46 @@ export default function LoginPage() {
               >
                 {error}
               </p>
+            )}
+
+            {confirmation && (
+              <section
+                aria-labelledby="confirmation-heading"
+                className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] leading-5 text-amber-900"
+              >
+                <p id="confirmation-heading" className="font-semibold">
+                  Confirm your email address
+                </p>
+                {confirmation.url ? (
+                  <>
+                    <p className="mt-1">
+                      This deployment has no mail transport, so no message was sent. Open the
+                      confirmation link below — it is shown only to you, and it works for this
+                      address alone. Then sign in.
+                    </p>
+                    <a
+                      href={confirmation.url}
+                      data-testid="verification-link"
+                      className="mt-2 inline-block break-all font-semibold text-brand-800 underline decoration-brand-300 underline-offset-2 hover:text-brand-950"
+                    >
+                      Open the confirmation link
+                    </a>
+                  </>
+                ) : confirmation.mailConfigured ? (
+                  <p className="mt-1">
+                    A confirmation message has been sent to that address. Open the link in it,
+                    then sign in. Until the address is confirmed a lead cannot add this account to
+                    a project.
+                  </p>
+                ) : (
+                  <p className="mt-1">
+                    Mail is not configured on this deployment, so no confirmation message could be
+                    sent. Ask the workspace operator to set <code>MAIL_PROVIDER</code> and{' '}
+                    <code>RESEND_API_KEY</code>; until the address is confirmed a lead cannot add
+                    this account to a project.
+                  </p>
+                )}
+              </section>
             )}
 
             <div className="mt-4 flex items-center justify-between gap-3 text-[11.5px]">

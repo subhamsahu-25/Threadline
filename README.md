@@ -235,7 +235,7 @@ fails the build if any restricted string appears on any surface for any role.
 │   │       ├── ai/          Gemini + heuristic extraction, quote validation
 │   │       ├── reconstruction/  supersession, state, next actions
 │   │       └── handover/    compose, workflow, permission re-check
-│   ├── tests/               Vitest + Supertest suites (56 files, 374 tests)
+│   ├── tests/               Vitest + Supertest suites (count in CI test report)
 │   └── README.md            Full API reference and backend documentation
 ├── docs/                    Architecture, testing, quote accuracy, sync and
 │                            clarification evidence, roadmap, improvement map,
@@ -272,7 +272,7 @@ production builds. `VITE_API_PROXY` overrides the local dev proxy target.
 
 ```bash
 cd backend
-npm test               # 374 Vitest + Supertest tests, 56 suites
+npm test               # Vitest + Supertest suites
 npm run eval:quotes    # quote-accuracy report (rules extractor; Gemini when configured)
 
 cd ../frontend
@@ -281,9 +281,10 @@ npm run smoke          # built page mounts, every asset resolves
 npm run e2e            # Playwright: four journeys against a fresh in-memory API
 ```
 
-**56 suites, 374 tests**, each against its own ephemeral MongoDB — no external
-services needed. CI runs every suite on each push and pull request, alongside
-the Playwright journeys, a production-dependency audit and a secret scan.
+**Every suite** runs against its own ephemeral MongoDB — no external services
+needed. CI runs the whole suite on each push and pull request and publishes the
+exact suite and test counts as the `backend-test-results` JSON artifact,
+alongside the Playwright journeys, a production-dependency audit and a secret scan.
 
 - **permission-matrix** — seven viewer contexts × every content, handover,
   shared-link and audit surface; five canary strings must never cross a
@@ -440,10 +441,13 @@ for backend detail:
   per-user OAuth consent flow.
 - **Conflict detection is topic-based.** It compares topic keys and explicit
   supersession phrases, not semantic entailment.
-- **Outbound delivery is webhook-only and opt-in.** Without
-  `OUTBOUND_WEBHOOK_URL` the product records `skipped` rows and sends nothing;
-  there is no bundled email provider. With a URL set, delivery is a single POST
-  with no retry queue.
+- **Outbound handover delivery is webhook-only and opt-in.** Without
+  `OUTBOUND_WEBHOOK_URL` the product records `skipped` rows and sends nothing.
+  With a URL set, delivery is a single POST with no retry queue. Account
+  confirmation mail is separate: `MAIL_PROVIDER=resend` with `RESEND_API_KEY`
+  sends the verification link to that one address. Without a transport,
+  non-production returns the link to the registrant and production records a
+  skipped delivery, so an unverified account cannot create or join a project.
 - **Browser automation covers one journey, not every screen.** Playwright runs
   the lead-compose-share-recipient-acknowledge path plus export, feedback and
   audit CSV; other screens are covered by the scripted manual journeys and an

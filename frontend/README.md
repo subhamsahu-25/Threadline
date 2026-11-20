@@ -34,8 +34,9 @@ When hosting, configure SPA fallback rewrites so deep links such as
 
 ## Structure
 
-- `src/pages/` — Login, Projects, project workspace (Overview, Sources, Claims,
-  Handovers, Review, People, Audit) and the shared handover view.
+- `src/pages/` — Login and registration, the public `/verify-email` landing
+  page, Projects, project workspace (Overview, Sources, Claims, Handovers,
+  Review, People, Audit) and the shared handover view.
 - `src/components/` — shell/navigation, claim cards, evidence drawer, UI kit.
 - `src/context/` — auth session, workspace data, toasts.
 - `src/lib/` — API client, formatters, role and claim constants.

@@ -219,8 +219,9 @@ Known residual risks and roadmap items are listed in
   those whose own interval has elapsed.
 - **Extraction** — Gemini when `GEMINI_API_KEY` is set, otherwise the
   deterministic labelled-line extractor.
-- **CI** — GitHub Actions runs the 16 backend suites and the frontend production
-  build plus smoke check on every push and pull request.
+- **CI** — GitHub Actions runs the backend suite (publishing the exact count as
+  a JSON test report) and the frontend production build plus smoke check on
+  every push and pull request.
 
 ## 7. Deliberate trade-offs
 

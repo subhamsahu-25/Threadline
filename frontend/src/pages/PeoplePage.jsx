@@ -697,8 +697,10 @@ export default function PeoplePage() {
                 ? `${lookup.name || 'That account'} is already a member of this project.`
                 : !lookup.found
                   ? 'No Threadline account uses this address yet. Ask them to register first.'
-                  : !lookup.emailVerified
-                    ? `${lookup.name} has not confirmed ${lookup.email} yet. Ask them to open the verification link before you add them.`
+                  : !lookup.emailVerified && lookup.mailConfigured === false
+                    ? `${lookup.name} has not confirmed ${lookup.email} yet, and this deployment has no mail transport, so no link was sent. Ask the operator to set MAIL_PROVIDER and RESEND_API_KEY.`
+                    : !lookup.emailVerified
+                      ? `${lookup.name} has not confirmed ${lookup.email} yet. Ask them to open the verification link before you add them.`
                     : `${lookup.name} has confirmed ${lookup.email}. Ready to add.`}
             </p>
           )}

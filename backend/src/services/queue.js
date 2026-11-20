@@ -48,9 +48,14 @@ function durableWritesEnabled() {
   return mongoose.connection.readyState === 1;
 }
 
+/**
+ * The insert is a promise the worker waits on. A fire-and-forget insert let a
+ * short job run, update and delete before the row existed; the insert then
+ * landed afterwards as a queued ghost that the next restart would rerun.
+ */
 function persistJob(job) {
-  if (!durableWritesEnabled()) return;
-  Job.updateOne(
+  if (!durableWritesEnabled()) return Promise.resolve();
+  return Job.updateOne(
     { _id: job.id },
     {
       $setOnInsert: {
@@ -99,8 +104,8 @@ export function enqueue(name, payload, { key, id } = {}) {
     attempts: 0,
     enqueuedAt: Date.now(),
   };
+  job.persisted = persistJob(job);
   state.pending.push(job);
-  persistJob(job);
   setImmediate(() => pump());
   return job.id;
 }
@@ -148,15 +153,18 @@ async function failSourceAfterTimeout(job, message) {
   const sourceId = job.payload?.sourceId;
   if (!sourceId || !durableWritesEnabled()) return;
   try {
-    await Source.updateOne(
-      { _id: sourceId, deletedAt: null },
-      {
-        $set: {
-          status: 'failed',
-          statusMessage: `Background work timed out (${message}). Retry from this source.`,
-        },
+    // Only the run that owns the source may mark it failed. If a retry has
+    // already claimed a new token, this abandoned run leaves it alone.
+    const filter = { _id: sourceId, deletedAt: null };
+    if (job.ingestRunId) filter.ingestRunId = job.ingestRunId;
+    else filter.status = 'processing';
+    await Source.updateOne(filter, {
+      $set: {
+        status: 'failed',
+        statusMessage: `Background work timed out (${message}). Retry from this source.`,
       },
-    );
+      $unset: { ingestRunId: 1 },
+    });
   } catch (error) {
     logger.warn(
       { job: job.name, sourceId: String(sourceId), error: error.message },
@@ -173,8 +181,15 @@ async function runJob(job) {
   }
   state.active += 1;
   job.attempts += 1;
+  // Status and completion writes follow the insert, never race it.
+  if (job.persisted) await job.persisted;
   await persistStatus(job, { status: 'running', attempts: job.attempts, leaseUntil: new Date(Date.now() + LEASE_MS) });
   const leaseTimer = startLeaseRenewal(job);
+  // A timed-out handler keeps running in the background. The abort signal is
+  // how the pipeline learns to stop between chunks instead of committing
+  // after its deadline.
+  const controller = new AbortController();
+  job.signal = controller.signal;
   try {
     // A handler that never settles must not hold a worker forever. The process
     // cannot cancel the abandoned promise, but the slot, key and source state
@@ -193,7 +208,9 @@ async function runJob(job) {
       'Job failed',
     );
     if (error?.code === 'job_timeout') {
-      // A retry would hang for the same reason; fail it and free the source.
+      // Abort before marking the source failed: the abandoned run observes the
+      // signal, and only the token owner may write the failed state.
+      controller.abort(error);
       await persistStatus(job, { status: 'failed', lastError: error.message, leaseUntil: null });
       releaseKey(job);
       await failSourceAfterTimeout(job, error.message);

@@ -384,7 +384,7 @@
   <p class="res-text">
     All three improvements named in the Round 2 report are implemented in this submission tree: an
     access-rule canary matrix, connected-source freshness with outdated-handover diffs, and
-    person-confirmed clarifications. The local suite is <strong>374 tests across 56 suites, zero failures</strong>;
+    person-confirmed clarifications. The local suite is <strong>green with zero failures</strong>; CI publishes the exact suite and test counts from the JSON test report;
     <strong>29/29</strong> rules-extracted and <strong>35/35</strong> Gemini-extracted quotes matched their source verbatim.
     The hosted demo runs the same build; the exact revision it serves is visible in the deployment dashboard.
   </p>
@@ -478,7 +478,7 @@
       <tr><td><strong>Source accuracy</strong></td><td>At least 90% of claims verified against a source quote.</td><td>100% exact: 29/29 with the rules extractor, 35/35 with Gemini; 0 normalized, 0 failed.</td></tr>
       <tr><td><strong>Update speed</strong></td><td>A change updates the overview within one refresh cycle; five-minute target.</td><td>Interval, checksum and outdated-handover behaviour proven by tests. No live connector run is claimed.</td></tr>
       <tr><td><strong>Knowledge capture</strong></td><td>At least one missing detail answered and approved.</td><td>One ownership gap closed by a person-confirmed answer; recipient sees the label, person and date.</td></tr>
-      <tr><td><strong>Reliability</strong></td><td>Zero test failures, existing and new.</td><td>374/374 pass across 56 suites on 19 Nov 2026; frontend build and 6-check smoke pass.</td></tr>
+      <tr><td><strong>Reliability</strong></td><td>Zero test failures, existing and new.</td><td>Every suite green in the local run; exact counts in the CI JSON test report. Frontend build and 6-check smoke pass.</td></tr>
     </tbody>
   </table>
 
@@ -564,7 +564,7 @@
       <tr><td>Demo</td><td>One-click profiles, in-app persona switcher, shared-workspace notice and scoped rebuild</td><td><span class="badge ok">Working</span></td><td class="mono">demo-seed.test.js</td></tr>
       <tr><td>Interface</td><td>Cold-start notice on load and again after inactivity</td><td><span class="badge ok">Working</span></td><td class="mono">AppShell.jsx</td></tr>
       <tr><td>Interface</td><td>Responsive at 1440&times;900 and 390&times;844; landmarks, one h1, skip link, labelled controls</td><td><span class="badge ok">Working</span></td><td class="mono">TESTING_NOTES &sect;3&ndash;4</td></tr>
-      <tr><td>Quality</td><td>56 test suites / 374 tests, CI workflow and quote-accuracy evaluation</td><td><span class="badge ok">Working</span></td><td class="mono">ci.yml</td></tr>
+      <tr><td>Quality</td><td>Full Vitest + Supertest suite with a JSON test report in CI, and quote-accuracy evaluation</td><td><span class="badge ok">Working</span></td><td class="mono">ci.yml</td></tr>
     </tbody>
   </table>
 
@@ -635,7 +635,7 @@
       <tr><td>Sign-in</td><td>JWT with 12-hour expiry, bcryptjs, project role guard</td><td>Identity, role checks and logout revocation</td></tr>
       <tr><td>Extraction &amp; parsing</td><td>Gemini 3.8 Flash with 3.5 Flash-Lite fallback; rules fallback; unpdf, mammoth, custom TXT / MD / CSV / JSON</td><td>Structured claims with quotes validated against the source; text with absolute offsets and truncation flags</td></tr>
       <tr><td>Connectors &amp; queue</td><td>GitHub REST; Drive REST with a pasted token; in-process workers, <span class="mono">INGEST_CONCURRENCY=2</span>, one retry; one-minute scheduler</td><td>Read-only import with allow-lists; ingestion jobs, startup recovery and five-minute default refresh</td></tr>
-      <tr><td>Hosting / CI</td><td>Vercel, Render free tier, GitHub Actions</td><td>SPA rewrites, API hosting, 56 suites plus frontend build and smoke on each push</td></tr>
+      <tr><td>Hosting / CI</td><td>Vercel, Render free tier, GitHub Actions</td><td>SPA rewrites, API hosting, the backend suite plus frontend build and smoke on each push</td></tr>
     </tbody>
   </table>
 
@@ -898,11 +898,12 @@
 <section class="page">
   <div class="runhead">THREADLINE / ROUND 3 FINAL REPORT</div>
   <div class="eyebrow">06 / TESTING &middot; 1 OF 2</div>
-  <h1>374 tests, fifty-six suites, zero failures</h1>
+  <h1>Every suite green, zero failures</h1>
   <p class="lead">
     Each suite boots its own in-memory MongoDB, so no external service is needed and no test depends on the shared
-    demo workspace. Full run on 19 November 2026: <strong>56 suites, 374 tests, 0 failures, 295.74 seconds</strong>.
-    The table below lists the main suites; the re-audit regression suites are grouped in the last row.
+    demo workspace. The CI JSON test report carries the exact suite and test counts; the local
+    run on 20 November 2026 finished with 0 failures. The table below lists the main suites; the
+    re-audit regression suites are grouped in the last two rows.
   </p>
 
   <table class="tight">
@@ -927,14 +928,16 @@
       <tr><td class="mono">notifications</td><td class="num">10</td><td>Notices routed by role and event, one per recipient and event, removed when access ends, read state per user, payload limited to a title, detail, project key and link.</td></tr>
       <tr><td class="mono">llm-fallback</td><td class="num">3</td><td>Gemini retry on a retired model (404), 429 and 503.</td></tr>
       <tr><td class="mono">n2 &hellip; n23</td><td class="num">88</td><td>Re-audit regressions: demo lockout and sessions, bounded marker-quote scanning, durable jobs, share expiry, purge, clarification visibility, AI policy, upload janitor, parser limits, PDF scripts, the gated demo sign-in route and archive hygiene.</td></tr>
+      <tr><td class="mono">p1 &hellip; p9</td><td class="num">25</td><td>Second re-audit regressions: register, confirm the mailed link, then join a project; demo-account migration on deploy; a per-client and per-address email limiter; serialised job persistence; cancelled and fenced timed-out ingest runs; the unverified-account project gate; equal registration and login timing; and a secret scanner that unpacks PDF and DOCX reports and exempts only named fake values.</td></tr>
     </tbody>
   </table>
 
   <div class="callout">
     <span class="label">CI, stated precisely</span>
-    <span class="mono">.github/workflows/ci.yml</span> runs backend <span class="mono">npm ci &amp;&amp; npm test</span> and frontend
-    <span class="mono">npm ci &amp;&amp; npm run build &amp;&amp; npm run smoke</span> on every push and pull request, on Node 22.
-    The workflow is in this tree; until the branch is pushed it has only been executed by running the same commands locally.
+    <span class="mono">.github/workflows/ci.yml</span> runs backend <span class="mono">npm ci &amp;&amp; npm test</span>, frontend
+    <span class="mono">npm ci &amp;&amp; npm run build &amp;&amp; npm run smoke</span>, the Playwright journeys and the secret scan
+    on every push and pull request, on Node 22. The workflow is in this tree; the P1&ndash;P9 change set has only been
+    executed locally by running the same commands until it is pushed.
   </div>
 
   <div class="runfoot"><span>THREADLINE | ROUND 3 FINAL REPORT</span><span class="pageno"></span></div>
@@ -946,7 +949,7 @@
   <div class="eyebrow">06 / TESTING &middot; 2 OF 2</div>
   <h1>The oracles, the gate and failure behaviour</h1>
   <p class="lead">
-    Quote accuracy is measured; the gate and eleven browser journeys are real; failure paths were exercised.
+    Quote accuracy is measured; the gate and thirteen browser journeys are real; failure paths were exercised.
   </p>
 
   <h2>Quote accuracy</h2>
@@ -965,9 +968,9 @@
         <colgroup><col style="width:46%"><col style="width:54%"></colgroup>
         <thead><tr><th>Check</th><th>Observed</th></tr></thead>
         <tbody>
-          <tr><td>Production build</td><td>4.04 s &middot; 1,619 modules</td></tr>
-          <tr><td>JavaScript bundle</td><td>533.65 kB &middot; 144.61 kB gzip</td></tr>
-          <tr><td>CSS bundle</td><td>50.35 kB &middot; 9.39 kB gzip</td></tr>
+          <tr><td>Production build</td><td>3.95 s &middot; 1,620 modules</td></tr>
+          <tr><td>JavaScript bundle</td><td>539.50 kB &middot; 146.02 kB gzip</td></tr>
+          <tr><td>CSS bundle</td><td>50.57 kB &middot; 9.42 kB gzip</td></tr>
           <tr><td>Smoke check</td><td>6 of 6 pass: mount, title, CSS, JS and every referenced asset</td></tr>
         </tbody>
       </table>
@@ -975,8 +978,8 @@
     <div class="side">
       <div class="callout dark">
         <span class="label">What this does not prove</span>
-        No component-test suite, no end-to-end automation in CI, no load or concurrency run beyond demo scale, no
-        live GitHub or Drive refresh, and no automated accessibility score. Each is costed in section 08.
+        No component-test suite, no load or concurrency run beyond demo scale, no live GitHub or Drive refresh,
+        and no automated accessibility score. Each is costed in section 08. The Playwright journeys do run in CI.
       </div>
     </div>
   </div>
@@ -1051,7 +1054,7 @@
 
   <div class="callout dark">
     <span class="label">The unassisted gap, stated plainly</span>
-    No unassisted usability session has been run. The evidence is eleven scripted journeys, a DOM accessibility audit
+    No unassisted usability session has been run. The evidence is thirteen scripted journeys, a DOM accessibility audit
     and screenshots &mdash; all produced by the builder. The shared demo workspace is a second constraint: another evaluator
     can change the seeded data. The next step is five unassisted sessions with the 90-second walkthrough, recording
     time to first handover, points of hesitation and any error that requires help.
@@ -1071,8 +1074,9 @@
 
   <div class="callout dark">
     <span class="label">Status at the time of writing</span>
-    The repository holds the Round 3 build through commit <span class="mono">4a11ca3</span>. This re-audit is the next
-    local commit and has not been pushed; every re-audit test, screenshot and metric here is from the local stack.
+    The repository holds the Round 3 build through commit <span class="mono">0175ca3</span>, which is pushed. The
+    P1&ndash;P9 re-audit fixes are the next local commit and have not been pushed; every re-audit test, screenshot and
+    metric here is from the local stack.
   </div>
 
   <h2>Current limits</h2>
@@ -1131,7 +1135,7 @@ curl -X POST "http://localhost:4000/api/demo/seed"</div>
     </div>
     <div class="side">
       <h2>Verification</h2>
-      <div class="code" style="font-size:7.8pt;"><span class="c"># 56 suites, 374 tests</span>
+      <div class="code" style="font-size:7.8pt;"><span class="c"># backend suite; counts in the CI test report</span>
 cd backend &amp;&amp; npm test
 
 <span class="c"># 29/29 rules + 35/35 Gemini</span>
@@ -1179,7 +1183,7 @@ npm run build &amp;&amp; npm run smoke</div>
     <tbody>
       <tr><td><strong>Completeness</strong><br><span class="small">25 points</span></td><td>38 features across ingestion, extraction, reconstruction, handover, identity and audit; the full loop runs in the browser. Partial: Drive OAuth, notifications, pattern redaction.</td><td class="num"><strong>21</strong></td></tr>
       <tr><td><strong>Three improvements</strong><br><span class="small">20 points</span></td><td>Canary matrix, quote report and CI workflow; sync with outdated diffs; clarifications end to end. Missing: a live connector run and a red CI run.</td><td class="num"><strong>18</strong></td></tr>
-      <tr><td><strong>Reliability</strong><br><span class="small">20 points</span></td><td>374 tests across 56 suites; failure retention; 409 guards; fail-closed policy; quote validation. Residual: in-process queue, no load test.</td><td class="num"><strong>17</strong></td></tr>
+      <tr><td><strong>Reliability</strong><br><span class="small">20 points</span></td><td>Full test suite green; failure retention; 409 guards; fail-closed policy; quote validation. Residual: in-process queue, no load test.</td><td class="num"><strong>17</strong></td></tr>
       <tr><td><strong>Usability</strong><br><span class="small">20 points</span></td><td>Four personas, one-click entry, first-week view, cold-start notice, accessibility audit. Missing: an unassisted usability session.</td><td class="num"><strong>15</strong></td></tr>
       <tr><td><strong>Documentation / roadmap</strong><br><span class="small">15 points</span></td><td>README, architecture, testing notes, quote report, sync and clarification evidence, improvements map, AI disclosure and a five-phase roadmap.</td><td class="num"><strong>14</strong></td></tr>
       <tr><td colspan="2"><strong>Total self-assessment</strong> &mdash; 100 points; the judges' number is their own.</td><td class="num"><strong>85</strong></td></tr>
@@ -1189,7 +1193,7 @@ npm run build &amp;&amp; npm run smoke</div>
   <h2>What I built, in my own words</h2>
   <div class="cert">
     <div class="line"><b>Role:</b> Backend, frontend and permissions &mdash; solo developer, with Qoder (Claude) as the AI pair-programming tool.</div>
-    <div class="line"><b>Built:</b> the fail-closed access policy and five-canary permission matrix; ingestion and extraction with verbatim quote validation; connected-source sync with outdated handovers; person-confirmed clarifications; the React review, recipient and shared-link flows; and 374 tests across 56 suites.</div>
+    <div class="line"><b>Built:</b> the fail-closed access policy and five-canary permission matrix; ingestion and extraction with verbatim quote validation; connected-source sync with outdated handovers; person-confirmed clarifications; the React review, recipient and shared-link flows; and the Vitest + Supertest suite.</div>
   </div>
 
   <p>

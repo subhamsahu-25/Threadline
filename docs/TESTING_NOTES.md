@@ -1,6 +1,6 @@
 # Testing Notes
 
-Living document — last updated 19 Nov 2026. Supersedes the Round 2 notes and the
+Living document — last updated 20 Nov 2026. Supersedes the Round 2 notes and the
 earlier Round 3 notes. All results below were observed directly; no metric is
 projected or estimated. Every automated result was produced on the local stack;
 the hosted deployment is checked separately and called out where it differs.
@@ -9,8 +9,10 @@ the hosted deployment is checked separately and called out where it differs.
 
 ## 1. Automated tests
 
-`cd backend && npm test` — **56 suites, 374 tests**, green on the last full run
-(19 Nov 2026, Node 22, 296 s). Each suite boots its own ephemeral MongoDB
+`cd backend && npm test` — the full suite is green on the last local run
+(20 Nov 2026, Node 22). CI publishes the exact suite and test counts from
+`vitest --reporter=json` as the `backend-test-results` artifact, so this
+document does not hand-type a total. Each suite boots its own ephemeral MongoDB
 (`mongodb-memory-server`), so no external services are required.
 
 | Suite | Tests | What it proves |
@@ -70,16 +72,26 @@ the hosted deployment is checked separately and called out where it differs.
 | `n22-sessions.test.js` | 3 | Sessions are cached after the first request, `lastSeenAt` is written at most once a minute, and device listing hides token ids while revoking immediately |
 | `n22-share-counter.test.js` | 1 | Concurrent share-link opens are counted without lost updates |
 | `n23-demo-session.test.js` | 6 | The demo sign-in route issues sessions for seeded personas only, disappears when demo mode is off, never returns a password, and no demo credential ships in browser sources |
+| `p1-verification-journey.test.js` | 4 | Registration issues a confirmation token, the token can be consumed once, a confirmed account can join a project, and the mail transport is used when configured |
+| `p2-demo-migration.test.js` | 4 | Demo accounts created before this build adopt the new unpublished passwords on startup and can sign in; visitor accounts are untouched |
+| `p3-email-limiter.test.js` | 2 | The email limiter is keyed by client address and address, so one source cannot exhaust another's allowance and one address cannot exhaust every source |
+| `p4-job-persistence.test.js` | 2 | Concurrent job writes are serialised, so a late duplicate cannot overwrite the failed or completed state |
+| `p5-ingest-fencing.test.js` | 3 | A timed-out ingest run is cancelled and fenced, a late worker result is discarded, and a fresh run is not affected |
+| `p6-unverified-projects.test.js` | 2 | An unverified account cannot create or join a project, and the error carries no token or account detail |
+| `p7-registration-timing.test.js` | 2 | Registration takes the same path for a new address and an existing one, with one bcrypt comparison in both cases |
+| `p8-login-timing.test.js` | 2 | A locked, unknown, wrong-password and correct-password attempt each cost exactly one bcrypt comparison, and parallel guesses are not delayed inside the request |
+| `p9-secret-scanner.test.js` | 4 | Credential-shaped assignments are flagged unless the value is a named fake, placeholders are skipped, and a Google key is found inside a real DOCX and a compressed PDF |
 | `release-archive.test.js` | 3 | The archive flags environment files, dependencies, storage and build output, never tracks a real env file and contains tracked files only |
 
-Frontend validation: `npm run build` (clean Vite production build, 1,619 modules,
-533.65 kB JS with the 500 kB size warning, 144.61 kB gzip; 50.35 kB CSS), `npm run smoke`
+Frontend validation: `npm run build` (clean Vite production build, 1,620 modules,
+539.50 kB JS with the 500 kB size warning, 146.02 kB gzip; 50.57 kB CSS), `npm run smoke`
 (the built `index.html` mounts and every asset exists) and `npm run e2e`
-(Playwright/Chromium, one spec covering the four core journeys). The Playwright
-run starts its own backend on a spare port with an empty `MONGODB_URI` (fresh
-in-memory database), seeds through the public demo endpoint, and keeps
-`OUTBOUND_WEBHOOK_URL` empty and reminders disabled so the delivery and reminder
-assertions are deterministic. There is still no component test suite.
+(Playwright/Chromium, two specs covering the handover journeys and the
+register → confirm → join journey). The Playwright run starts its own backend on
+a spare port with an empty `MONGODB_URI` (fresh in-memory database), seeds
+through the public demo endpoint, and keeps `OUTBOUND_WEBHOOK_URL` empty,
+`GEMINI_API_KEY` empty and reminders disabled so the delivery, extract and
+reminder assertions are deterministic. There is still no component test suite.
 
 Production dependency audits (`npm audit --omit=dev --audit-level=high`) report
 **0 vulnerabilities** in both workspaces after upgrading `unpdf` to 1.9.1,
@@ -89,15 +101,18 @@ CI (`.github/workflows/ci.yml`) runs on Node 22 on every push and pull request:
 
 | Job | What it runs |
 | --- | --- |
-| `backend` | `npm ci && npm test` |
+| `backend` | `npm ci && npm test` (also publishes `backend-test-results.json` with the suite counts) |
 | `frontend` | `npm ci && npm run build && npm run smoke` |
 | `e2e` | `npm ci` in both workspaces, `npx playwright install --with-deps chromium`, `npm run e2e`; the HTML report is uploaded when the job fails |
 | `audit` | `npm audit --omit=dev --audit-level=high` for backend and frontend |
 | `secrets` | `node scripts/check-secrets.mjs` over every tracked file |
 
-The secret scan checks 178 tracked files, skips dependencies, lockfiles, test
-fixtures and binaries, flags private keys, cloud and API tokens, and fails if a
-non-example `.env` file is tracked.
+The secret scan covers every tracked file, including test fixtures and the PDF
+and DOCX reports (both are unpacked and their text is scanned). Fixtures are
+exempt only through a named list of known fake values, so a different key in
+the same file is still reported. It flags private keys, cloud and API tokens,
+credential-shaped assignments such as `password: "…"` or `JWT_SECRET=…`, and
+fails if a non-example `.env` file is tracked.
 
 ---
 
@@ -166,7 +181,7 @@ in the release notes rather than duplicated here.
     returns 403 for project state, claims, clarifications and handover creation
     (`handover-permissions.test.js`, `claim-actions.test.js`).
 
-### 3.1 Recorded Playwright run — 19 Nov 2026
+### 3.1 Recorded Playwright run — 20 Nov 2026
 
 Command (from `frontend/`):
 
@@ -174,8 +189,8 @@ Command (from `frontend/`):
 npm run e2e
 ```
 
-Result: **2 passed (18.2 s)**, one Chromium worker, no retries. The spec
-(`e2e/handover-journey.spec.js`) runs these steps in order:
+Result: **3 passed (21.3 s)**, one Chromium worker, no retries, across two specs.
+`e2e/handover-journey.spec.js` runs these steps in order:
 
 | Step | What it asserts |
 | --- | --- |
@@ -190,6 +205,15 @@ Result: **2 passed (18.2 s)**, one Chromium worker, no retries. The spec
 | Receive-only | No **New handover**, no **Prepare handover**, no **Mitigate**; nav lists only Sources and Handovers |
 | Deep links | `/projects/:id`, `/claims`, `/questions` and `/people` all redirect to `/handovers` |
 | Read-only sources | Sources loads with a `READ-ONLY ROLE` badge and no **Add source** control |
+
+`e2e/verification-journey.spec.js` adds the account-creation journey:
+
+| Step | What it asserts |
+| --- | --- |
+| Register | The create-account form accepts a name, address and password and shows the confirmation panel |
+| Confirm | The link returned by the backend opens `/verify-email?token=…` and the page reports **Email confirmed** |
+| Sign in | The newly confirmed person signs in and sees their name, then signs out |
+| Join a project | The lead opens People, enters the same address, sees the confirmed-account hint, and adds the person to the project |
 
 Artifacts on failure (trace, screenshot, video) are written under
 `frontend/test-results/`; a passing run keeps the HTML report under

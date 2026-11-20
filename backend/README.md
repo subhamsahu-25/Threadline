@@ -126,6 +126,13 @@ All variables are optional in development.
 | `READINESS_PENALTY_CONFLICT` | `10` | Conflict penalty |
 | `READINESS_PENALTY_OLD_QUESTION` | `4` | Old-question penalty |
 | `SHARE_TTL_DAYS` | `7` | Share-link lifetime |
+| `PUBLIC_APP_URL` | first CORS origin | Base for the `/verify-email` confirmation link |
+| `EMAIL_VERIFICATION_TTL_HOURS` | `48` | Confirmation-link lifetime |
+| `MAIL_PROVIDER` | empty | `resend` enables confirmation mail; without it, non-production returns the link to the registrant and production records a `skipped` delivery |
+| `RESEND_API_KEY` | empty | Provider key; required when `MAIL_PROVIDER=resend` |
+| `MAIL_FROM` | `Threadline <no-reply@threadline.example>` | Sender shown on the confirmation mail |
+| `MAIL_API_BASE` | `https://api.resend.com` | Provider base URL; tests point it at a local fake |
+| `MAIL_TIMEOUT_MS` | `10000` | Provider request timeout |
 | `OUTBOUND_WEBHOOK_URL` | empty | Optional webhook for share, acknowledgement, clarification and reminder delivery; when empty every delivery is recorded as `skipped`, never as sent |
 | `OUTBOUND_WEBHOOK_TIMEOUT_MS` | `5000` | Webhook request timeout |
 | `HANDOVER_REMINDER_ENABLED` | `true` | Sends one in-app notice and one outbound delivery for a shared handover that is still unacknowledged |
@@ -290,7 +297,9 @@ require `Authorization: Bearer <token>`.
 
 | Method | Path | Body / notes |
 | --- | --- | --- |
-| POST | `/auth/register` | `{ email, name, password, inviteCode? }` → `{ registered, message }`; uniform for new and existing addresses and does not start a session |
+| POST | `/auth/register` | `{ email, name, password, inviteCode? }` → `{ registered, message, mailConfigured }`; uniform for new and existing addresses and does not start a session. Without a mail transport in non-production it also returns `verificationUrl` to the caller who just registered |
+| POST | `/auth/verify-email` | `{ token }` → `{ verified, alreadyVerified }`; the frontend `/verify-email` page posts the token from the link |
+| POST | `/auth/verification/resend` | `{ email }` → `202 { requested, message }`; same answer for unknown, demo and already-verified addresses; throttled per address |
 | POST | `/auth/login` | `{ email, password }` → `{ token, user }`; identical failures for unknown addresses and wrong passwords, temporary lockout after repeated failures |
 | POST | `/auth/logout` | ends the current session only |
 | POST | `/auth/logout-all` | revokes every session for the account |
@@ -401,7 +410,7 @@ silently rewriting history.
 ## 8. Tests
 
 ```bash
-npm test          # 374 Vitest + Supertest tests across 56 suites
+npm test          # Vitest + Supertest suites
 npm run test:watch
 npm run eval:quotes   # quote-accuracy report
 ```

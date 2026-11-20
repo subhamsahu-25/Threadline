@@ -176,17 +176,18 @@ describe('email verification before project membership', () => {
     expect(open.status).toBe(201);
   });
 
-  it('never returns the link or token and answers resends uniformly', async () => {
-    const { response, user } = await registerRaw('quiet@example.com');
-    const serialized = JSON.stringify(response.body);
-    expect(serialized).not.toContain('verify-email?token');
-    expect(serialized).not.toContain('token');
+  it('keeps the link out of delivery records and answers resends uniformly', async () => {
+    const { user } = await registerRaw('quiet@example.com');
 
+    // Test runs have no mail transport, so the registrant receives the link
+    // in the response (P1) and nowhere else.
+    const { whenVerificationMailIdle } = await import('../src/services/verification.js');
+    await whenVerificationMailIdle();
     const row = await Delivery.findOne({ user: user._id, kind: 'auth.verify_email' }).lean();
     expect(row).toBeTruthy();
-    // No mail provider is configured in tests, so the record honestly says
-    // nothing left the server.
+    expect(row.channel).toBe('email');
     expect(row.status).toBe('skipped');
+    expect(JSON.stringify(row)).not.toContain('token=');
 
     const known = await request(app)
       .post('/api/auth/verification/resend')

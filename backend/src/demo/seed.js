@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { env } from '../config/env.js';
+import { logger } from '../lib/logger.js';
 import {
   Claim,
   Clarification,
@@ -267,9 +268,14 @@ export async function seedDemo({ reset = true } = {}) {
   // already uses them, and a real project that happens to be keyed ATLAS is
   // never adopted as the demo.
   if (existing && (!reset || !existing.isDemo)) {
+    // A create-only seed does not touch an existing workspace, but the demo
+    // accounts may still be the ones an earlier release created. Repair them
+    // here too, so a deployment that never restarts is not left broken.
+    const repairedUsers = existing.isDemo ? await repairDemoAccounts(existing) : 0;
     return {
       alreadySeeded: true,
       project: projectSummary(existing),
+      repairedUsers,
       hint: existing.isDemo
         ? 'Pass reset=true to rebuild the seeded sources'
         : 'That project is not the demo workspace and was left untouched',
@@ -384,23 +390,76 @@ export async function seedDemo({ reset = true } = {}) {
 }
 
 /**
+ * Accounts created before the demo flags existed look like ordinary accounts
+ * and still carry the published demo password. Give each one the flag, the
+ * verified marker and a fresh random hash nobody sees. Only members whose
+ * address ends in @threadline.demo are touched, and only while they still
+ * lack a flag, so a second run changes nothing.
+ */
+async function repairDemoAccounts(project) {
+  const memberIds = [project.owner, ...(project.members || []).map((member) => member.user)]
+    .filter(Boolean)
+    .map(String);
+  if (memberIds.length === 0) return 0;
+
+  const users = await User.find({ _id: { $in: memberIds } })
+    .select('email isDemo emailVerifiedAt')
+    .lean();
+  const legacy = users.filter(
+    (user) =>
+      /@threadline\.demo$/i.test(user.email || '') &&
+      (!user.isDemo || !user.emailVerifiedAt),
+  );
+  if (legacy.length === 0) return 0;
+
+  const passwordHash = await hashPassword(randomBytes(32).toString('base64url'));
+  for (const user of legacy) {
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          isDemo: true,
+          emailVerifiedAt: user.emailVerifiedAt || new Date(),
+          passwordHash,
+        },
+      },
+    );
+  }
+  logger.info(
+    { count: legacy.length, emails: legacy.map((user) => user.email) },
+    'Migrated legacy demo accounts off the published password',
+  );
+  return legacy.length;
+}
+
+/**
  * Repairs an existing demo workspace after a deploy without touching its
- * sources, claims, members or passwords. Only the flag is added, and only
- * when the workspace is provably the seeded one (an @threadline.demo owner).
- * A missing workspace is left alone so a fresh database still starts empty
- * until someone explicitly loads the demo.
+ * sources, claims or members. The project flag and the member accounts are
+ * both migrated, and only when the workspace is provably the seeded one (an
+ * @threadline.demo owner or the demo flag). A missing workspace is left alone
+ * so a fresh database still starts empty until someone explicitly loads the
+ * demo.
  */
 export async function reconcileDemoWorkspace() {
   const existing = await Project.findOne({ key: DEMO_PROJECT_KEY });
   if (!existing) return null;
-  if (existing.isDemo) {
-    return { alreadySeeded: true, project: projectSummary(existing) };
-  }
 
   const owner = await User.findById(existing.owner).select('email').lean();
-  if (!owner?.email?.endsWith('@threadline.demo')) return null;
+  const isDemoWorkspace =
+    Boolean(existing.isDemo) || /@threadline\.demo$/i.test(owner?.email || '');
+  if (!isDemoWorkspace) return null;
 
-  existing.isDemo = true;
-  await existing.save();
-  return { alreadySeeded: true, adopted: true, project: projectSummary(existing) };
+  const repairedUsers = await repairDemoAccounts(existing);
+  const adopted = !existing.isDemo;
+  if (adopted) {
+    existing.isDemo = true;
+    await existing.save();
+  }
+
+  return {
+    alreadySeeded: true,
+    ...(adopted ? { adopted: true } : {}),
+    repairedUsers,
+    project: projectSummary(existing),
+  };
 }

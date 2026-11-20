@@ -20,7 +20,16 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npm test
+      - run: npm test -- --reporter=default --reporter=json --outputFile=test-results.json
+      - name: Publish test counts
+        if: always()
+        run: node ../scripts/test-stats.mjs test-results.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results
+          path: backend/test-results.json
+          retention-days: 14
 
   frontend:
     name: Frontend build

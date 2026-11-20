@@ -1,7 +1,8 @@
 import jwt from 'jsonwebtoken';
-import { env } from '../config/env.js';
+import { env, isProd } from '../config/env.js';
+import { logger } from '../lib/logger.js';
 import { User } from '../models/index.js';
-import { deliverOutbound } from './delivery.js';
+import { mailConfigured, sendVerificationEmail } from './mailer.js';
 
 const PURPOSE = 'email_verify';
 
@@ -60,19 +61,53 @@ export async function verifyEmailToken(token) {
   return { ok: true, alreadyVerified: false, user };
 }
 
+export function buildEmailVerification(user) {
+  const token = signEmailVerificationToken(user);
+  return { token, url: verificationUrl(token) };
+}
+
 /**
- * Issues a fresh link and hands it to the configured outbound webhook. Without
- * a provider the delivery row says "skipped" — the product never claims a mail
- * was sent when nothing left the server.
+ * Outside production, a deployment without a mail transport returns the link
+ * to the caller who just typed the address. Nobody else ever sees it.
+ */
+export function returnsVerificationLink() {
+  return !isProd && !mailConfigured();
+}
+
+const inflight = new Set();
+
+/**
+ * Delivery runs after the response, so a slow provider does not make account
+ * creation wait (or reveal, by timing, whether the address existed). Tests and
+ * callers that need the record can wait for whenVerificationMailIdle().
+ */
+export function scheduleVerificationEmail(user) {
+  const { token, url } = buildEmailVerification(user);
+  const job = new Promise((resolve) => {
+    setImmediate(async () => {
+      try {
+        await sendVerificationEmail(user, url);
+      } catch (error) {
+        logger.warn({ error: error?.name }, 'Verification mail could not be sent');
+      }
+      resolve();
+    });
+  });
+  inflight.add(job);
+  job.finally(() => inflight.delete(job));
+  return { token, url };
+}
+
+export async function whenVerificationMailIdle() {
+  await Promise.allSettled([...inflight]);
+}
+
+/**
+ * Issues a fresh link and delivers it. Callers that cannot wait use
+ * scheduleVerificationEmail instead.
  */
 export async function issueEmailVerification(user) {
-  const token = signEmailVerificationToken(user);
-  const url = verificationUrl(token);
-  await deliverOutbound({
-    user: user._id,
-    kind: 'auth.verify_email',
-    text: `Confirm the email address for ${user.name} by opening this link: ${url}`,
-    createdBy: user._id,
-  });
+  const { token, url } = scheduleVerificationEmail(user);
+  await whenVerificationMailIdle();
   return { token, url };
 }

@@ -18,5 +18,19 @@ export const conflict = (message, details) => new AppError(409, 'conflict', mess
 export const unprocessable = (message, details) =>
   new AppError(422, 'unprocessable', message, details);
 
+/**
+ * Raised when a run stops because its deadline passed or another run claimed
+ * the same source. It is not a source failure: the queue or the retry already
+ * owns the visible state.
+ */
+export class IngestCancelledError extends Error {
+  constructor(message = 'This ingest run was cancelled') {
+    super(message);
+    this.name = 'IngestCancelledError';
+    this.code = 'ingest_cancelled';
+    this.status = 409;
+  }
+}
+
 export const asyncHandler = (fn) => (req, res, next) =>
   Promise.resolve(fn(req, res, next)).catch(next);
