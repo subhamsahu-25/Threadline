@@ -1,8 +1,15 @@
 const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
-const TOKEN_KEY = 'threadline.token';
+export const TOKEN_KEY = 'threadline.token';
 const SESSIONLESS_PATHS = ['/api/auth/login', '/api/auth/register'];
+// Recipients open shared handovers without an account, so a rejection there
+// must never bounce them to the profile picker.
+const PUBLIC_PATHS = ['/api/handovers/shared', '/api/demo'];
 
 let unauthorizedHandler = null;
+// Mirror of the stored token. Safari private mode and blocked third-party
+// storage make localStorage throw, and a token that only lived there would
+// leave the session looking signed in while every request went out anonymous.
+let memoryToken = null;
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = 'request_failed', details = null } = {}) {
@@ -20,18 +27,21 @@ export function setUnauthorizedHandler(handler) {
 
 export function getToken() {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    const stored = localStorage.getItem(TOKEN_KEY);
+    if (stored) return stored;
   } catch {
-    return null;
+    /* storage can be unavailable in private mode */
   }
+  return memoryToken;
 }
 
 export function setToken(token) {
+  memoryToken = token || null;
   try {
     if (token) localStorage.setItem(TOKEN_KEY, token);
     else localStorage.removeItem(TOKEN_KEY);
   } catch {
-    /* storage can be unavailable in private mode */
+    /* the in-memory copy above still keeps this tab's session alive */
   }
 }
 
@@ -40,6 +50,7 @@ async function request(path, { method = 'GET', body, signal, headers = {} } = {}
   // A failed sign-in must not carry the previous persona's token: otherwise the
   // 401 handler below would sign the current user out mid-switch.
   const sessionless = SESSIONLESS_PATHS.some((prefix) => path.startsWith(prefix));
+  const isPublic = PUBLIC_PATHS.some((prefix) => path.startsWith(prefix));
   const token = sessionless ? null : getToken();
   if (token) finalHeaders.Authorization = `Bearer ${token}`;
 
@@ -77,7 +88,12 @@ async function request(path, { method = 'GET', body, signal, headers = {} } = {}
 
   if (!response.ok) {
     const detail = data?.error || {};
-    if (response.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
+    // Sign out on any rejected authenticated call, even when no token was sent:
+    // otherwise a stale page keeps rendering the API's raw "Bearer <token>"
+    // message instead of returning the visitor to the profile picker.
+    if (response.status === 401 && !sessionless && !isPublic && unauthorizedHandler) {
+      unauthorizedHandler();
+    }
     throw new ApiError(detail.message || `Request failed with status ${response.status}`, {
       status: response.status,
       code: detail.code || 'request_failed',
@@ -122,7 +138,9 @@ export async function downloadFile(path, fallbackName = 'download') {
       data = null;
     }
     const detail = data?.error || {};
-    if (response.status === 401 && token && unauthorizedHandler) unauthorizedHandler();
+    if (response.status === 401 && !path.startsWith('/api/handovers/shared') && unauthorizedHandler) {
+      unauthorizedHandler();
+    }
     throw new ApiError(detail.message || `Download failed with status ${response.status}`, {
       status: response.status,
       code: detail.code || 'request_failed',

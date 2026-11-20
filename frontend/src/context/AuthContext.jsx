@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { api, getToken, setToken, setUnauthorizedHandler } from '../lib/api.js';
+import { api, getToken, setToken, setUnauthorizedHandler, TOKEN_KEY } from '../lib/api.js';
 
 const AuthContext = createContext(null);
 
@@ -26,11 +26,12 @@ export function AuthProvider({ children }) {
       .then((data) => {
         if (active) setUser(data.user);
       })
-      .catch(() => {
-        if (active) {
-          setToken(null);
-          setUser(null);
-        }
+      .catch((error) => {
+        if (!active) return;
+        // A cold-start failure must not throw away a session that is still
+        // valid: only an explicit rejection from the API ends it.
+        if (error?.status === 401 || error?.status === 403) setToken(null);
+        setUser(null);
       })
       .finally(() => {
         if (active) setBooting(false);
@@ -40,10 +41,27 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
+  // Signing out in one tab clears the shared token, so every other tab must
+  // drop its in-memory user instead of firing anonymous requests.
+  useEffect(() => {
+    const onStorage = (event) => {
+      if (event.key && event.key !== TOKEN_KEY) return;
+      if (!getToken()) {
+        setToken(null);
+        setUser(null);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
   // Demo personas have no published password. The API issues their session
   // for seeded personas, even after seeding is switched off.
   const loginDemo = useCallback(async (email) => {
     const data = await api.post('/api/demo/session', { email });
+    if (!data?.token) {
+      throw new Error('The demo session could not be started. Please try again.');
+    }
     setToken(data.token);
     setUser(data.user);
     return data.user;
