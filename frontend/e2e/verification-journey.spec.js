@@ -2,9 +2,10 @@ import { test, expect } from '@playwright/test';
 
 /**
  * The journey the Round 3 report promises: a new person registers, follows the
- * confirmation link from the mail, lands on the page that consumes the token,
- * and is then added to a project by the lead. With no mail transport the link
- * is returned to the registering caller, which is what the panel shows.
+ * confirmation link, lands on the page that consumes the token, and is then
+ * added to a project by the lead. The login screen offers seeded profiles only,
+ * so registration is exercised through the API and the confirmation page
+ * through the browser.
  */
 test.describe.configure({ mode: 'serial' });
 
@@ -17,38 +18,22 @@ test('register, confirm the link, then join a project', async ({ page, request }
     expect(seeded.ok()).toBeTruthy();
   });
 
-  await test.step('register with email and password', async () => {
-    await page.goto('/login');
-    await page
-      .getByText('Sign in or create an account with email instead')
-      .click();
-    await page.getByRole('tab', { name: 'Create account' }).click();
-    await page.locator('#auth-name').fill('Nadia Confirmed');
-    await page.locator('#auth-email').fill(EMAIL);
-    await page.locator('#auth-password').fill(PASSWORD);
-    await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  await test.step('register and open the confirmation link', async () => {
+    const registered = await request.post('/api/auth/register', {
+      data: { name: 'Nadia Confirmed', email: EMAIL, password: PASSWORD },
+    });
+    expect(registered.ok()).toBeTruthy();
+    const { verificationUrl } = await registered.json();
+    expect(verificationUrl).toContain('/verify-email?token=');
 
-    await expect(page.getByText('Confirm your email address')).toBeVisible();
-  });
-
-  await test.step('open the confirmation link and land on the page', async () => {
-    const link = page.getByTestId('verification-link');
-    await expect(link).toBeVisible();
-    await link.click();
-    await expect(page).toHaveURL(/\/verify-email\?token=/);
+    await page.goto(verificationUrl);
     await expect(page.getByRole('heading', { name: 'Email confirmed' })).toBeVisible();
   });
 
-  await test.step('sign in as the newly confirmed person, then leave', async () => {
+  await test.step('continue from the confirmation page', async () => {
     await page.getByRole('button', { name: 'Continue to the workspace' }).click();
     await expect(page).toHaveURL(/\/login$/);
-    await page.getByText('Sign in or create an account with email instead').click();
-    await page.locator('#auth-email').fill(EMAIL);
-    await page.locator('#auth-password').fill(PASSWORD);
-    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await expect(page.getByText('Nadia Confirmed').first()).toBeVisible();
-    await page.getByRole('button', { name: 'Sign out' }).click();
-    await expect(page).toHaveURL(/\/login$/);
+    await expect(page.getByRole('heading', { name: 'Choose a profile to enter' })).toBeVisible();
   });
 
   await test.step('return as the lead', async () => {

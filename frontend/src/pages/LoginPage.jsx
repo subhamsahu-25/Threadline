@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { BrandMark } from '../components/AppShell.jsx';
 import { ColdStartNotice } from '../components/ColdStartNotice.jsx';
-import { Avatar, Badge, Button, Field, Input } from '../components/ui.jsx';
+import { Avatar, Badge } from '../components/ui.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { api, errorMessage } from '../lib/api.js';
@@ -139,137 +139,16 @@ function BrandPanel({ demoEnabled }) {
   );
 }
 
-function CredentialsCard({
-  mode,
-  onModeChange,
-  email,
-  onEmailChange,
-  password,
-  onPasswordChange,
-  name,
-  onNameChange,
-  inviteCode,
-  onInviteCodeChange,
-  onSubmit,
-  pending,
-  disabled,
-}) {
-  const registering = mode === 'register';
-  return (
-    <div className="rounded-xl border border-line bg-white p-4 shadow-card">
-      <div
-        role="tablist"
-        aria-label="Account access"
-        className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1"
-      >
-        {[
-          { id: 'signin', label: 'Sign in' },
-          { id: 'register', label: 'Create account' },
-        ].map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={mode === tab.id}
-            onClick={() => onModeChange(tab.id)}
-            className={`rounded-md px-3 py-1.5 text-[12px] font-semibold transition ${
-              mode === tab.id
-                ? 'bg-white text-ink shadow-sm ring-1 ring-line'
-                : 'text-ink-muted hover:text-ink'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      <form onSubmit={onSubmit} className="space-y-2.5">
-        {registering && (
-          <Field label="Full name" htmlFor="auth-name" required>
-            <Input
-              id="auth-name"
-              type="text"
-              required
-              minLength={2}
-              maxLength={80}
-              autoComplete="name"
-              value={name}
-              onChange={(event) => onNameChange(event.target.value)}
-              placeholder="Priya Sharma"
-            />
-          </Field>
-        )}
-        <Field label="Email" htmlFor="auth-email" required>
-          <Input
-            id="auth-email"
-            type="email"
-            required
-            autoComplete={registering ? 'email' : 'username'}
-            value={email}
-            onChange={(event) => onEmailChange(event.target.value)}
-            placeholder="you@company.com"
-          />
-        </Field>
-        <Field
-          label="Password"
-          htmlFor="auth-password"
-          required
-          hint={
-            registering
-              ? 'At least 10 characters, mixing three of: upper case, lower case, numbers, symbols.'
-              : undefined
-          }
-        >
-          <Input
-            id="auth-password"
-            type="password"
-            required
-            minLength={registering ? 10 : undefined}
-            autoComplete={registering ? 'new-password' : 'current-password'}
-            value={password}
-            onChange={(event) => onPasswordChange(event.target.value)}
-          />
-        </Field>
-        {registering && (
-          <Field
-            label="Invite code"
-            htmlFor="auth-invite"
-            hint="Only needed when this deployment is invite-only."
-          >
-            <Input
-              id="auth-invite"
-              type="text"
-              autoComplete="off"
-              value={inviteCode}
-              onChange={(event) => onInviteCodeChange(event.target.value)}
-            />
-          </Field>
-        )}
-        <Button type="submit" size="sm" loading={pending} disabled={disabled}>
-          {registering ? 'Create account' : 'Sign in'}
-        </Button>
-      </form>
-    </div>
-  );
-}
-
 export default function LoginPage() {
-  const { user, login, loginDemo, register } = useAuth();
+  const { user, loginDemo } = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
   const location = useLocation();
   const [pending, setPending] = useState(null);
   const [resetting, setResetting] = useState(false);
   const [error, setError] = useState('');
-  const [mode, setMode] = useState('signin');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [inviteCode, setInviteCode] = useState('');
-  const [credentialPending, setCredentialPending] = useState(false);
   const [health, setHealth] = useState(null);
   const [demoStatus, setDemoStatus] = useState(null);
-  const [confirmation, setConfirmation] = useState(null);
   const [coldStartOpen, setColdStartOpen] = useState(shouldShowColdStart);
 
   const dismissColdStart = useCallback(() => {
@@ -371,47 +250,7 @@ export default function LoginPage() {
     }
   };
 
-  const submitCredentials = async (event) => {
-    event.preventDefault();
-    if (credentialPending) return;
-    setCredentialPending(true);
-    setError('');
-    try {
-      if (mode === 'register') {
-        const registered = await register({
-          name: name.trim(),
-          email: email.trim(),
-          password,
-          inviteCode: inviteCode.trim() || undefined,
-        });
-        toast.success('Account created — confirm your email before a lead can add you.');
-        setMode('signin');
-        setPassword('');
-        // No mail transport on this deployment, so the link is handed to the
-        // registering caller and only to them. With a transport, the message
-        // is addressed to the mailbox owner.
-        setConfirmation({
-          url: registered.verificationUrl || '',
-          mailConfigured: registered.mailConfigured !== false,
-        });
-        return;
-      }
-      const signedIn = await login(email.trim(), password);
-      toast.success(`Signed in as ${signedIn.name}`);
-      navigate(destination, { replace: true });
-    } catch (err) {
-      setError(errorMessage(err));
-    } finally {
-      setCredentialPending(false);
-    }
-  };
-
-  const changeMode = (nextMode) => {
-    setMode(nextMode);
-    setError('');
-  };
-
-  const busy = Boolean(pending) || resetting || credentialPending;
+  const busy = Boolean(pending) || resetting;
 
   return (
     <div className="flex min-h-screen bg-canvas">
@@ -438,17 +277,15 @@ export default function LoginPage() {
             <div className="mb-5">
               <p className="eyebrow mb-1.5">{demoEnabled ? 'Hackathon demo' : 'Account access'}</p>
               <h1 className="text-[27px] font-semibold leading-tight tracking-[-0.02em]">
-                {demoEnabled ? 'Choose a profile to enter' : 'Sign in to Threadline'}
+                Choose a profile to enter
               </h1>
               <p className="mt-1.5 text-[13px] leading-5 text-ink-muted">
-                {demoEnabled
-                  ? 'Four seeded profiles share one Atlas workspace. One click signs you in — the same project looks different depending on who is reading it.'
-                  : 'Use the email and password issued for this workspace, or create an account when this deployment allows registration.'}
+                Four demo profiles share one Atlas workspace. One click signs you in — the same
+                project looks different depending on who is reading it.
               </p>
             </div>
 
-            {demoEnabled && (
-              <section aria-labelledby="personas-heading">
+            <section aria-labelledby="personas-heading">
               <div className="mb-2 flex items-center justify-between">
                 <h2 id="personas-heading" className="eyebrow">
                   Demo profiles
@@ -528,48 +365,6 @@ export default function LoginPage() {
                 })}
                 </div>
               </section>
-            )}
-
-            {demoEnabled ? (
-              <details className="mt-3 rounded-lg border border-line bg-white/70 px-3 py-2.5">
-                <summary className="cursor-pointer text-[11.5px] font-semibold text-ink-muted hover:text-ink">
-                  Sign in or create an account with email instead
-                </summary>
-                <div className="mt-3">
-                  <CredentialsCard
-                    mode={mode}
-                    onModeChange={changeMode}
-                    email={email}
-                    onEmailChange={setEmail}
-                    password={password}
-                    onPasswordChange={setPassword}
-                    name={name}
-                    onNameChange={setName}
-                    inviteCode={inviteCode}
-                    onInviteCodeChange={setInviteCode}
-                    onSubmit={submitCredentials}
-                    pending={credentialPending}
-                    disabled={Boolean(pending) || resetting}
-                  />
-                </div>
-              </details>
-            ) : (
-              <CredentialsCard
-                mode={mode}
-                onModeChange={changeMode}
-                email={email}
-                onEmailChange={setEmail}
-                password={password}
-                onPasswordChange={setPassword}
-                name={name}
-                onNameChange={setName}
-                inviteCode={inviteCode}
-                onInviteCodeChange={setInviteCode}
-                onSubmit={submitCredentials}
-                pending={credentialPending}
-                disabled={Boolean(pending) || resetting}
-              />
-            )}
 
             {error && (
               <p
@@ -578,46 +373,6 @@ export default function LoginPage() {
               >
                 {error}
               </p>
-            )}
-
-            {confirmation && (
-              <section
-                aria-labelledby="confirmation-heading"
-                className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 text-[12px] leading-5 text-amber-900"
-              >
-                <p id="confirmation-heading" className="font-semibold">
-                  Confirm your email address
-                </p>
-                {confirmation.url ? (
-                  <>
-                    <p className="mt-1">
-                      This deployment has no mail transport, so no message was sent. Open the
-                      confirmation link below — it is shown only to you, and it works for this
-                      address alone. Then sign in.
-                    </p>
-                    <a
-                      href={confirmation.url}
-                      data-testid="verification-link"
-                      className="mt-2 inline-block break-all font-semibold text-brand-800 underline decoration-brand-300 underline-offset-2 hover:text-brand-950"
-                    >
-                      Open the confirmation link
-                    </a>
-                  </>
-                ) : confirmation.mailConfigured ? (
-                  <p className="mt-1">
-                    A confirmation message has been sent to that address. Open the link in it,
-                    then sign in. Until the address is confirmed a lead cannot add this account to
-                    a project.
-                  </p>
-                ) : (
-                  <p className="mt-1">
-                    Mail is not configured on this deployment, so no confirmation message could be
-                    sent. Ask the workspace operator to set <code>MAIL_PROVIDER</code> and{' '}
-                    <code>RESEND_API_KEY</code>; until the address is confirmed a lead cannot add
-                    this account to a project.
-                  </p>
-                )}
-              </section>
             )}
 
             <div className="mt-4 flex items-center justify-between gap-3 text-[11.5px]">
@@ -638,11 +393,7 @@ export default function LoginPage() {
                     : 'Checking API…'}
               </span>
               <span className="font-mono text-[10px] text-ink-faint">
-                {demoEnabled
-                  ? 'Demo accounts · synthetic data'
-                  : health
-                    ? 'Email and password sign-in'
-                    : 'Checking sign-in options…'}
+                {demoEnabled ? 'Demo accounts · synthetic data' : 'Demo profiles'}
               </span>
             </div>
 

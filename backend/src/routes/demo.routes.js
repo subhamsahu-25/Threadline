@@ -21,13 +21,13 @@ async function demoAvailability() {
     return statusCache.value;
   }
   const ready = Boolean(await Project.exists({ key: DEMO_PROJECT_KEY, isDemo: true }));
-  // Sign-in for a persona is only possible while demo mode is on, so that is
-  // also what makes the picker usable. `ready` only decides whether the
+  // A seeded workspace stays usable after seeding is switched off, so judges
+  // can still enter the demo profiles. `ready` only decides whether the
   // workspace still has to be created.
   const value = {
     seedEnabled: env.allowDemoSeed,
     ready,
-    available: env.allowDemoSeed,
+    available: env.allowDemoSeed || ready,
   };
   statusCache = { at: Date.now(), value };
   return value;
@@ -74,7 +74,6 @@ router.post(
   '/session',
   sessionLimiter,
   asyncHandler(async (req, res) => {
-    if (!env.allowDemoSeed) throw notFound('Demo sign-in is disabled on this deployment');
     const email = String(req.body?.email || '').trim().toLowerCase();
     const persona = DEMO_USERS.find((entry) => entry.email === email);
     if (!persona) throw notFound('That demo profile does not exist');

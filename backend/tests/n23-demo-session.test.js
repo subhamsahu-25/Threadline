@@ -44,13 +44,14 @@ describe('demo sign-in without a published password', () => {
     await request(app).post('/api/demo/session').send({}).expect(404);
   });
 
-  it('disappears when demo mode is off', async () => {
+  it('keeps persona sign-in available after seeding is switched off', async () => {
     const original = env.allowDemoSeed;
     env.allowDemoSeed = false;
     try {
-      await request(app).post('/api/demo/session').send({ email: DEMO_EMAIL }).expect(404);
+      await request(app).post('/api/demo/session').send({ email: DEMO_EMAIL }).expect(200);
       const status = await request(app).get('/api/demo/status').expect(200);
-      expect(status.body.available).toBe(false);
+      expect(status.body.seedEnabled).toBe(false);
+      expect(status.body.available).toBe(true);
     } finally {
       env.allowDemoSeed = original;
     }
